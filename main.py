@@ -46,23 +46,25 @@ def get_active_interface_index():
         return None
 
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
+    """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.abspath(".")
+
     return os.path.join(base_path, relative_path)
 
 def main(page: ft.Page):
     page.title = "offveil - DNS & DPI Aracı"
     page.window_resizable = False
     page.window_maximizable = False
-    if getattr(sys, 'frozen', False):
-        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-        icon_path = os.path.join(base_path, "offveil.ico")
-    else:
-        icon_path = resource_path("offveil.ico")
+    
+    icon_path = resource_path("offveil.ico")
     page.window_icon = icon_path
+
     page.theme_mode = ft.ThemeMode.DARK
     page.vertical_alignment = ft.MainAxisAlignment.START
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
