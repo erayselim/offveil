@@ -13,6 +13,12 @@
 - Kaynak kodlarını dilediğiniz gibi inceleyebilir, güvenle kullanabilirsiniz.
 
 ---
+Tüm bağımlılıkları yüklemek için:
+```bash
+pip install -r requirements.txt
+```
+
+---
 
 ## ⚠️ Antivirüs Uyarıları Hakkında
 

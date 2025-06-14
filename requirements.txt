@@ -1,3 +1,2 @@
 flet
-requests
 pygetwindow 
