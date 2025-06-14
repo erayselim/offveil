@@ -76,7 +76,7 @@ Uygulamada, erişim engellerini aşmak için özel olarak seçilmiş DNS adresle
 
 - [ValdikSS/GoodbyeDPI](https://github.com/ValdikSS/GoodbyeDPI) (DPI atlatıcı çekirdek)
 - [cagritaskn/GoodbyeDPI-Turkey](https://github.com/cagritaskn/GoodbyeDPI-Turkey) (Türkiye için optimize edilmiş parametreler)
-**Not:** **offveil**, GoodbyeDPI ve GoodbyeDPI-Turkey'den farklı olarak, Yandex sunucuları (`77.88.8.8` ve `2a02:6b8::feed:0ff`) yerine, daha güvenilir ve hızlı olan Cloudflare (`1.1.1.1` ve `2606:4700:4700::1111`) sunucularını kullanır.
+    - **Not:** **offveil**, GoodbyeDPI ve GoodbyeDPI-Turkey'den farklı olarak, Yandex sunucuları (`77.88.8.8` ve `2a02:6b8::feed:0ff`) yerine, daha güvenilir ve hızlı olan Cloudflare (`1.1.1.1` ve `2606:4700:4700::1111`) sunucularını kullanır.
 
 ---
 
