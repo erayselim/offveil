@@ -180,8 +180,10 @@ def main(page: ft.Page):
         ps_command = f"Set-DnsClientServerAddress -InterfaceIndex {interface_index} -ServerAddresses ({cloudflare_dns_servers})"
 
         try:
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps_command], check=True, capture_output=True)
-            subprocess.run(["powershell", "-NoProfile", "-Command", "Clear-DnsClientCache"], check=False, capture_output=True)
+            # Optimize edilmiş powershell çağrısı
+            subprocess.run([
+                "powershell", "-NoProfile", "-Command", f"{ps_command}; Clear-DnsClientCache"
+            ], check=True, capture_output=True)
             show_status("Cloudflare DNS başarıyla ayarlandı.", success=True)
             return True
         except subprocess.CalledProcessError as e:
@@ -203,8 +205,9 @@ def main(page: ft.Page):
 
         try:
             ps_command = f"Set-DnsClientServerAddress -InterfaceIndex {interface_index} -ResetServerAddresses"
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps_command], check=True, capture_output=True)
-            subprocess.run(["powershell", "-NoProfile", "-Command", "Clear-DnsClientCache"], check=False, capture_output=True)
+            subprocess.run([
+                "powershell", "-NoProfile", "-Command", f"{ps_command}; Clear-DnsClientCache"
+            ], check=True, capture_output=True)
             show_status("DNS başarıyla sıfırlandı (DHCP).", success=True)
             return True
         except subprocess.CalledProcessError as e:
