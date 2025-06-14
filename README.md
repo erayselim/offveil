@@ -13,12 +13,6 @@
 - Kaynak kodlarını dilediğiniz gibi inceleyebilir, güvenle kullanabilirsiniz.
 
 ---
-Tüm bağımlılıkları yüklemek için:
-```bash
-pip install -r requirements.txt
-```
-
----
 
 ## ⚠️ Antivirüs Uyarıları Hakkında
 
@@ -93,6 +87,10 @@ Uygulamada, erişim engellerini aşmak için özel olarak seçilmiş DNS adresle
 ```bash
 git clone https://github.com/erayselim/offveil.git
 cd offveil
+```
+Tüm bağımlılıkları yüklemek için:
+```bash
+python -m pip install -r requirements.txt
 ```
 
 ---
