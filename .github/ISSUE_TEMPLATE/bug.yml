@@ -1,0 +1,63 @@
+name: Bug report
+description: Something broke — include ISP, Windows, SAC, and a diagnostics zip
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        There are no presets to pick. If it failed, attach the diagnostics zip
+        from the app (`offveil` → support file). SAC-on is out of scope
+        (`docs/antivirus.md`).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      placeholder: Toggle on, Discord stayed blocked / installer blocked / DNS leftover after quit
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: offveil version
+      placeholder: "1.0.0-b1 (from Settings)"
+    validations:
+      required: true
+  - type: input
+    id: isp
+    attributes:
+      label: ISP
+      placeholder: TT / Superonline / Turksat / Turkcell / Vodafone / other
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2 (build 26100) x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: sac
+    attributes:
+      label: Smart App Control
+      options:
+        - "Off"
+        - "On"
+        - "I don't know"
+    validations:
+      required: true
+  - type: textarea
+    id: av
+    attributes:
+      label: SmartScreen / Defender
+      placeholder: More info → Run anyway / threat name / folder exclusion
+  - type: markdown
+    attributes:
+      value: Attach the diagnostics zip to this issue if you can.

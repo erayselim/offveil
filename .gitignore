@@ -1,0 +1,89 @@
+# Secrets and credentials — never commit
+.secrets/
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+!ruleset/keys/public.key
+ruleset/keys/*-signing.key
+offveil-ui/src-tauri/.tauri/
+
+# Runtime credentials (WARP / WireGuard / optional REALITY). README stays.
+offveil-core/data/*
+!offveil-core/data/README.md
+
+# Leftover draft, not the live ruleset
+ruleset/mvp.json
+
+# Internal planning / review notes
+ROADMAP.md
+PLAN.md
+TODO.md
+NOTES.md
+docs/*-plan.md
+docs/security-review*.md
+.cursor/
+.agents/
+AGENTS.md
+CLAUDE.md
+*.canvas.tsx
+*.bak
+*.orig
+*.tmp
+
+# Build / release staging (licenses in bundle-bin are committed)
+dist-release/
+offveil-ui/src-tauri/gen/
+offveil-ui/src-tauri/bundle-bin/*.exe
+offveil-ui/src-tauri/bundle-bin/*.dll
+
+# Local diagnostics dumps
+offveil-diag/
+*.exe
+*.dll
+*.pdb
+!offveil-core/third_party/**/.gitkeep
+
+# Go
+offveil-core/offveil-core.exe
+offveil-core/ciadpi.exe
+offveil-core/sing-box.exe
+offveil-core/wintun.dll
+offveil-core/third_party/byedpi/ciadpi.exe
+offveil-core/third_party/sing-box/sing-box.exe
+offveil-core/third_party/wintun/wintun.dll
+*.test
+*.out
+coverage.*
+vendor/
+
+# Node / Rust / Vite
+node_modules/
+dist/
+dist-ssr/
+target/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/
+.vs/
+*.user
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

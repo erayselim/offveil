@@ -1,0 +1,102 @@
+{
+  "version": 4,
+  "updated_at": "2026-07-21",
+  "packages": [
+    {
+      "id": "discord",
+      "label": "Discord",
+      "default_enabled": true,
+      "domains": [
+        "discord.com",
+        "discordapp.com",
+        "discord.gg",
+        "discord.media",
+        "discordcdn.com",
+        "gateway.discord.gg",
+        "cdn.discordapp.com",
+        "cdn.discord.com",
+        "media.discordapp.net",
+        "images-ext-1.discordapp.net",
+        "images-ext-2.discordapp.net",
+        "status.discord.com",
+        "latency.discord.media",
+        "discord-attachments-uploads-prd.storage.googleapis.com"
+      ],
+      "domain_suffix": [
+        ".discord.com",
+        ".discordapp.com",
+        ".discord.gg",
+        ".discordapp.net",
+        ".discord.media",
+        ".discordcdn.com"
+      ],
+      "resolve_hosts": [
+        "discord.com",
+        "gateway.discord.gg",
+        "cdn.discordapp.com",
+        "media.discordapp.net",
+        "discord.gg",
+        "latency.discord.media"
+      ],
+      "probe_hosts": [
+        "discord.com"
+      ],
+      "notes": "Web + desktop + CDN. Voice/stream: domain_suffix .discord.gg / .discord.media (dynamic RTC). Faz 2.4: voice UDP mirrors TCP cascade (desync→ByeDPI UDP ASSOCIATE, tunnel→sing-box SOCKS UDP); QUIC UDP/443 drop → TCP TLS."
+    },
+    {
+      "id": "imvu",
+      "label": "IMVU",
+      "default_enabled": true,
+      "domains": [
+        "imvu.com",
+        "www.imvu.com",
+        "secure.imvu.com",
+        "api.imvu.com",
+        "chat.imvu.com",
+        "webasset-akm.imvu.com",
+        "static-akm.imvu.com",
+        "userimages-akm.imvu.com",
+        "asset-server-akm.imvu.com",
+        "asset-server.imvu.com",
+        "avatars.imvu.com",
+        "im.vu"
+      ],
+      "domain_suffix": [
+        ".imvu.com",
+        ".im.vu"
+      ],
+      "resolve_hosts": [
+        "secure.imvu.com",
+        "api.imvu.com",
+        "chat.imvu.com",
+        "webasset-akm.imvu.com",
+        "static-akm.imvu.com",
+        "userimages-akm.imvu.com",
+        "asset-server-akm.imvu.com"
+      ],
+      "probe_hosts": [
+        "secure.imvu.com"
+      ],
+      "notes": "Classic client (IMVUClient.exe) ignores system proxy; TUN selected-route required. CDN siblings (webasset/static/userimages/asset-server *-akm) cover half-loaded avatars/products. Domain expand auto-adds /32 on DNS observe under .imvu.com."
+    },
+    {
+      "id": "direct-games",
+      "label": "Games (always direct)",
+      "default_enabled": true,
+      "path_force": "direct",
+      "domain_suffix": [
+        ".steampowered.com",
+        ".steamcommunity.com",
+        ".steamstatic.com",
+        ".steamserver.net",
+        ".steamcontent.com",
+        ".steamusercontent.com",
+        ".steam-chat.com",
+        ".steamgames.com",
+        ".valvesoftware.com",
+        ".valve.net"
+      ],
+      "notes": "Ping ve anti-cheat için tunnel/desync yok."
+    }
+  ]
+}

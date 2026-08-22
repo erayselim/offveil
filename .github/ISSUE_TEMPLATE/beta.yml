@@ -1,0 +1,52 @@
+name: Beta report
+description: Toggle sonrası Discord 2 dk - ISS / Windows / SAC / tanılama
+title: "[beta] "
+labels: ["beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Preset sormayın. Çalışmazsa tanılama zip ekleyin.
+        SAC açıksa bu beta sizi kapsamaz (`docs/antivirus.md`).
+  - type: dropdown
+    id: discord_2min
+    attributes:
+      label: Toggle sonrası Discord 2 dakika içinde açıldı mı?
+      options:
+        - "Evet"
+        - "Hayır"
+        - "Kurulum olmadı (SmartScreen / SAC / Defender)"
+    validations:
+      required: true
+  - type: input
+    id: isp
+    attributes:
+      label: ISS adı
+      placeholder: TT / Superonline / Turksat / Turkcell / Vodafone / diğer
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows sürümü
+      placeholder: "Windows 11 24H2 (build 26100) x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: sac
+    attributes:
+      label: Smart App Control
+      options:
+        - "Kapalı"
+        - "Açık"
+        - "Bilmiyorum"
+    validations:
+      required: true
+  - type: textarea
+    id: av
+    attributes:
+      label: SmartScreen / Defender notu
+      placeholder: Run anyway yaptım / quarantine threat adı / exclusion
+  - type: markdown
+    attributes:
+      value: Tanılama paketini (`offveil` → Tanılama paketi) bu issue’ya ekleyin.
