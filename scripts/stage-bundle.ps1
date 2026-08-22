@@ -27,7 +27,7 @@ $required = @{
 }
 foreach ($src in $required.Keys) {
     if (-not (Test-Path $src)) {
-        throw "Missing sidecar $src — run offveil-core/scripts/fetch-*.ps1"
+        throw "Missing sidecar $src - run offveil-core/scripts/fetch-*.ps1"
     }
     Copy-Item $src (Join-Path $Dest $required[$src]) -Force
 }

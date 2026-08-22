@@ -15,7 +15,7 @@ $url = "$($DownloadBase.TrimEnd('/'))/$($setup.Name)"
 $pubDate = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 $doc = [ordered]@{
     version  = $Version
-    notes    = "Unsigned NSIS. SmartScreen: More info → Run anyway. SAC-on is unsupported. Verify SHA256SUMS.txt."
+    notes    = "Unsigned NSIS. SmartScreen: More info -> Run anyway. SAC-on is unsupported. Verify SHA256SUMS.txt."
     pub_date = $pubDate
     platforms = [ordered]@{
         "windows-x86_64"           = @{ signature = $signature; url = $url }
