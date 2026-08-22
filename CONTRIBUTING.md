@@ -5,7 +5,7 @@ credentials (`offveil-core/data/*.json`, `.secrets/`).
 
 ## Setup
 
-Go 1.25, Node 22, and a stable Rust toolchain. Then follow the Build
+Go 1.25.13, Node 22, and a stable Rust toolchain. Then follow the Build
 section in [README.md](README.md).
 
 ```powershell
