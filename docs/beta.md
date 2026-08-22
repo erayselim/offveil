@@ -1,4 +1,4 @@
-# Public Windows beta (`1.0.0-b1`)
+# Public Windows beta (`1.0.0-b2`)
 
 No phone-home. Measurement is the GitHub issue form.
 

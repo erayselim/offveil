@@ -27,7 +27,8 @@ export function SettingsPage({
   protection,
   onConnectionTest,
   onDiagnostics,
-  note,
+  testNote,
+  diagNote,
   error,
   diagPath,
   onOpenDiagFolder,
@@ -45,7 +46,8 @@ export function SettingsPage({
   protection: boolean;
   onConnectionTest: () => void;
   onDiagnostics: () => void;
-  note: string | null;
+  testNote: string | null;
+  diagNote: string | null;
   error: string | null;
   diagPath: string | null;
   onOpenDiagFolder: () => void;
@@ -123,22 +125,20 @@ export function SettingsPage({
             {m.connectionTest}
           </Button>
           {!protection && <p className="pref-hint">{m.connectionTestOff}</p>}
+          {testNote && <p className="tool-status">{testNote}</p>}
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="lg"
-          className="w-full"
-          disabled={busy}
-          onClick={() => onDiagnostics()}
-        >
-          {m.diagnostics}
-        </Button>
-      </div>
-
-      {note && (
-        <div className="tool-result">
-          <p>{note}</p>
+        <div className="tool-item">
+          <Button
+            type="button"
+            variant="secondary"
+            size="lg"
+            className="w-full"
+            disabled={busy}
+            onClick={() => onDiagnostics()}
+          >
+            {m.diagnostics}
+          </Button>
+          {diagNote && <p className="tool-status">{diagNote}</p>}
           {diagPath && (
             <div className="tool-result-actions">
               <Button
@@ -160,7 +160,7 @@ export function SettingsPage({
             </div>
           )}
         </div>
-      )}
+      </div>
 
       {error && (
         <Alert variant="destructive">

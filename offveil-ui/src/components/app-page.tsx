@@ -1,8 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
-
 export function AppPage({
   title,
   backLabel,
@@ -25,9 +23,9 @@ export function AppPage({
         <ChevronLeft strokeWidth={2} aria-hidden="true" />
         <span className="app-page-title">{title}</span>
       </button>
-      <ScrollArea className="app-page-scroll">
+      <div className="app-page-scroll scroll-fade-y no-scrollbar">
         <div className="app-page-body">{children}</div>
-      </ScrollArea>
+      </div>
     </section>
   );
 }

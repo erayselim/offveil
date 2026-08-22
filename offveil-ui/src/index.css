@@ -432,7 +432,8 @@
 .app-page-scroll {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .app-page-body {
@@ -568,18 +569,13 @@
   gap: 6px;
 }
 
-.tool-result {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.tool-result p {
+.tool-status {
   margin: 0;
   font-size: 12px;
+  font-weight: 500;
   line-height: 1.4;
   overflow-wrap: anywhere;
-  color: var(--muted-foreground);
+  color: var(--primary);
 }
 
 .tool-result-actions {
@@ -860,8 +856,7 @@
     initial-value: 40px;
   }
 
-  .scroll-fade-y,
-  [data-slot="scroll-area-viewport"] {
+  .scroll-fade-y {
     --ft: 0px;
     --fb: 40px;
     mask-image: linear-gradient(

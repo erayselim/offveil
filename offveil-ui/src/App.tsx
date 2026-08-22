@@ -13,7 +13,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { toast } from "sonner";
 import { AppearancePage } from "@/components/appearance-page";
 import {
   ChevronDownIcon,
@@ -40,7 +39,6 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { ProtectionPad } from "@/components/protection-pad";
-import { Toaster } from "@/components/ui/sonner";
 import {
   dismissTooltips,
   Tooltip,
@@ -257,7 +255,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyKind, setBusyKind] = useState<BusyKind>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [testNote, setTestNote] = useState<string | null>(null);
+  const [diagNote, setDiagNote] = useState<string | null>(null);
   const [autostartOn, setAutostartOn] = useState(true);
   const [autoconnectOn, setAutoconnectOn] = useState(true);
   const [diagPath, setDiagPath] = useState<string | null>(null);
@@ -267,9 +266,15 @@ export default function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateHint, setUpdateHint] = useState<"upToDate" | "failed" | null>(
+    null,
+  );
+  const [resetHint, setResetHint] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [downloadPct, setDownloadPct] = useState(0);
   const pollRef = useRef<number | null>(null);
+  const updateHintTimer = useRef<number | null>(null);
+  const resetHintTimer = useRef<number | null>(null);
   const paletteIconRef = useRef<PaletteIconHandle>(null);
   const settingsIconRef = useRef<SettingsIconHandle>(null);
   const chevronIconRef = useRef<ChevronDownIconHandle>(null);
@@ -278,9 +283,25 @@ export default function App() {
   const m = t(locale);
 
   const fail = (e: unknown) => {
-    const msg = String(e);
-    setError(msg);
-    toast.error(msg);
+    setError(String(e));
+  };
+
+  const flashUpdateHint = (kind: "upToDate" | "failed") => {
+    setUpdateHint(kind);
+    if (updateHintTimer.current) window.clearTimeout(updateHintTimer.current);
+    updateHintTimer.current = window.setTimeout(() => {
+      setUpdateHint(null);
+      updateHintTimer.current = null;
+    }, 5000);
+  };
+
+  const flashResetHint = () => {
+    setResetHint(true);
+    if (resetHintTimer.current) window.clearTimeout(resetHintTimer.current);
+    resetHintTimer.current = window.setTimeout(() => {
+      setResetHint(false);
+      resetHintTimer.current = null;
+    }, 5000);
   };
 
   const setLang = (next: Locale) => {
@@ -437,6 +458,13 @@ export default function App() {
     };
   }, [phase, busy, refreshStatus]);
 
+  useEffect(() => {
+    return () => {
+      if (updateHintTimer.current) window.clearTimeout(updateHintTimer.current);
+      if (resetHintTimer.current) window.clearTimeout(resetHintTimer.current);
+    };
+  }, []);
+
   async function onInstall() {
     setBusy(true);
     setBusyKind("connect");
@@ -450,7 +478,6 @@ export default function App() {
       } else {
         setPhase("setup");
         setError(m.setupDoneNoPipe);
-        toast.error(m.setupDoneNoPipe);
       }
     } catch (e) {
       fail(e);
@@ -496,7 +523,8 @@ export default function App() {
     try {
       const s = await invoke<Status>("restart_protection");
       setStatus(s);
-      setNote(null);
+      setTestNote(null);
+      setDiagNote(null);
       setPhase("ready");
     } catch (e) {
       if (isNeedsInstallError(e)) {
@@ -536,8 +564,7 @@ export default function App() {
     try {
       const rep = await invoke<TestReport>("run_connection_test");
       const line = formatTestLine(locale, rep);
-      setNote(line);
-      toast.success(line);
+      setTestNote(line);
       await refreshStatus();
     } catch (e) {
       fail(e);
@@ -554,8 +581,7 @@ export default function App() {
       const bundle = await invoke<DiagnosticsBundle>("export_diagnostics");
       setDiagPath(bundle.path);
       const line = formatDiagLine(locale, bundle.path);
-      setNote(line);
-      toast.success(line);
+      setDiagNote(line);
     } catch (e) {
       fail(e);
     } finally {
@@ -627,16 +653,16 @@ export default function App() {
     try {
       const update = await checkAppUpdate();
       if (!update) {
-        toast.success(m.upToDate);
+        flashUpdateHint("upToDate");
         return;
       }
       setPendingUpdate(update);
       setUpdateOpen(true);
     } catch (e) {
       if (isNoNewerRelease(e)) {
-        toast.success(m.upToDate);
+        flashUpdateHint("upToDate");
       } else {
-        toast.error(m.updateCheckFailed);
+        flashUpdateHint("failed");
       }
     } finally {
       setCheckingUpdates(false);
@@ -676,9 +702,10 @@ export default function App() {
     try {
       const s = await invoke<Status>("revert_network");
       setStatus(s);
-      setNote(null);
+      setTestNote(null);
+      setDiagNote(null);
       setPhase("ready");
-      toast.success(m.resetDone);
+      flashResetHint();
     } catch (e) {
       if (isNeedsInstallError(e)) {
         setPhase("setup");
@@ -790,7 +817,11 @@ export default function App() {
                         }
                       >
                         <DeleteIcon ref={deleteIconRef} size={16} />
-                        {m.reset}
+                        {busyKind === "reset"
+                          ? m.resetting
+                          : resetHint
+                            ? m.resetDone
+                            : m.reset}
                       </button>
                       <button
                         type="button"
@@ -805,7 +836,13 @@ export default function App() {
                         }
                       >
                         <CloudDownloadIcon ref={cloudIconRef} size={16} />
-                        {checkingUpdates ? m.checkingUpdates : m.checkUpdates}
+                        {checkingUpdates
+                          ? m.checkingUpdates
+                          : updateHint === "upToDate"
+                            ? m.upToDate
+                            : updateHint === "failed"
+                              ? m.updateCheckFailed
+                              : m.checkUpdates}
                       </button>
                     </div>
                   </footer>
@@ -826,7 +863,8 @@ export default function App() {
                   protection={protection}
                   onConnectionTest={() => void onConnectionTest()}
                   onDiagnostics={() => void onDiagnostics()}
-                  note={note}
+                  testNote={testNote}
+                  diagNote={diagNote}
                   error={error}
                   diagPath={diagPath}
                   onOpenDiagFolder={() => void onOpenDiagFolder()}
@@ -960,7 +998,6 @@ export default function App() {
             )}
           </DialogContent>
         </Dialog>
-        <Toaster theme={themePref} position="bottom-center" />
       </div>
     </TooltipProvider>
   );
