@@ -108,6 +108,7 @@ jobs:
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
           draft: false
+          make_latest: true
           generate_release_notes: false
           body_path: .github/release-body.md
           files: |
@@ -117,13 +118,3 @@ jobs:
             dist-release/latest.json
             dist-release/active.json
             dist-release/active.json.sig
-
-      - name: Refresh ruleset-latest channel
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view ruleset-latest 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create ruleset-latest --title "ruleset-latest" --notes "Signed ruleset channel. See the latest v* app release for the installer."
-          }
-          gh release upload ruleset-latest dist-release/active.json dist-release/active.json.sig --clobber

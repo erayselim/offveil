@@ -1,11 +1,11 @@
 {
   "name": "offveil-default",
   "version": 1,
-  "base_url": "https://github.com/erayselim/offveil/releases/download/ruleset-latest",
+  "base_url": "https://github.com/erayselim/offveil/releases/latest/download",
   "ruleset_file": "active.json",
   "signature_file": "active.json.sig",
   "public_key_hex": "cbec8bde20e58e0f31d8c6757d476c72b29b33d9665ceb0c81f1f21087d51fcc",
   "update_interval_hours": 24,
   "min_ruleset_version": 1,
-  "notes": "GitHub Release asset channel. Core verifies Ed25519 (raw file bytes) before applying. Offline → bundled/cache. Prod private key is CI-only."
+  "notes": "Same files as the latest v* GitHub Release. Core verifies Ed25519 before applying. Offline → bundled/cache. Prod private key is CI-only."
 }

@@ -7,7 +7,7 @@ section 5.
 |------|--|
 | `active.json` | Discord + IMVU (legacy-cdn) + Steam DIRECT (v4) |
 | `active.json.sig` | Ed25519 signature (base64) |
-| `channel.json` | Update channel (GitHub Release / CDN) |
+| `channel.json` | Update channel (`releases/latest/download`) |
 | `keys/` | Public key. Private key is a CI secret only (`REVOKED.md`) |
 
 ## Discord
