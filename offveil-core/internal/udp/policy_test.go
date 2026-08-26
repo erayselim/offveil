@@ -55,8 +55,11 @@ func TestIsVoiceHost(t *testing.T) {
 
 func TestQuicRejectRule(t *testing.T) {
 	r := udp.QuicRejectRule()
-	if r["network"] != "udp" || r["port"] != 443 {
-		t.Fatalf("%v", r)
+	if r["protocol"] != "quic" {
+		t.Fatalf("protocol=%v want quic", r["protocol"])
+	}
+	if _, ok := r["port"]; ok {
+		t.Fatalf("port-based drop would kill game UDP/443: %v", r)
 	}
 	if r["action"] != "reject" {
 		t.Fatalf("action=%v", r["action"])

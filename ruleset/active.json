@@ -1,6 +1,6 @@
 {
-  "version": 4,
-  "updated_at": "2026-07-21",
+  "version": 5,
+  "updated_at": "2026-08-26",
   "packages": [
     {
       "id": "discord",
@@ -41,7 +41,7 @@
       "probe_hosts": [
         "discord.com"
       ],
-      "notes": "Web + desktop + CDN. Voice/stream: domain_suffix .discord.gg / .discord.media (dynamic RTC). Faz 2.4: voice UDP mirrors TCP cascade (desync→ByeDPI UDP ASSOCIATE, tunnel→sing-box SOCKS UDP); QUIC UDP/443 drop → TCP TLS."
+      "notes": "Web + desktop + CDN. Voice/stream: domain_suffix .discord.gg / .discord.media (dynamic RTC). Voice UDP mirrors TCP cascade (desync→ByeDPI UDP ASSOCIATE, tunnel→sing-box SOCKS UDP); sniffed QUIC drop → TCP TLS."
     },
     {
       "id": "imvu",
@@ -77,7 +77,7 @@
       "probe_hosts": [
         "secure.imvu.com"
       ],
-      "notes": "Classic client (IMVUClient.exe) ignores system proxy; TUN selected-route required. CDN siblings (webasset/static/userimages/asset-server *-akm) cover half-loaded avatars/products. Domain expand auto-adds /32 on DNS observe under .imvu.com."
+      "notes": "Classic client (IMVUClient.exe) ignores system proxy. CDN siblings (webasset/static/userimages/asset-server *-akm) cover half-loaded avatars/products. Domain expand records siblings under .imvu.com."
     },
     {
       "id": "direct-games",
@@ -94,9 +94,17 @@
         ".steam-chat.com",
         ".steamgames.com",
         ".valvesoftware.com",
-        ".valve.net"
+        ".valve.net",
+        ".riotgames.com",
+        ".riotcdn.net",
+        ".pvp.net",
+        ".playvalorant.com",
+        ".leagueoflegends.com",
+        ".epicgames.com",
+        ".unrealengine.com",
+        ".faceit.com"
       ],
-      "notes": "Ping ve anti-cheat için tunnel/desync yok."
+      "notes": "Store and launcher HTTPS stay DIRECT. Match UDP is unlisted; TUN protocol split sends generic UDP DIRECT. No CDN wildcards."
     }
   ]
 }

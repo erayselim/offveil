@@ -16,6 +16,12 @@ const (
 	defaultTUNMTU     = 1280
 )
 
+// SplitDefaultCIDRs is a TUN split-default (not 0.0.0.0/0). Captures public
+// IPv4 for local desync; WARP stays selective via route rules.
+func SplitDefaultCIDRs() []string {
+	return []string{"0.0.0.0/1", "128.0.0.0/1"}
+}
+
 // SingBoxBuild is the generated selective tunnel config + metadata.
 type SingBoxBuild struct {
 	Provider ProviderID
@@ -37,10 +43,12 @@ type BuildParams struct {
 	TUNMTU        int
 	RouteCIDRs    []string
 	ExcludeCIDRs  []string
-	// AllowlistOutbound tags the allowlist path: "desync" or "tunnel".
+	// AllowlistOutbound tags the SOCKS-only (no TUN) path: "desync" or "tunnel".
 	AllowlistOutbound string
 	DesyncSOCKSHost   string
 	DesyncSOCKSPort   int
+	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
+	SpecialDomains []string
 }
 
 // BuildSingBoxConfig produces a selective SOCKS→tunnel config (no TUN).
@@ -58,8 +66,8 @@ func BuildSingBoxConfig(provider ProviderID, warp *WARPProfile, reality *Reality
 }
 
 // BuildSingBox produces SOCKS + optional TUN inbound. TUN uses auto_route with
-// route_address only (never 0.0.0.0/0). Allowlisted TUN traffic goes to desync
-// or tunnel; everything else stays direct via route.final.
+// route_address only (never 0.0.0.0/0). Empty TUN CIDRs become split-default
+// (0.0.0.0/1 + 128.0.0.0/1) for local HTTPS desync — not full WARP.
 func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 	if p.ListenIP == "" {
 		p.ListenIP = "127.0.0.1"
@@ -67,7 +75,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 	if p.ListenPort == 0 {
 		p.ListenPort = 18081
 	}
-	if len(p.TunnelDomains) == 0 {
+	if !p.EnableTUN && len(p.TunnelDomains) == 0 {
 		p.TunnelDomains = DefaultTunnelDomains()
 	}
 	if len(p.DirectDomains) == 0 {
@@ -82,7 +90,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		}
 	}
 	if p.Provider == "" {
-		if allowOut == "desync" {
+		if allowOut == "desync" || p.EnableTUN {
 			p.Provider = ProviderDesync
 		}
 	}
@@ -98,6 +106,9 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			p.TUNMTU = defaultTUNMTU
 		}
 		p.RouteCIDRs = FilterRouteCIDRs(p.RouteCIDRs, p.ExcludeCIDRs, p.WARP, p.TUNAddress)
+		if len(p.RouteCIDRs) == 0 {
+			p.RouteCIDRs = FilterRouteCIDRs(SplitDefaultCIDRs(), p.ExcludeCIDRs, p.WARP, p.TUNAddress)
+		}
 		if len(p.RouteCIDRs) == 0 {
 			return nil, fmt.Errorf("tun enabled but no public route CIDRs (refusing default-route)")
 		}
@@ -121,7 +132,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"auto_route":            true,
 			"strict_route":          false,
 			"route_address":         p.RouteCIDRs,
-			"route_exclude_address": defaultRouteExclude(),
+			"route_exclude_address": routeExcludeAddresses(p),
 			"stack":                 "system",
 		})
 	}
@@ -155,7 +166,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"rules": []any{
 				map[string]any{"action": "sniff"},
 				map[string]any{"protocol": "dns", "action": "hijack-dns"},
-				// Drop QUIC (UDP/443) so TCP HTTPS stays on tunnel/desync paths.
+				// Drop sniffed QUIC so TCP HTTPS stays on desync/tunnel; game UDP/443 stays ISS.
 				udp.QuicRejectRule(),
 				map[string]any{
 					"domain_suffix": p.DirectDomains,
@@ -169,28 +180,13 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		},
 	}
 
+	if p.EnableTUN || p.Provider == ProviderDesync {
+		prependDesyncOutbound(cfg, p)
+	}
+
 	switch p.Provider {
 	case ProviderDesync:
-		host := p.DesyncSOCKSHost
-		port := p.DesyncSOCKSPort
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		if port == 0 {
-			port = 18080
-		}
-		outbounds := cfg["outbounds"].([]any)
-		outbounds = append([]any{
-			map[string]any{
-				"type":        "socks",
-				"tag":         "desync",
-				"server":      host,
-				"server_port": port,
-				"version":     "5",
-			},
-		}, outbounds...)
-		cfg["outbounds"] = outbounds
-		appendAllowlistRules(cfg, p, "desync")
+		appendPolicyRules(cfg, p, "desync")
 
 	case ProviderWARP:
 		if p.WARP == nil {
@@ -232,7 +228,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 				"peers":       []any{peer},
 			},
 		}
-		appendAllowlistRules(cfg, p, "tunnel")
+		appendPolicyRules(cfg, p, "tunnel")
 
 	case ProviderReality:
 		if p.Reality == nil {
@@ -263,7 +259,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			},
 		}, outbounds...)
 		cfg["outbounds"] = outbounds
-		appendAllowlistRules(cfg, p, "tunnel")
+		appendPolicyRules(cfg, p, "tunnel")
 
 	default:
 		return nil, fmt.Errorf("unknown provider %q", p.Provider)
@@ -276,19 +272,65 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 	return &SingBoxBuild{Provider: p.Provider, JSON: raw}, nil
 }
 
-func appendAllowlistRules(cfg map[string]any, p BuildParams, outbound string) {
+func prependDesyncOutbound(cfg map[string]any, p BuildParams) {
+	host := p.DesyncSOCKSHost
+	port := p.DesyncSOCKSPort
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if port == 0 {
+		port = 18080
+	}
+	outbounds := cfg["outbounds"].([]any)
+	for _, o := range outbounds {
+		if m, ok := o.(map[string]any); ok && m["tag"] == "desync" {
+			return
+		}
+	}
+	cfg["outbounds"] = append([]any{
+		map[string]any{
+			"type":        "socks",
+			"tag":         "desync",
+			"server":      host,
+			"server_port": port,
+			"version":     "5",
+		},
+	}, outbounds...)
+}
+
+func appendPolicyRules(cfg map[string]any, p BuildParams, socksOutbound string) {
 	rules := cfg["route"].(map[string]any)["rules"].([]any)
 	if p.EnableTUN {
-		// Every packet that hit selected-route → TUN is allowlist traffic.
+		// Special tunnel suffixes (Discord IP-drop) — TCP + UDP.
+		if len(p.TunnelDomains) > 0 && (p.Provider == ProviderWARP || p.Provider == ProviderReality) {
+			rules = append(rules, map[string]any{
+				"domain_suffix": p.TunnelDomains,
+				"outbound":      "tunnel",
+			})
+		}
+		// Discord/IMVU voice UDP via ByeDPI; everything else UDP stays ISS.
+		if len(p.SpecialDomains) > 0 {
+			rules = append(rules, map[string]any{
+				"domain_suffix": p.SpecialDomains,
+				"network":       "udp",
+				"outbound":      "desync",
+			})
+		}
 		rules = append(rules, map[string]any{
-			"inbound":  "tun-in",
-			"outbound": outbound,
+			"network":  "udp",
+			"outbound": "direct",
+		})
+		rules = append(rules, map[string]any{
+			"network":  "tcp",
+			"port":     443,
+			"outbound": "desync",
+		})
+	} else if len(p.TunnelDomains) > 0 {
+		rules = append(rules, map[string]any{
+			"domain_suffix": p.TunnelDomains,
+			"outbound":      socksOutbound,
 		})
 	}
-	rules = append(rules, map[string]any{
-		"domain_suffix": p.TunnelDomains,
-		"outbound":      outbound,
-	})
 	cfg["route"].(map[string]any)["rules"] = rules
 }
 
@@ -302,11 +344,57 @@ func defaultRouteExclude() []string {
 		"192.168.0.0/16",
 		"224.0.0.0/4",
 		"255.255.255.255/32",
+		"1.1.1.1/32",
+		"1.0.0.1/32",
+		"8.8.8.8/32",
+		"8.8.4.4/32",
+		"9.9.9.9/32",
 	}
+}
+
+func routeExcludeAddresses(p BuildParams) []string {
+	out := append([]string{}, defaultRouteExclude()...)
+	seen := map[string]struct{}{}
+	for _, e := range out {
+		seen[e] = struct{}{}
+	}
+	add := func(cidr string) {
+		if cidr == "" {
+			return
+		}
+		if _, ok := seen[cidr]; ok {
+			return
+		}
+		seen[cidr] = struct{}{}
+		out = append(out, cidr)
+	}
+	if p.WARP != nil {
+		for _, ep := range []string{p.WARP.EndpointIPv4, p.WARP.EndpointHost} {
+			host, _ := splitHostPort(ep, 2408)
+			if ip, err := netip.ParseAddr(host); err == nil && ip.Is4() {
+				add(netip.PrefixFrom(ip, 32).String())
+			}
+		}
+	}
+	for _, e := range p.ExcludeCIDRs {
+		if n, err := normalizeCIDR(e); err == nil {
+			add(n)
+		}
+	}
+	return out
+}
+
+func isSplitDefault(p netip.Prefix) bool {
+	if !p.IsValid() || !p.Addr().Is4() || p.Bits() != 1 {
+		return false
+	}
+	a := p.Masked().Addr()
+	return a.IsUnspecified() || a == netip.MustParseAddr("128.0.0.0")
 }
 
 // FilterRouteCIDRs drops default routes, private nets, public DNS, the TUN
 // subnet, and the WARP endpoint so capture cannot black-hole or loop egress.
+// Split-default /1 prefixes are kept (local desync capture, not 0.0.0.0/0 WARP).
 func FilterRouteCIDRs(cidrs, extraExclude []string, warp *WARPProfile, tunAddr string) []string {
 	exclude := map[string]struct{}{
 		"1.1.1.1/32": {},
@@ -343,17 +431,22 @@ func FilterRouteCIDRs(cidrs, extraExclude []string, warp *WARPProfile, tunAddr s
 			continue
 		}
 		pref, err := netip.ParsePrefix(p)
-		if err != nil || pref.Bits() == 0 || !pref.Addr().Is4() {
+		if err != nil || !pref.Addr().Is4() {
 			continue
 		}
-		if pref.Addr().IsPrivate() || pref.Addr().IsLoopback() || pref.Addr().IsLinkLocalUnicast() || pref.Addr().IsMulticast() {
+		if pref.Bits() == 0 {
 			continue
 		}
-		if _, skip := exclude[p]; skip {
-			continue
-		}
-		if _, skip := exclude[netip.PrefixFrom(pref.Addr(), 32).String()]; skip {
-			continue
+		if !isSplitDefault(pref) {
+			if pref.Addr().IsPrivate() || pref.Addr().IsLoopback() || pref.Addr().IsLinkLocalUnicast() || pref.Addr().IsMulticast() {
+				continue
+			}
+			if _, skip := exclude[p]; skip {
+				continue
+			}
+			if _, skip := exclude[netip.PrefixFrom(pref.Addr(), 32).String()]; skip {
+				continue
+			}
 		}
 		if _, ok := seen[p]; ok {
 			continue

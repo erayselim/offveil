@@ -18,3 +18,17 @@ func TestPickEgressPrefersLowerMetric(t *testing.T) {
 		t.Fatalf("want Ethernet, got %+v", eg)
 	}
 }
+
+func TestPickEgressCopiesIPv4(t *testing.T) {
+	adapters := []capture.AdapterInfo{
+		{
+			Name: "Ethernet", OperStatus: "up", IPv4Metric: 25,
+			Gateways:     []string{"192.168.0.1"},
+			UnicastAddrs: []string{"fe80::1", "192.168.0.10"},
+		},
+	}
+	eg := capture.PickEgress(adapters)
+	if eg == nil || eg.IPv4 != "192.168.0.10" {
+		t.Fatalf("want egress IPv4, got %+v", eg)
+	}
+}

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/erayselim/offveil/offveil-core/internal/capture"
@@ -143,6 +144,74 @@ func TestStartStopStatus(t *testing.T) {
 	}
 }
 
+func TestStartUsesCatchAllNRPT(t *testing.T) {
+	var got offdns.Config
+	eng := newTestEngine(t).WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
+		got = cfg
+		return offdns.NewFakeSession(offdns.Info{
+			ListenAddr: cfg.ListenAddr,
+			LeakGuard:  cfg.ApplyLeakGuard,
+			NRPT:       len(cfg.NRPTSuffixes) > 0,
+		}), nil
+	})
+	if _, err := eng.Start("auto"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _, _ = eng.Stop() })
+
+	if got.ApplyLeakGuard {
+		t.Fatal("leak-guard must stay off; catch-all NRPT is the steering path")
+	}
+	if len(got.NRPTSuffixes) != 1 || got.NRPTSuffixes[0] != offdns.NRPTCatchAll {
+		t.Fatalf("NRPTSuffixes=%v want [%q]", got.NRPTSuffixes, offdns.NRPTCatchAll)
+	}
+	ns := offdns.NRPTNamespaces(got.NRPTSuffixes)
+	if len(ns) != 1 || ns[0] != "." {
+		t.Fatalf("NRPTNamespaces(%v)=%v want [.]", got.NRPTSuffixes, ns)
+	}
+	if got.OnQuery == nil {
+		t.Fatal("expected OnQuery for package expand")
+	}
+	// Non-package hosts must not panic; expandCandidate returns before goroutine.
+	got.OnQuery("youtube.com")
+	got.OnQuery("1.2.3.4.in-addr.arpa")
+}
+
+func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
+	var desCfg desync.Config
+	var tunCfg tunnel.Config
+	eng := newTestEngine(t).
+		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
+			return capture.NewFakeSession(capture.Info{
+				RoutesApplied: 1,
+				Egress:        &capture.EgressInfo{Name: "Ethernet", IPv4: "192.168.0.10"},
+			}), nil
+		}).
+		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
+			desCfg = cfg
+			return desync.NewFakeSession(desync.Info{
+				SocksAddr: "127.0.0.1:18080", Up: true, LastProbe: desync.FailOK,
+			}), nil
+		}).
+		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+			tunCfg = cfg
+			return tunnel.NewFakeSession(tunnel.Info{
+				ProviderID: tunnel.ProviderDesync, Up: true, LastProbe: tunnel.FailOK,
+			}), nil
+		})
+	if _, err := eng.Start("auto"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = eng.Stop() })
+	if desCfg.ConnIP != "192.168.0.10" {
+		t.Fatalf("ConnIP=%q want egress IPv4", desCfg.ConnIP)
+	}
+	got := strings.Join(tunCfg.RouteCIDRs, ",")
+	if !strings.Contains(got, "0.0.0.0/1") || !strings.Contains(got, "128.0.0.0/1") {
+		t.Fatalf("RouteCIDRs=%v want split-default", tunCfg.RouteCIDRs)
+	}
+}
+
 func TestCrashCleanup(t *testing.T) {
 	eng := newTestEngine(t)
 	if _, err := eng.Start("auto"); err != nil {
@@ -245,14 +314,17 @@ func TestDesyncFailDegraded(t *testing.T) {
 	if st.State != engine.StateActive {
 		t.Fatalf("state=%s want active (tunnel recovered)", st.State)
 	}
-	if st.OutboundHint != "tunnel" {
-		t.Fatalf("hint=%q want tunnel", st.OutboundHint)
+	if st.OutboundHint != "desync" {
+		t.Fatalf("hint=%q want desync (default HTTPS)", st.OutboundHint)
 	}
 	if st.Tunnel == nil {
 		t.Fatal("expected tunnel info")
 	}
 	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
-		t.Fatalf("targets=%+v", st.Targets)
+		t.Fatalf("discord target=%+v want tunnel", st.Targets[0])
+	}
+	if st.Desync == nil {
+		t.Fatal("ByeDPI must stay up; Discord tunnel is special-only")
 	}
 }
 
@@ -316,6 +388,9 @@ func TestDesyncFailEscalatesWithoutScan(t *testing.T) {
 			if cfg.AllowlistOutbound != "tunnel" {
 				t.Fatalf("outbound=%q want tunnel", cfg.AllowlistOutbound)
 			}
+			if cfg.DesyncSOCKS == "" {
+				t.Fatal("mixed dataplane needs ByeDPI SOCKS")
+			}
 			if !cfg.EnableTUN {
 				t.Fatal("expected EnableTUN")
 			}
@@ -337,11 +412,11 @@ func TestDesyncFailEscalatesWithoutScan(t *testing.T) {
 	if scanCalls != 0 {
 		t.Fatalf("scan should not block start, calls=%d", scanCalls)
 	}
-	if st.OutboundHint != "tunnel" {
-		t.Fatalf("hint=%q want tunnel", st.OutboundHint)
+	if st.OutboundHint != "desync" {
+		t.Fatalf("hint=%q want desync (default HTTPS)", st.OutboundHint)
 	}
-	if st.Desync != nil {
-		t.Fatal("ByeDPI should stop after tunnel escalate")
+	if st.Desync == nil {
+		t.Fatal("ByeDPI must stay up after Discord-only tunnel escalate")
 	}
 }
 
@@ -402,7 +477,7 @@ func TestTunnelFailRetryHint(t *testing.T) {
 	}
 }
 
-func TestProbeDirectSkipsSidecars(t *testing.T) {
+func TestProbeDirectStillStartsDesync(t *testing.T) {
 	uniquePolicyCache(t)
 	reg := cleanup.NewRegistry()
 	desyncStarted := false
@@ -433,18 +508,28 @@ func TestProbeDirectSkipsSidecars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if desyncStarted || tunnelStarted {
-		t.Fatalf("sidecars should not start for direct path")
+	if !desyncStarted || !tunnelStarted {
+		t.Fatalf("sidecars must start even when Discord is open (desync=%v tun=%v)", desyncStarted, tunnelStarted)
 	}
-	if st.OutboundHint != "direct" {
-		t.Fatalf("hint=%q", st.OutboundHint)
+	if st.OutboundHint != "desync" {
+		t.Fatalf("hint=%q want desync", st.OutboundHint)
 	}
 	if st.Summary != "Açık" {
 		t.Fatalf("summary=%q", st.Summary)
 	}
+	if path := ""; len(st.Targets) > 0 {
+		for _, tg := range st.Targets {
+			if tg.ID == "discord" {
+				path = tg.Path
+			}
+		}
+		if path != "direct" {
+			t.Fatalf("discord path=%q want direct", path)
+		}
+	}
 }
 
-func TestTunnelEscalatePaintsAllTargets(t *testing.T) {
+func TestTunnelEscalateDiscordOnly(t *testing.T) {
 	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
 	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
 	uniquePolicyCache(t)
@@ -493,28 +578,37 @@ func TestTunnelEscalatePaintsAllTargets(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if st.OutboundHint != "tunnel" {
-		t.Fatalf("hint=%q", st.OutboundHint)
+	if st.OutboundHint != "desync" {
+		t.Fatalf("hint=%q want desync", st.OutboundHint)
 	}
+	var discord, imvu ipc.TargetStatus
 	for _, tg := range st.Targets {
-		if tg.Path != "tunnel" || tg.Outcome != "ok" {
-			t.Fatalf("target %+v want tunnel/ok after escalate", tg)
+		switch tg.ID {
+		case "discord":
+			discord = tg
+		case "imvu":
+			imvu = tg
 		}
+	}
+	if discord.Path != "tunnel" {
+		t.Fatalf("discord=%+v want tunnel", discord)
+	}
+	if imvu.Path == "tunnel" {
+		t.Fatalf("IMVU must not inherit Discord tunnel: %+v", imvu)
 	}
 	if _, err := eng.Stop(); err != nil {
 		t.Fatal(err)
 	}
 
-	// Second start: ASN path cache should skip desync entirely.
 	st2, rpcErr := eng.Start("auto")
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if st2.OutboundHint != "tunnel" {
+	if st2.OutboundHint != "desync" {
 		t.Fatalf("2nd hint=%q", st2.OutboundHint)
 	}
-	if desyncCalls != 1 {
-		t.Fatalf("desyncCalls=%d want 1 (2nd start should skip desync via ASN path cache)", desyncCalls)
+	if desyncCalls != 2 {
+		t.Fatalf("desyncCalls=%d want 2 (ASN cache must not skip default desync)", desyncCalls)
 	}
 }
 
@@ -529,8 +623,7 @@ func TestProbeIPDropStartsTunnel(t *testing.T) {
 			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			t.Fatal("desync should not start for ip_drop")
-			return nil, nil
+			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
 		}).
 		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
 			return tunnel.NewFakeSession(tunnel.Info{
@@ -548,8 +641,11 @@ func TestProbeIPDropStartsTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.OutboundHint != "tunnel" || st.Tunnel == nil {
+	if st.OutboundHint != "desync" || st.Tunnel == nil {
 		t.Fatalf("%+v", st)
+	}
+	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
+		t.Fatalf("discord want tunnel, got %+v", st.Targets)
 	}
 }
 
@@ -565,8 +661,7 @@ func TestTunnelFailoverUsesSecondProvider(t *testing.T) {
 			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			t.Fatal("desync should not start for ip_drop")
-			return nil, nil
+			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
 		}).
 		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
 			calls++
@@ -599,8 +694,8 @@ func TestTunnelFailoverUsesSecondProvider(t *testing.T) {
 	if st.State != engine.StateActive {
 		t.Fatalf("state=%s", st.State)
 	}
-	if st.OutboundHint != "tunnel" || st.Tunnel == nil {
-		t.Fatalf("want tunnel path in outbound_hint/tunnel, got summary=%q hint=%q", st.Summary, st.OutboundHint)
+	if st.OutboundHint != "desync" || st.Tunnel == nil {
+		t.Fatalf("want desync default in outbound_hint, got summary=%q hint=%q", st.Summary, st.OutboundHint)
 	}
 	if st.Summary != "Açık" {
 		t.Fatalf("summary=%q", st.Summary)
@@ -676,10 +771,13 @@ func TestConnectionTestDoesNotDemoteTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := eng.Status()
-	if st.OutboundHint != "tunnel" {
-		t.Fatalf("hint=%q", st.OutboundHint)
+	if st.OutboundHint != "desync" {
+		t.Fatalf("hint=%q want desync", st.OutboundHint)
 	}
-	// Probe would say desync; must not demote live tunnel session.
+	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
+		t.Fatalf("discord path=%+v want tunnel", st.Targets)
+	}
+	// Probe would say desync; must not rewrite Discord target off tunnel.
 	eng.WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
 		return probe.Report{Results: []probe.Result{{
 			Target: hosts[0], Class: probe.ClassDPIReset, Path: "desync", OK: true,
@@ -689,8 +787,11 @@ func TestConnectionTestDoesNotDemoteTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	st2 := eng.Status()
-	if st2.OutboundHint != "tunnel" {
-		t.Fatalf("demoted to %q", st2.OutboundHint)
+	if st2.OutboundHint != "desync" {
+		t.Fatalf("hint=%q", st2.OutboundHint)
+	}
+	if len(st2.Targets) == 0 || st2.Targets[0].Path != "tunnel" {
+		t.Fatalf("discord demoted to %+v", st2.Targets)
 	}
 	if st2.Summary != "Açık" {
 		t.Fatalf("summary=%q", st2.Summary)

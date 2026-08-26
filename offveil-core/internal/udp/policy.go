@@ -1,15 +1,16 @@
-// Package udp covers Discord voice media UDP and QUIC (UDP/443).
+// Package udp covers Discord voice media UDP and QUIC (HTTP/3).
 // Voice signalling is TCP/WSS; media is a separate UDP path that needs
-// TUN or SOCKS5 UDP ASSOCIATE. QUIC is dropped so HTTPS falls back to TCP TLS.
+// TUN or SOCKS5 UDP ASSOCIATE. Sniffed QUIC is dropped so HTTPS falls
+// back to TCP TLS. Raw game UDP on port 443 is not QUIC and stays ISS.
 package udp
 
 import "strings"
 
-// QuicPolicy is how UDP/443 (HTTP/3) is handled.
+// QuicPolicy is how sniffed HTTP/3 (QUIC) is handled.
 type QuicPolicy string
 
 const (
-	// QuicDrop rejects UDP/443 so clients fall back to TCP TLS (desync/tunnel-safe).
+	// QuicDrop rejects sniffed QUIC so clients fall back to TCP TLS (desync/tunnel-safe).
 	QuicDrop QuicPolicy = "drop"
 )
 
@@ -43,25 +44,25 @@ func ForOutbound(tcpPath string) Info {
 		return Info{
 			VoicePath: VoiceDesync,
 			Quic:      QuicDrop,
-			Note:      "voice UDP → ByeDPI SOCKS5 UDP ASSOCIATE; QUIC/443 drop → TCP TLS",
+			Note:      "voice UDP → ByeDPI SOCKS5 UDP ASSOCIATE; sniffed QUIC drop → TCP TLS",
 		}
 	case "tunnel":
 		return Info{
 			VoicePath: VoiceTunnel,
 			Quic:      QuicDrop,
-			Note:      "voice UDP → sing-box SOCKS → selective tunnel; QUIC/443 drop → TCP TLS",
+			Note:      "voice UDP → sing-box SOCKS → selective tunnel; sniffed QUIC drop → TCP TLS",
 		}
 	case "direct":
 		return Info{
 			VoicePath: VoiceDirect,
 			Quic:      QuicDrop,
-			Note:      "voice UDP direct; QUIC/443 drop (force TCP HTTPS)",
+			Note:      "voice UDP direct; sniffed QUIC drop (force TCP HTTPS)",
 		}
 	default:
 		return Info{
 			VoicePath: VoiceDirect,
 			Quic:      QuicDrop,
-			Note:      "outbound unknown - voice UDP direct; QUIC/443 drop",
+			Note:      "outbound unknown - voice UDP direct; sniffed QUIC drop",
 		}
 	}
 }
@@ -80,13 +81,13 @@ func IsVoiceHost(host string) bool {
 	return strings.HasSuffix(h, ".discord.gg") || strings.HasSuffix(h, ".discord.media")
 }
 
-// QuicRejectRule is a sing-box route rule fragment: reject UDP/443 (QUIC).
-// Place early in route.rules (before domain tunnel rules).
+// QuicRejectRule is a sing-box route rule fragment: reject sniffed QUIC
+// (HTTP/3) so clients fall back to TCP TLS. Port 443 is not used — game
+// UDP on 443 is not QUIC and must stay DIRECT. Place after sniff.
 func QuicRejectRule() map[string]any {
 	return map[string]any{
-		"network": "udp",
-		"port":    443,
-		"action":  "reject",
-		"method":  "drop",
+		"protocol": "quic",
+		"action":   "reject",
+		"method":   "drop",
 	}
 }

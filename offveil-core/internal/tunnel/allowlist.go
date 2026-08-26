@@ -8,7 +8,7 @@ func DefaultTunnelDomains() []string {
 	return ruleset.MustLoadEmbedded().Doc.TunnelDomains()
 }
 
-// DefaultDirectDomains is the Steam / oyun seed that must stay DIRECT.
+// DefaultDirectDomains is the Steam / Riot / Epic / Faceit seed that must stay DIRECT.
 func DefaultDirectDomains() []string {
 	return ruleset.MustLoadEmbedded().Doc.DirectDomains()
 }

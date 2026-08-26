@@ -1,5 +1,7 @@
 package capture
 
+import "net/netip"
+
 // PickEgress chooses the best physical NIC for loop-prevention bind.
 // Lowest IPv4 metric among up adapters that have a gateway and are not TUN-like.
 func PickEgress(adapters []AdapterInfo) *EgressInfo {
@@ -25,5 +27,18 @@ func PickEgress(adapters []AdapterInfo) *EgressInfo {
 		IfIndex: best.IfIndex,
 		LUID:    best.LUID,
 		Gateway: gw,
+		IPv4:    FirstIPv4(best.UnicastAddrs),
 	}
+}
+
+// FirstIPv4 returns the first public-ish IPv4 unicast address (not loopback).
+func FirstIPv4(addrs []string) string {
+	for _, s := range addrs {
+		ip, err := netip.ParseAddr(s)
+		if err != nil || !ip.Is4() || ip.IsUnspecified() || ip.IsLoopback() {
+			continue
+		}
+		return ip.String()
+	}
+	return ""
 }

@@ -60,6 +60,9 @@ type Config struct {
 	ProbeHost string
 	// ProbeTimeout for TLS-via-SOCKS check.
 	ProbeTimeout time.Duration
+	// ConnIP binds ciadpi outbound sockets to the physical egress IPv4
+	// (--conn-ip) so split-default TUN cannot loop dest SYNs back into Wintun.
+	ConnIP string
 }
 
 // DefaultConfig returns ByeDPI sidecar defaults.

@@ -48,6 +48,15 @@ func TestBuildArgs(t *testing.T) {
 	}
 }
 
+func TestBuildArgsBindConnIP(t *testing.T) {
+	s := desync.DefaultSafeStrategy()
+	args := desync.BuildArgsBind("127.0.0.1", 18080, s, "192.168.1.10")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--conn-ip 192.168.1.10") {
+		t.Fatalf("missing --conn-ip: %v", args)
+	}
+}
+
 func TestBuildArgsStripsNoUDP(t *testing.T) {
 	s := desync.Strategy{
 		ID:   "bad",

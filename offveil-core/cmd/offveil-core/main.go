@@ -18,6 +18,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
+	"github.com/erayselim/offveil/offveil-core/internal/repair"
 	"github.com/erayselim/offveil/offveil-core/internal/version"
 )
 
@@ -42,7 +43,10 @@ func main() {
 	case "install":
 		mustServiceControl("install")
 	case "uninstall":
+		leftoverNetworkCleanup()
 		mustServiceControl("uninstall")
+	case "repair":
+		printRepair(repair.Run())
 	case "start":
 		mustServiceControl("start")
 	case "stop":
@@ -78,7 +82,8 @@ Usage:
   offveil-core                 Run as Windows Service (SCM)
   offveil-core run             Interactive foreground (dev)
   offveil-core install         Install Windows Service "offveil-core"
-  offveil-core uninstall       Remove Windows Service
+  offveil-core uninstall       Remove leftover NRPT/DNS, then the Windows Service
+  offveil-core repair          Restore leftover DNS/NRPT/adapter (no IPC; stop-fail safe)
   offveil-core setup           Install (if needed) + start - single elevation for UI
   offveil-core start|stop      Control installed service
   offveil-core status          Query SCM status
@@ -115,6 +120,24 @@ func runInteractive() error {
 	sig := <-sigCh
 	slog.Info("signal received", "sig", sig.String())
 	return p.Stop(svc)
+}
+
+func leftoverNetworkCleanup() {
+	printRepair(repair.LeftoverNetwork())
+}
+
+func printRepair(res repair.Result) {
+	for _, s := range res.Steps {
+		status := "ok"
+		if !s.OK {
+			status = "fail"
+		}
+		if s.Detail != "" {
+			fmt.Printf("repair %s: %s (%s)\n", s.Name, status, s.Detail)
+			continue
+		}
+		fmt.Printf("repair %s: %s\n", s.Name, status)
+	}
 }
 
 func mustServiceControl(action string) {

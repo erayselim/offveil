@@ -1,6 +1,15 @@
 ; offveil NSIS hooks — service + TUN lifecycle.
 ; Tauri only closes the UI process; offveil-core is a Windows service.
 
+; Catch-all NRPT leftover (Name=".") blackholes all DNS if the stub is gone.
+; Same rule GUID as offveil-core/internal/dns/nrpt_windows.go.
+!macro OffveilWipeNRPT
+  DetailPrint "offveil: removing NRPT leftover"
+  nsExec::ExecToLog 'reg.exe delete "HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\{0FF1E110-0D05-4000-8000-00FF1E1000D5}" /f'
+  nsExec::ExecToLog 'sc.exe control DnsCache paramchange'
+  nsExec::ExecToLog 'ipconfig /flushdns'
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "offveil: stopping offveil-core before file copy"
   nsExec::ExecToLog 'sc.exe stop offveil-core'
@@ -11,6 +20,7 @@
     nsExec::ExecToLog '"$INSTDIR\offveil-core.exe" stop'
     Sleep 1500
   preinstall_no_core:
+  !insertmacro OffveilWipeNRPT
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -44,8 +54,10 @@
   IfFileExists "$INSTDIR\offveil-core.exe" 0 preuninstall_no_core
     nsExec::ExecToLog '"$INSTDIR\offveil-core.exe" stop'
     Sleep 1500
+    nsExec::ExecToLog '"$INSTDIR\offveil-core.exe" repair'
     nsExec::ExecToLog '"$INSTDIR\offveil-core.exe" uninstall'
   preuninstall_no_core:
+  !insertmacro OffveilWipeNRPT
   nsExec::ExecToLog 'sc.exe stop offveil-core'
   nsExec::ExecToLog 'sc.exe delete offveil-core'
   nsExec::ExecToLog 'sc.exe stop OffveilCore'

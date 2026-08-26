@@ -30,3 +30,15 @@ func TestClearLearnedState(t *testing.T) {
 		t.Fatal("policy cache still present")
 	}
 }
+
+func TestLeftoverNetworkSkipsPolicy(t *testing.T) {
+	res := LeftoverNetwork()
+	for _, s := range res.Steps {
+		if s.Name == "policy" {
+			t.Fatal("LeftoverNetwork must not clear learned DPI policy")
+		}
+	}
+	if len(res.Steps) == 0 {
+		t.Fatal("expected network steps")
+	}
+}

@@ -20,7 +20,7 @@ func TestParseBundled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version < 4 {
+	if doc.Version < 5 {
 		t.Fatalf("version %d", doc.Version)
 	}
 	tun := doc.TunnelDomains()
@@ -31,8 +31,10 @@ func TestParseBundled(t *testing.T) {
 		t.Fatalf("tunnel missing imvu: %v", tun)
 	}
 	dir := doc.DirectDomains()
-	if !contains(dir, "steampowered.com") {
-		t.Fatalf("direct missing steam: %v", dir)
+	for _, want := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
+		if !contains(dir, want) {
+			t.Fatalf("direct missing %s: %v", want, dir)
+		}
 	}
 	rh := doc.ResolveHosts()
 	if !contains(rh, "gateway.discord.gg") || !contains(rh, "webasset-akm.imvu.com") {
@@ -41,6 +43,11 @@ func TestParseBundled(t *testing.T) {
 	ph := doc.ProbeHosts()
 	if len(ph) < 2 || ph[0] != "discord.com" {
 		t.Fatalf("probe hosts: %v", ph)
+	}
+	for _, bad := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
+		if contains(ph, bad) || contains(rh, bad) {
+			t.Fatalf("exclude host leaked into probe/resolve: %s probe=%v resolve=%v", bad, ph, rh)
+		}
 	}
 }
 
@@ -70,7 +77,7 @@ func TestRemoteUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := ruleset.BundledActive()
-	remoteBody := []byte(strings.Replace(string(body), `"version": 4`, `"version": 99`, 1))
+	remoteBody := []byte(strings.Replace(string(body), `"version": 5`, `"version": 99`, 1))
 	sig := ruleset.Sign(priv, remoteBody)
 
 	mux := http.NewServeMux()

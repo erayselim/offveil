@@ -42,6 +42,14 @@ func Run() Result {
 	return r
 }
 
+// LeftoverNetwork restores NRPT / adapter DNS leftovers without clearing
+// learned DPI policy. Used on service uninstall so upgrades do not wipe caches.
+func LeftoverNetwork() Result {
+	var r Result
+	network(&r)
+	return r
+}
+
 // ClearLearnedState deletes persisted desync strategy + ASN path caches.
 func ClearLearnedState() error {
 	var first error

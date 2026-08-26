@@ -46,7 +46,7 @@ func Start(cfg Config) (Session, error) {
 	if cfg.ProbeTimeout <= 0 {
 		cfg.ProbeTimeout = 12 * time.Second
 	}
-	if len(cfg.TunnelDomains) == 0 {
+	if !cfg.EnableTUN && len(cfg.TunnelDomains) == 0 {
 		cfg.TunnelDomains = DefaultTunnelDomains()
 	}
 	if len(cfg.DirectDomains) == 0 {
@@ -358,6 +358,7 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		ListenIP:          cfg.ListenIP,
 		ListenPort:        cfg.ListenPort,
 		TunnelDomains:     cfg.TunnelDomains,
+		SpecialDomains:    cfg.SpecialDomains,
 		DirectDomains:     cfg.DirectDomains,
 		EnableTUN:         cfg.EnableTUN,
 		TUNInterface:      iface,

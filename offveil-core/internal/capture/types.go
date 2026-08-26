@@ -21,7 +21,7 @@ type ResolveFunc func(ctx context.Context, host string) ([]netip.Addr, error)
 
 // Config controls capture bring-up.
 type Config struct {
-	// Allowlist is selected-route destinations (host or prefix). Never default-route.
+	// Allowlist is optional extra destinations (host or prefix). Never default-route.
 	Allowlist []netip.Prefix
 	// ResolveHosts are A/AAAA lookup seeds merged into allowlist.
 	ResolveHosts []string
@@ -34,7 +34,7 @@ type Config struct {
 	MTU         int
 }
 
-// DefaultConfig returns selected Discord routes, no full tunnel.
+// DefaultConfig returns capture defaults. Engine fills resolve hosts from the ruleset.
 func DefaultConfig() Config {
 	hosts := []string{
 		"discord.com",
@@ -71,12 +71,13 @@ type AdapterInfo struct {
 	IsTUNLike    bool     `json:"is_tun_like,omitempty"`
 }
 
-// EgressInfo is the physical NIC used for loop-prevention bind later (sing-box).
+// EgressInfo is the physical NIC used for loop-prevention bind later (ciadpi --conn-ip).
 type EgressInfo struct {
 	Name    string `json:"name"`
 	IfIndex uint32 `json:"if_index"`
 	LUID    uint64 `json:"luid"`
 	Gateway string `json:"gateway,omitempty"`
+	IPv4    string `json:"ipv4,omitempty"`
 }
 
 // Info is runtime capture status surfaced via engine/status.
@@ -97,7 +98,7 @@ type Info struct {
 type Session interface {
 	Info() Info
 	Close() error
-	// AddPrefixes installs extra selected-route /32s (domain expand).
+	// AddPrefixes installs extra destination prefixes (domain expand).
 	// Already-present prefixes are skipped. Returns how many were newly added.
 	AddPrefixes(prefixes []netip.Prefix) (added int, err error)
 	// AttachAdapter binds to an existing Wintun (sing-box TUN) by friendly name

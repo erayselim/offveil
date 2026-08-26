@@ -68,7 +68,7 @@ func newNRPTGuard(stubHost string, domains []string) (*nrptGuard, error) {
 		return nil, err
 	}
 
-	FlushResolverCache()
+	reloadDNSClient()
 	slog.Info("dns: NRPT applied", "namespaces", len(ns), "stub", host)
 	return &nrptGuard{applied: true}, nil
 }
@@ -102,7 +102,7 @@ func NRPTPresent() bool {
 // RemoveNRPT deletes the offveil NRPT rule. Missing is OK.
 func RemoveNRPT() error {
 	err := registry.DeleteKey(registry.LOCAL_MACHINE, nrptKeyPath+`\`+nrptRuleName)
-	FlushResolverCache()
+	reloadDNSClient()
 	if err != nil && !isNotFound(err) {
 		return err
 	}
@@ -122,10 +122,46 @@ func isNotFound(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "cannot find")
 }
 
+const (
+	// SERVICE_CONTROL_PARAMCHANGE — DnsCache reloads DnsPolicyConfig from the registry.
+	serviceControlParamChange = 6
+)
+
 var (
 	moddnsapi              = windows.NewLazySystemDLL("dnsapi.dll")
 	procFlushResolverCache = moddnsapi.NewProc("DnsFlushResolverCache")
 )
+
+// reloadDNSClient pushes NRPT registry changes into DnsCache memory, then flushes answers.
+func reloadDNSClient() {
+	notifyDNSClientReload()
+	FlushResolverCache()
+}
+
+func notifyDNSClientReload() {
+	name, err := windows.UTF16PtrFromString("DnsCache")
+	if err != nil {
+		return
+	}
+	mgr, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		slog.Debug("dns: OpenSCManager", "err", err)
+		return
+	}
+	defer windows.CloseServiceHandle(mgr)
+
+	svc, err := windows.OpenService(mgr, name, windows.SERVICE_PAUSE_CONTINUE)
+	if err != nil {
+		slog.Debug("dns: OpenService DnsCache", "err", err)
+		return
+	}
+	defer windows.CloseServiceHandle(svc)
+
+	var status windows.SERVICE_STATUS
+	if err := windows.ControlService(svc, serviceControlParamChange, &status); err != nil {
+		slog.Debug("dns: DnsCache PARAMCHANGE", "err", err)
+	}
+}
 
 // FlushResolverCache clears the Windows DNS client cache (ipconfig /flushdns).
 func FlushResolverCache() {

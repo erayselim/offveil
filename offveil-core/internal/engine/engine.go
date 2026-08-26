@@ -303,8 +303,13 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	dnsCfg := offdns.DefaultConfig()
 	dnsCfg.ApplyLeakGuard = false
-	dnsCfg.NRPTSuffixes = tunnelDomains
+	// Catch-all NRPT: every Windows DNS Client name hits the stub. Leak-guard
+	// stays off (no NIC rewrite). TUN uses split-default for local desync; not full WARP.
+	dnsCfg.NRPTSuffixes = []string{offdns.NRPTCatchAll}
 	dnsCfg.OnQuery = func(host string) {
+		if !e.expandCandidate(host) {
+			return
+		}
 		go e.handleExpandQuery(host)
 	}
 
@@ -364,51 +369,20 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	rep.ISPHint = e.policy.ISPHint()
 	e.lastProbe = &rep
 
-	chosenPath := policy.PathDesync
+	// Probe updates the matching special package only — not the session outbound.
 	if len(rep.Results) > 0 {
-		r := rep.Results[0]
-		chosenPath = r.Path
-		if chosenPath == "" {
-			chosenPath = probe.PathFor(r.Class)
-		}
-		if rep.Chosen != "" {
-			chosenPath = rep.Chosen
-		}
-		// Warm cache: reuse fresh entry unless probe forces a more severe path.
-		if pe, ok := e.policy.Lookup(r.Target); ok && pe.Path != "" {
-			chosenPath = probe.PreferPath(pe.Path, chosenPath)
-		}
-		// Persisted ASN path (survives service restart): skip wasted desync when
-		// this ISS already needed a heavier path - never override a healthy direct probe.
-		if e.asnPathStore == nil {
-			if s, err := policy.OpenASNPathStore(""); err == nil {
-				e.asnPathStore = s
-			}
-		}
-		if e.asnPathStore != nil && chosenPath != policy.PathDirect {
-			if persisted, ok := e.asnPathStore.Lookup(e.policy.ASN()); ok {
-				chosenPath = probe.PreferPath(persisted, chosenPath)
-				slog.Info("engine: asn path cache", "asn", e.policy.ASN(), "path", persisted, "chosen", chosenPath)
-			}
-		}
 		for _, pr := range rep.Results {
 			path := pr.Path
 			if path == "" {
 				path = probe.PathFor(pr.Class)
 			}
-			// Never demote a stronger in-memory path with a weaker probe class.
 			if pe, ok := e.policy.Lookup(pr.Target); ok && pe.Path != "" {
 				path = probe.PreferPath(pe.Path, path)
 			}
-			path = probe.PreferPath(chosenPath, path)
 			e.policy.Put(pr.Target, path, string(pr.Class), "probe:session")
 			applyProbeResult(targets, rs.Doc, pr.Target, string(pr.Class), path)
 			slog.Info("engine: probe", "target", pr.Target, "class", pr.Class, "path", path,
 				"confidence", pr.Confidence, "took", pr.Took)
-		}
-		// Align primary target with session Chosen when multi-host.
-		if len(targets) > 0 && chosenPath != "" {
-			targets[0].Path = chosenPath
 		}
 	}
 
@@ -428,224 +402,170 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 		return addrs[0], nil
 	}
 
-	needDesync := chosenPath == policy.PathDesync
-	needTunnel := chosenPath == policy.PathTunnel
+	probeHost := "discord.com"
+	if len(probeHosts) > 0 {
+		probeHost = probeHosts[0]
+	}
+	discordPath := targetPath(targets, "discord")
+	if discordPath == "" || discordPath == "none" {
+		discordPath = policy.PathDesync
+	}
+
 	var dsi desync.Info
-
-	if needDesync {
-		probeHost := "discord.com"
-		if len(probeHosts) > 0 {
-			probeHost = probeHosts[0]
-		}
-		asn := e.policy.ASN()
-
-		store := e.strategyStore
-		if store == nil {
-			if s, err := desync.OpenStrategyStore(""); err == nil {
-				store = s
-				e.strategyStore = s
-			} else {
-				slog.Warn("engine: desync strategy store unavailable", "err", err)
-			}
-		}
-
-		strat := desync.DefaultSafeStrategy()
-		stratSource := "default"
-		if store != nil {
-			if cached, ok := store.Lookup(asn); ok {
-				strat = cached
-				stratSource = "asn-cache"
-			}
-		}
-
-		desCfg := desync.DefaultConfig()
-		desCfg.Strategy = strat
-		desCfg.Sink = e.policy
-		desCfg.AssignJob = e.job.Assign
-		desCfg.Resolve = resolveOne
-		desCfg.ProbeHost = probeHost
-
-		desStart := e.startDesync
-		if desStart == nil {
-			desStart = desync.Start
-		}
-		desSess, err := desStart(desCfg)
-		if err != nil {
-			_ = dnsSess.Close()
-			e.dns = nil
-			e.dnsInfo = nil
-			_ = sess.Close()
-			e.cap = nil
-			e.captureInfo = nil
-			_ = e.job.Close()
-			e.job = nil
-			e.state = StateStopped
-			msg := fmt.Sprintf("desync: %v", err)
-			e.lastError = &msg
-			return e.statusLocked(), &ipc.RPCError{Code: ipc.CodeEngineFailed, Message: msg}
-		}
-		e.des = desSess
-		dsi = desSess.Info()
-		e.desyncInfo = &dsi
-		slog.Info("engine: desync started", "strategy", dsi.StrategyID, "source", stratSource, "probe", dsi.LastProbe)
-
-		// Persist working strategy under ISS ASN.
-		if dsi.LastProbe == desync.FailOK && store != nil {
-			_ = store.Put(asn, strat, probeHost)
-		}
-
-		// Desync probe fail → escalate to tunnel immediately. A blocking
-		// blockcheck scan made toggle-on take 10-20s while packets were still
-		// black-holed; strategy search can happen next session via ASN cache.
-		if dsi.LastProbe != desync.FailOK {
-			if store != nil && stratSource == "asn-cache" {
-				_ = store.Delete(asn)
-			}
-			needTunnel = true
-			slog.Info("engine: desync probe failed, escalating to tunnel",
-				"class", dsi.LastProbe, "strategy", dsi.StrategyID)
-		}
-
-		targets[0].Path = policy.PathDesync
-		switch dsi.LastProbe {
-		case desync.FailOK:
-			if targets[0].Outcome == "unknown" || targets[0].Outcome == string(probe.ClassDPIReset) ||
-				targets[0].Outcome == string(probe.ClassTimeout) || targets[0].Outcome == string(probe.ClassDNSPoison) {
-				targets[0].Outcome = "ok"
-			}
-			targets[0].Path = policy.PathDesync
-		case desync.FailReset:
-			targets[0].Outcome = "dpi_reset"
-			targets[0].Path = policy.PathTunnel
-			needTunnel = true
-		case desync.FailSSLErr:
-			targets[0].Outcome = "ssl_err"
-			targets[0].Path = policy.PathTunnel
-			needTunnel = true
-		case desync.FailTimeout:
-			targets[0].Outcome = "timeout"
-			targets[0].Path = policy.PathTunnel
-			needTunnel = true
-		}
-		if pe, ok := e.policy.Lookup("discord.com"); ok {
-			// Prefer the more forced path (desync fail→tunnel must not be demoted by stale probe cache).
-			targets[0].Path = probe.PreferPath(pe.Path, targets[0].Path)
-			if targets[0].Path == policy.PathTunnel {
-				needTunnel = true
-			}
-			if pe.Class != "" && (targets[0].Outcome == "unknown" || targets[0].Outcome == "ok") {
-				if pe.Class != "open" {
-					targets[0].Outcome = pe.Class
-				}
-			}
-		}
-	}
-
-	if needDesync || needTunnel {
-		tunCfg := tunnel.DefaultConfig()
-		tunCfg.Sink = e.policy
-		tunCfg.AssignJob = e.job.Assign
-		tunCfg.Resolve = resolveOne
-		tunCfg.EnableTUN = true
-		tunCfg.TUNInterface = capture.AdapterName
-		tunCfg.TUNAddress = capture.TunIPv4
-		tunCfg.TUNMTU = capture.DefaultMTU
-		if e.captureInfo != nil {
-			tunCfg.RouteCIDRs = append([]string{}, e.captureInfo.RoutePrefixes...)
-		}
-		if len(tunnelDomains) > 0 {
-			tunCfg.TunnelDomains = tunnelDomains
-		}
-		if len(directDomains) > 0 {
-			tunCfg.DirectDomains = directDomains
-		}
-		if needTunnel {
-			tunCfg.AllowlistOutbound = "tunnel"
-			if len(probeHosts) > 0 {
-				tunCfg.ProbeHost = probeHosts[0]
-			}
+	asn := e.policy.ASN()
+	store := e.strategyStore
+	if store == nil {
+		if s, err := desync.OpenStrategyStore(""); err == nil {
+			store = s
+			e.strategyStore = s
 		} else {
-			tunCfg.AllowlistOutbound = "desync"
-			tunCfg.DesyncSOCKS = dsi.SocksAddr
-			if tunCfg.DesyncSOCKS == "" {
-				tunCfg.DesyncSOCKS = "127.0.0.1:18080"
-			}
-			tunCfg.ProbeHost = "" // ByeDPI already probed
-		}
-		tunStart := e.startTunnel
-		if tunStart == nil {
-			tunStart = tunnel.Start
-		}
-		tunSess, terr := tunStart(tunCfg)
-		if terr != nil {
-			msg := fmt.Sprintf("tunnel: %v", terr)
-			e.lastError = &msg
-			if needTunnel {
-				targets[0].Outcome = "retry"
-			}
-			slog.Warn("engine: dataplane hard fail", "err", terr, "outbound", tunCfg.AllowlistOutbound)
-		} else if tunSess != nil {
-			e.tun = tunSess
-			ti := tunSess.Info()
-			e.tunnelInfo = &ti
-			dataplaneOK := ti.Up && (ti.LastProbe == tunnel.FailOK || ti.LastProbe == "")
-			if dataplaneOK && ti.ProviderID == tunnel.ProviderDesync {
-				slog.Info("engine: desync TUN dataplane up")
-				attachCaptureAdapter(e.cap, capture.AdapterName)
-			} else if dataplaneOK {
-				targets[0].Path = policy.PathTunnel
-				if targets[0].Outcome == "unknown" || targets[0].Outcome == "dpi_reset" ||
-					targets[0].Outcome == "ssl_err" || targets[0].Outcome == "timeout" ||
-					targets[0].Outcome == string(probe.ClassIPDrop) ||
-					targets[0].Outcome == string(probe.ClassThrottleSuspect) {
-					targets[0].Outcome = "ok"
-				}
-				if e.policy != nil {
-					host := "discord.com"
-					if len(probeHosts) > 0 {
-						host = probeHosts[0]
-					}
-					e.policy.OnTunnelOK(host, string(ti.ProviderID))
-				}
-				if e.des != nil {
-					_ = e.des.Close()
-					e.des = nil
-					e.desyncInfo = nil
-					dsi = desync.Info{}
-				}
-				attachCaptureAdapter(e.cap, capture.AdapterName)
-			} else if ti.RetryHint || !ti.Up {
-				targets[0].Outcome = "retry"
-				targets[0].Path = policy.PathTunnel
-			}
+			slog.Warn("engine: strategy store unavailable", "err", err)
 		}
 	}
 
-	if chosenPath == policy.PathDirect && !needDesync && !needTunnel {
-		targets[0].Path = policy.PathDirect
-		if targets[0].Outcome == string(probe.ClassOpen) {
-			targets[0].Outcome = "ok"
+	strat := desync.DefaultSafeStrategy()
+	stratSource := "default"
+	if store != nil {
+		if cached, ok := store.Lookup(asn); ok {
+			strat = cached
+			stratSource = "asn-cache"
 		}
 	}
-	// Transparent TUN: one session path covers every curated package.
-	// Always repaint secondaries after escalate (probe may leave them on desync/timeout).
-	if len(targets) > 0 && targets[0].Path != "" && targets[0].Path != "none" {
-		sessionPath := targets[0].Path
-		sessionOutcome := targets[0].Outcome
-		if sessionOutcome == "" || sessionOutcome == "unknown" {
-			sessionOutcome = "ok"
+
+	desCfg := desync.DefaultConfig()
+	desCfg.Strategy = strat
+	desCfg.Sink = e.policy
+	desCfg.AssignJob = e.job.Assign
+	desCfg.Resolve = resolveOne
+	desCfg.ProbeHost = probeHost
+	desCfg.ConnIP = egressIPv4(e.captureInfo)
+
+	desStart := e.startDesync
+	if desStart == nil {
+		desStart = desync.Start
+	}
+	desSess, err := desStart(desCfg)
+	if err != nil {
+		_ = dnsSess.Close()
+		e.dns = nil
+		e.dnsInfo = nil
+		_ = sess.Close()
+		e.cap = nil
+		e.captureInfo = nil
+		_ = e.job.Close()
+		e.job = nil
+		e.state = StateStopped
+		msg := fmt.Sprintf("desync: %v", err)
+		e.lastError = &msg
+		return e.statusLocked(), &ipc.RPCError{Code: ipc.CodeEngineFailed, Message: msg}
+	}
+	e.des = desSess
+	dsi = desSess.Info()
+	e.desyncInfo = &dsi
+	slog.Info("engine: desync started", "strategy", dsi.StrategyID, "source", stratSource, "probe", dsi.LastProbe)
+
+	if dsi.LastProbe == desync.FailOK && store != nil {
+		_ = store.Put(asn, strat, probeHost)
+	}
+
+	needTunnel := discordPath == policy.PathTunnel
+	if dsi.LastProbe != "" && dsi.LastProbe != desync.FailOK {
+		if store != nil && stratSource == "asn-cache" {
+			_ = store.Delete(asn)
 		}
-		// On successful tunnel/desync, surface "ok" for all packages (not stale probe class).
-		if (sessionPath == policy.PathTunnel || sessionPath == policy.PathDesync) &&
-			(sessionOutcome == "ok" || sessionOutcome == string(probe.ClassOpen)) {
-			sessionOutcome = "ok"
+		needTunnel = true
+		discordPath = policy.PathTunnel
+		outcome := string(dsi.LastProbe)
+		switch dsi.LastProbe {
+		case desync.FailReset:
+			outcome = "dpi_reset"
+		case desync.FailSSLErr:
+			outcome = "ssl_err"
+		case desync.FailTimeout:
+			outcome = "timeout"
 		}
-		if sessionPath == policy.PathTunnel && e.tunnelInfo != nil && e.tunnelInfo.Up &&
-			e.tunnelInfo.LastProbe == tunnel.FailOK {
-			sessionOutcome = "ok"
+		setTarget(targets, "discord", policy.PathTunnel, outcome)
+		slog.Info("engine: desync probe failed, Discord special → tunnel",
+			"class", dsi.LastProbe, "strategy", dsi.StrategyID)
+	}
+
+	tunnelHosts, desyncUDP := splitSpecialHosts(rs.Doc, targets)
+	tunCfg := tunnel.DefaultConfig()
+	tunCfg.Sink = e.policy
+	tunCfg.AssignJob = e.job.Assign
+	tunCfg.Resolve = resolveOne
+	tunCfg.EnableTUN = true
+	tunCfg.TUNInterface = capture.AdapterName
+	tunCfg.TUNAddress = capture.TunIPv4
+	tunCfg.TUNMTU = capture.DefaultMTU
+	tunCfg.RouteCIDRs = append([]string{}, tunnel.SplitDefaultCIDRs()...)
+	tunCfg.DirectDomains = directDomains
+	tunCfg.SpecialDomains = desyncUDP
+	tunCfg.TunnelDomains = tunnelHosts
+	tunCfg.DesyncSOCKS = dsi.SocksAddr
+	if tunCfg.DesyncSOCKS == "" {
+		tunCfg.DesyncSOCKS = "127.0.0.1:18080"
+	}
+
+	if needTunnel {
+		tunCfg.AllowlistOutbound = "tunnel"
+		if len(probeHosts) > 0 {
+			tunCfg.ProbeHost = probeHosts[0]
 		}
-		paintTargets(targets, sessionPath, sessionOutcome)
-		syncLastProbePaths(e.lastProbe, sessionPath, sessionOutcome == "ok")
+	} else {
+		tunCfg.AllowlistOutbound = "desync"
+		tunCfg.ProbeHost = ""
+	}
+
+	tunStart := e.startTunnel
+	if tunStart == nil {
+		tunStart = tunnel.Start
+	}
+	tunSess, terr := tunStart(tunCfg)
+	if needTunnel && (terr != nil || tunSess == nil || !tunUp(tunSess)) {
+		if terr != nil {
+			slog.Warn("engine: special tunnel failed, falling back to desync dataplane", "err", terr)
+		}
+		setTarget(targets, "discord", policy.PathTunnel, "retry")
+		tunCfg.AllowlistOutbound = "desync"
+		tunCfg.SpecialDomains = append(append([]string{}, desyncUDP...), tunnelHosts...)
+		tunCfg.TunnelDomains = nil
+		tunCfg.ProbeHost = ""
+		tunSess, terr = tunStart(tunCfg)
+	}
+	if terr != nil {
+		msg := fmt.Sprintf("tunnel: %v", terr)
+		e.lastError = &msg
+		slog.Warn("engine: dataplane hard fail", "err", terr, "outbound", tunCfg.AllowlistOutbound)
+	} else if tunSess != nil {
+		e.tun = tunSess
+		ti := tunSess.Info()
+		e.tunnelInfo = &ti
+		dataplaneOK := ti.Up && (ti.LastProbe == tunnel.FailOK || ti.LastProbe == "")
+		if dataplaneOK {
+			attachCaptureAdapter(e.cap, capture.AdapterName)
+			if ti.ProviderID != tunnel.ProviderDesync && needTunnel {
+				setTarget(targets, "discord", policy.PathTunnel, "ok")
+				if e.policy != nil {
+					e.policy.OnTunnelOK(probeHost, string(ti.ProviderID))
+				}
+			}
+			slog.Info("engine: TUN dataplane up", "provider", ti.ProviderID, "special_tunnel", needTunnel)
+		} else if ti.RetryHint || !ti.Up {
+			setTarget(targets, "discord", policy.PathTunnel, "retry")
+		}
+	}
+
+	for i := range targets {
+		if targets[i].Path == "" || targets[i].Path == "none" {
+			targets[i].Path = policy.PathDesync
+			if targets[i].Outcome == "unknown" {
+				targets[i].Outcome = "ok"
+			}
+		}
+		if targets[i].Outcome == string(probe.ClassOpen) && targets[i].Path == policy.PathDirect {
+			targets[i].Outcome = "ok"
+		}
 	}
 	e.targets = targets
 
@@ -695,38 +615,16 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.since = &now
 	e.state = StateActive
 	e.protection = true
-	// User-facing summary stays short; path/provider live in outbound_hint + targets.
-	switch {
-	case needTunnel:
-		if e.tunnelInfo != nil && e.tunnelInfo.Up && e.tunnelInfo.LastProbe == tunnel.FailOK {
-			e.summary = "Açık"
-			e.state = StateActive
-		} else {
-			e.state = StateDegraded
-			e.summary = "Bozuldu"
-		}
-	case needDesync:
+	if e.tun != nil && e.tunnelInfo != nil && e.tunnelInfo.Up {
 		e.summary = "Açık"
-		if dsi.LastProbe != "" && dsi.LastProbe != desync.FailOK && e.tun == nil {
-			// Should be rare: desync failed but tunnel was not started.
-			e.state = StateDegraded
-			e.summary = "Bozuldu"
-		}
-	default:
-		e.summary = "Açık"
+		e.state = StateActive
+	} else {
+		e.state = StateDegraded
+		e.summary = "Bozuldu"
 	}
 
 	e.startReprobeLoop()
 	e.startReliabilityLocked()
-
-	if e.asnPathStore == nil {
-		if s, err := policy.OpenASNPathStore(""); err == nil {
-			e.asnPathStore = s
-		}
-	}
-	if e.asnPathStore != nil && len(targets) > 0 && targets[0].Path != "" && targets[0].Path != "none" {
-		_ = e.asnPathStore.Put(e.policy.ASN(), targets[0].Path)
-	}
 	e.freezeSupportLocked()
 
 	return e.statusLocked(), nil
@@ -892,44 +790,16 @@ func (e *Engine) Test(hosts []string) (*probe.Report, *ipc.RPCError) {
 	rep.ISPHint = e.policy.ISPHint()
 	e.lastProbe = &rep
 
-	// Live session path (transparent TUN) - connection test must not demote it.
-	sessionPath := ""
-	if len(e.targets) > 0 && e.targets[0].Path != "" && e.targets[0].Path != "none" {
-		sessionPath = e.targets[0].Path
-	}
-	if sessionPath == "" && e.tunnelInfo != nil && e.tunnelInfo.Up {
-		if e.tunnelInfo.ProviderID == tunnel.ProviderDesync {
-			sessionPath = policy.PathDesync
-		} else {
-			sessionPath = policy.PathTunnel
-		}
-	}
-	if sessionPath == "" && e.desyncInfo != nil && e.desyncInfo.Up {
-		sessionPath = policy.PathDesync
-	}
-
 	for _, r := range rep.Results {
 		path := r.Path
 		if path == "" {
 			path = probe.PathFor(r.Class)
 		}
-		if rep.Chosen != "" {
-			path = probe.PreferPath(path, rep.Chosen)
-		}
 		if pe, ok := e.policy.Lookup(r.Target); ok && pe.Path != "" {
 			path = probe.PreferPath(pe.Path, path)
 		}
-		if sessionPath != "" {
-			path = probe.PreferPath(sessionPath, path)
-		}
 		e.policy.Put(r.Target, path, string(r.Class), "probe:test")
-		// Do not rewrite curated target rows - UI shows test result separately;
-		// session cascade (paintTargets) owns protection status.
 	}
-	if sessionPath != "" {
-		syncLastProbePaths(e.lastProbe, sessionPath, true)
-	}
-	// Keep user-facing summary as Açık/Bozuldu - UI renders test line from the RPC reply.
 	return &rep, nil
 }
 
@@ -1052,27 +922,16 @@ func (e *Engine) statusLocked() *ipc.Status {
 	}
 
 	hint := ""
-	if e.policy != nil {
-		hint = e.policy.HintFor("discord.com")
-	}
-	if hint == "" {
-		for _, t := range targets {
-			if t.ID == "discord" && t.Path != "" && t.Path != "none" {
-				hint = t.Path
-				break
-			}
-		}
-	}
-	if hint == "" && e.tunnelInfo != nil && e.tunnelInfo.Up {
+	if e.des != nil {
+		hint = policy.PathDesync
+	} else if e.tunnelInfo != nil && e.tunnelInfo.Up {
 		if e.tunnelInfo.ProviderID == tunnel.ProviderDesync {
 			hint = policy.PathDesync
 		} else {
 			hint = policy.PathTunnel
 		}
 	}
-	if hint == "" && e.desyncInfo != nil && e.desyncInfo.Up {
-		hint = policy.PathDesync
-	}
+	discordPath := targetPath(targets, "discord")
 
 	st := &ipc.Status{
 		State:        e.state,
@@ -1111,7 +970,11 @@ func (e *Engine) statusLocked() *ipc.Status {
 		st.Expand = exp
 	}
 	if e.protection {
-		st.UDP = udp.ForOutbound(hint)
+		udpPath := hint
+		if discordPath != "" && discordPath != "none" {
+			udpPath = discordPath
+		}
+		st.UDP = udp.ForOutbound(udpPath)
 	}
 	if h := e.healInfoLocked(); h != nil {
 		st.Heal = h
@@ -1161,4 +1024,40 @@ func attachCaptureAdapter(sess capture.Session, name string) {
 	if last != nil {
 		slog.Warn("engine: attach dataplane adapter", "err", last, "name", name)
 	}
+}
+
+func tunUp(s tunnel.Session) bool {
+	if s == nil {
+		return false
+	}
+	ti := s.Info()
+	return ti.Up && (ti.LastProbe == tunnel.FailOK || ti.LastProbe == "")
+}
+
+func egressIPv4(info *capture.Info) string {
+	if info == nil || info.Egress == nil {
+		return ""
+	}
+	return info.Egress.IPv4
+}
+
+func splitSpecialHosts(doc ruleset.Document, targets []ipc.TargetStatus) (tunnelHosts, desyncUDP []string) {
+	for _, pkg := range doc.EnabledPackages() {
+		if strings.EqualFold(pkg.PathForce, "direct") {
+			continue
+		}
+		hosts := pkg.RouteHosts()
+		if len(hosts) == 0 {
+			continue
+		}
+		switch targetPath(targets, pkg.ID) {
+		case policy.PathTunnel:
+			tunnelHosts = append(tunnelHosts, hosts...)
+		case policy.PathDirect:
+			// Discord open: UDP stays ISS; TCP/443 still hits default desync.
+		default:
+			desyncUDP = append(desyncUDP, hosts...)
+		}
+	}
+	return tunnelHosts, desyncUDP
 }

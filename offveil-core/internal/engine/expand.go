@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
-	"github.com/erayselim/offveil/offveil-core/internal/probe"
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 )
 
@@ -38,8 +37,11 @@ func targetsFromDoc(doc ruleset.Document) []ipc.TargetStatus {
 	return out
 }
 
-func paintTargets(targets []ipc.TargetStatus, path, outcome string) {
+func setTarget(targets []ipc.TargetStatus, id, path, outcome string) {
 	for i := range targets {
+		if targets[i].ID != id {
+			continue
+		}
 		if outcome != "" {
 			targets[i].Outcome = outcome
 		}
@@ -49,23 +51,13 @@ func paintTargets(targets []ipc.TargetStatus, path, outcome string) {
 	}
 }
 
-// syncLastProbePaths aligns diagnostics "Last probe" with the session cascade path
-// so support bundles do not show stale timeout→desync after a successful tunnel escalate.
-func syncLastProbePaths(rep *probe.Report, path string, ok bool) {
-	if rep == nil || path == "" {
-		return
-	}
-	rep.Chosen = path
-	for i := range rep.Results {
-		rep.Results[i].Path = path
-		if ok {
-			rep.Results[i].OK = true
-			if path == "tunnel" || path == "desync" || path == "direct" {
-				// Keep Class as the original failure reason (useful for support),
-				// but mark path/ok as the live cascade outcome.
-			}
+func targetPath(targets []ipc.TargetStatus, id string) string {
+	for _, t := range targets {
+		if t.ID == id {
+			return t.Path
 		}
 	}
+	return ""
 }
 
 func applyProbeResult(targets []ipc.TargetStatus, doc ruleset.Document, host, class, path string) {
@@ -86,11 +78,39 @@ func applyProbeResult(targets []ipc.TargetStatus, doc ruleset.Document, host, cl
 	}
 }
 
-// handleExpandQuery is called from the DNS stub when a client looks up a host.
-// Auto-expands TUN selected-routes for package siblings (legacy half-load CDN).
-func (e *Engine) handleExpandQuery(host string) {
+// normalizeExpandHost strips a stub QNAME. false = never expand (PTR, mDNS, empty).
+func normalizeExpandHost(host string) (string, bool) {
 	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 	if host == "" || strings.HasSuffix(host, ".arpa") || strings.HasSuffix(host, ".local") {
+		return "", false
+	}
+	return host, true
+}
+
+// expandCandidate is the cheap OnQuery gate: skip goroutine unless the host
+// belongs to a special package. Catch-all NRPT would otherwise spawn work for
+// every system lookup.
+func (e *Engine) expandCandidate(host string) bool {
+	host, ok := normalizeExpandHost(host)
+	if !ok {
+		return false
+	}
+	e.mu.Lock()
+	if !e.protection || e.rulesetSnap == nil {
+		e.mu.Unlock()
+		return false
+	}
+	doc := e.rulesetSnap.Doc
+	e.mu.Unlock()
+	_, ok = doc.MatchPackage(host)
+	return ok
+}
+
+// handleExpandQuery is called from the DNS stub when a client looks up a host.
+// Auto-expands sibling CDN hosts for legacy half-load (IMVU).
+func (e *Engine) handleExpandQuery(host string) {
+	host, ok := normalizeExpandHost(host)
+	if !ok {
 		return
 	}
 
@@ -120,8 +140,8 @@ func (e *Engine) handleExpandQuery(host string) {
 	for k := range e.expandSeen {
 		already[k] = struct{}{}
 	}
-	// Initial resolve seeds already have /32 routes from capture start  - 
-	// only suggest them again when they are the observed host (IP refresh).
+	// Resolve seeds are already known from capture start; only re-suggest
+	// when the observed host is itself a seed (IP refresh).
 	for _, rh := range doc.ResolveHosts() {
 		if rh != host {
 			already[rh] = struct{}{}

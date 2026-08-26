@@ -11,8 +11,8 @@ func TestIMVUPackageAndExpand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version < 4 {
-		t.Fatalf("want ruleset v4+, got %d", doc.Version)
+	if doc.Version < 5 {
+		t.Fatalf("want ruleset v5+, got %d", doc.Version)
 	}
 
 	pkg, ok := doc.MatchPackage("webasset-akm.imvu.com")
@@ -22,8 +22,10 @@ func TestIMVUPackageAndExpand(t *testing.T) {
 	if _, ok := doc.MatchPackage("de.secure.imvu.com"); !ok {
 		t.Fatal("suffix should cover de.secure.imvu.com")
 	}
-	if _, ok := doc.MatchPackage("steampowered.com"); ok {
-		t.Fatal("direct-games must not MatchPackage for expand")
+	for _, h := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
+		if _, ok := doc.MatchPackage(h); ok {
+			t.Fatalf("direct-games must not MatchPackage for expand: %s", h)
+		}
 	}
 
 	rh := doc.ResolveHosts()

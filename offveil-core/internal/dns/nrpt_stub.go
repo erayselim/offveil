@@ -11,3 +11,5 @@ func (g *nrptGuard) Close() error { return nil }
 func NRPTPresent() bool   { return false }
 func RemoveNRPT() error   { return nil }
 func FlushResolverCache() {}
+
+func reloadDNSClient() {}

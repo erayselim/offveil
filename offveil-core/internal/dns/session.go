@@ -86,7 +86,7 @@ func Start(cfg Config) (Session, error) {
 	if len(cfg.NRPTSuffixes) > 0 {
 		n, err := newNRPTGuard(cfg.ListenAddr, cfg.NRPTSuffixes)
 		if err != nil {
-			slog.Warn("dns: NRPT apply failed (stub still up; ISP DNS may poison allowlist)", "err", err)
+			slog.Warn("dns: NRPT apply failed (stub still up; ISP DNS may poison queries)", "err", err)
 		} else {
 			s.nrpt = n
 		}

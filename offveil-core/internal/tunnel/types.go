@@ -69,14 +69,16 @@ type Config struct {
 	ProbeHost string
 	// ProbeTimeout for TLS-via-SOCKS check.
 	ProbeTimeout time.Duration
-	// TunnelDomains override selective domain list (empty → DefaultTunnelDomains).
+	// TunnelDomains are suffixes sent to WARP/Reality (empty on TUN = none; no Discord fallback).
 	TunnelDomains []string
+	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
+	SpecialDomains []string
 	// DirectDomains override Steam/games DIRECT list (empty → DefaultDirectDomains).
 	DirectDomains []string
 	// SkipStart skips launching sing-box (unit tests / config-only).
 	SkipStart bool
 
-	// EnableTUN lets sing-box own Wintun + selected-route (contracts.md §6.1).
+	// EnableTUN lets sing-box own Wintun (contracts.md §6.1).
 	// Go capture must not create a competing adapter when this is true.
 	EnableTUN bool
 	// TUNInterface is the Wintun adapter name (default capture.AdapterName).
@@ -85,7 +87,7 @@ type Config struct {
 	TUNAddress string
 	// TUNMTU defaults to 1280.
 	TUNMTU int
-	// RouteCIDRs are selected-route prefixes (never 0.0.0.0/0). Required when EnableTUN.
+	// RouteCIDRs are TUN prefixes (never 0.0.0.0/0). Empty + EnableTUN → split-default.
 	RouteCIDRs []string
 	// ExcludeCIDRs are stripped from RouteCIDRs (WARP endpoint, public DNS, TUN subnet).
 	ExcludeCIDRs []string
@@ -122,7 +124,7 @@ type Info struct {
 	FailDetail     string       `json:"fail_detail,omitempty"`
 	TunnelHosts    []string     `json:"tunnel_hosts,omitempty"`
 	DirectHosts    []string     `json:"direct_hosts,omitempty"`
-	FailoverFrom   ProviderID   `json:"failover_from,omitempty"`   // previous provider if auto-switched
+	FailoverFrom   ProviderID   `json:"failover_from,omitempty"` // previous provider if auto-switched
 	ProvidersTried []ProviderID `json:"providers_tried,omitempty"`
 }
 

@@ -66,7 +66,7 @@ type PingResult struct {
 	Service          string `json:"service"`
 }
 
-// TestReport is contracts.md §4.3 ("bağlantı testi").
+// TestReport is contracts.md §4.3 (connection test).
 type TestReport struct {
 	ASN     string       `json:"asn"`
 	ISPHint string       `json:"isp_hint,omitempty"`

@@ -149,13 +149,21 @@ direct | desync | tunnel
 
 ```text
 start
-  -> DoH always
-  -> curated target probe
-       open?        -> direct (or DNS only)
-       sni/dpi?     -> desync
-       ip/desync fail? -> tunnel
-  -> cache (asn + domain)
+  -> DoH always (system DNS → local stub via catch-all NRPT; not ISP)
+  -> ByeDPI + TUN always (TCP/443 → desync; UDP → direct; exclude/LAN excepted)
+  -> curated probe applies to special packages only (Discord/IMVU)
+       open?        -> that package UDP direct (HTTPS still desync)
+       sni/dpi?     -> that package UDP desync
+       ip/desync fail? -> that package suffix → selective tunnel
+  -> default HTTPS never follows Discord's path
 ```
+
+While protection is on, Windows DNS Client queries go to `127.0.0.1:53` (NRPT
+namespace `.`). The stub answers over DoH. TUN installs split-default
+(`0.0.0.0/1` + `128.0.0.0/1`) so unlisted TCP/443 hits local ByeDPI; this is
+not `0.0.0.0/0` WARP. Leak-guard (NIC `SetDNS`) is off. Stop, crash-cleanup,
+`repair`, and uninstall must remove the catch-all NRPT rule — a leftover
+would blackhole all DNS. Split-default routes go away with the TUN.
 
 ### 3.3 Cache record
 
@@ -182,7 +190,8 @@ start
 ### 3.4 DIRECT (never tunnel/desync)
 
 - Private / LAN
-- Steam / game store ranges (ruleset `direct` package)
+- Steam / Riot / Epic / Faceit store+launcher suffixes (ruleset `path_force: direct`)
+- Generic UDP (game servers are not on the domain list; protocol split is the protection)
 
 ## 4. Probe protocol
 
@@ -237,8 +246,8 @@ File: `ruleset/active.json`. Signature: `active.json.sig` (Ed25519, base64).
 
 ```json
 {
-  "version": 4,
-  "updated_at": "2026-07-21",
+  "version": 5,
+  "updated_at": "2026-08-26",
   "packages": [
     {
       "id": "discord",
@@ -261,7 +270,7 @@ File: `ruleset/active.json`. Signature: `active.json.sig` (Ed25519, base64).
       ],
       "resolve_hosts": ["discord.com", "gateway.discord.gg", "latency.discord.media"],
       "probe_hosts": ["discord.com"],
-      "notes": "Voice: domain_suffix .discord.gg / .discord.media; UDP mirrors cascade; QUIC drop"
+      "notes": "Voice: domain_suffix .discord.gg / .discord.media; UDP mirrors cascade; sniffed QUIC drop"
     },
     {
       "id": "imvu",
@@ -308,19 +317,21 @@ Core turns enabled packages into capture resolve / probe / sing-box route
 lists.
 
 DNS stub query watch -> `MatchPackage` / `ExpandForHost` -> capture
-`AddPrefixes` (legacy CDN half-load). Discord voice UDP follows the TCP
-cascade (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
-tunnel). QUIC `UDP/443` is rejected in sing-box (TCP TLS). Network change
-or sleep triggers silent self-heal.
+`AddPrefixes` (legacy CDN half-load). Discord voice UDP follows the special
+package path (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
+tunnel). Generic UDP stays on the ISP path. Sniffed QUIC is rejected in
+sing-box so HTTPS falls back to TCP TLS; raw UDP/443 is not dropped.
+Network change or sleep triggers silent self-heal.
 
 ## 6. Engine wiring
 
 ### 6.1 sing-box
 
-- TUN (Wintun) inbound
+- TUN (Wintun) inbound with split-default `route_address` (never `0.0.0.0/0`)
 - DoH / DNS hijack
-- Route: domain -> `direct` | `desync-socks` | `tunnel`
-- Selective tunnel outbound(s)
+- Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
+- Sniffed QUIC reject (not port 443) so HTTP/3 falls back to TCP TLS
+- Selective tunnel outbound(s) for Discord IP-drop only
 
 ### 6.2 ByeDPI
 
@@ -331,7 +342,8 @@ or sleep triggers silent self-heal.
 ### 6.3 Not used
 
 - sing-box Windows WinDivert bridge / TLS-spoof paths
-- Full default-route VPN (everything outside the allowlist)
+- Full default-route VPN (`0.0.0.0/0` WARP). Catch-all NRPT is DNS-only.
+  TUN split-default feeds local ByeDPI; unlisted sites do not go to WARP.
 - Strategy knobs in the UI
 
 ## 7. Privacy

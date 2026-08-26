@@ -51,7 +51,7 @@ func Start(cfg Config) (Session, error) {
 	}
 	cfg.BinaryPath = bin
 
-	args := BuildArgs(cfg.ListenIP, cfg.ListenPort, cfg.Strategy)
+	args := BuildArgsBind(cfg.ListenIP, cfg.ListenPort, cfg.Strategy, cfg.ConnIP)
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil

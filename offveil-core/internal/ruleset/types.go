@@ -16,28 +16,28 @@ type Document struct {
 
 // Package is one curated domain set (discord, direct-games, …).
 type Package struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
-	DefaultEnabled bool    `json:"default_enabled"`
-	PathForce     string   `json:"path_force,omitempty"` // "direct" | "desync" | "tunnel"
-	Domains       []string `json:"domains,omitempty"`
-	DomainSuffix  []string `json:"domain_suffix,omitempty"`
-	ResolveHosts  []string `json:"resolve_hosts,omitempty"`
-	ProbeHosts    []string `json:"probe_hosts,omitempty"`
-	Notes         string   `json:"notes,omitempty"`
+	ID             string   `json:"id"`
+	Label          string   `json:"label"`
+	DefaultEnabled bool     `json:"default_enabled"`
+	PathForce      string   `json:"path_force,omitempty"` // "direct" | "desync" | "tunnel"
+	Domains        []string `json:"domains,omitempty"`
+	DomainSuffix   []string `json:"domain_suffix,omitempty"`
+	ResolveHosts   []string `json:"resolve_hosts,omitempty"`
+	ProbeHosts     []string `json:"probe_hosts,omitempty"`
+	Notes          string   `json:"notes,omitempty"`
 }
 
 // Channel describes the signed remote update endpoint.
 type Channel struct {
-	Name                 string `json:"name"`
-	Version              int    `json:"version"`
-	BaseURL              string `json:"base_url"`
-	RulesetFile          string `json:"ruleset_file"`
-	SignatureFile        string `json:"signature_file"`
-	PublicKeyHex         string `json:"public_key_hex"`
-	UpdateIntervalHours  int    `json:"update_interval_hours"`
-	MinRulesetVersion    int    `json:"min_ruleset_version"`
-	Notes                string `json:"notes,omitempty"`
+	Name                string `json:"name"`
+	Version             int    `json:"version"`
+	BaseURL             string `json:"base_url"`
+	RulesetFile         string `json:"ruleset_file"`
+	SignatureFile       string `json:"signature_file"`
+	PublicKeyHex        string `json:"public_key_hex"`
+	UpdateIntervalHours int    `json:"update_interval_hours"`
+	MinRulesetVersion   int    `json:"min_ruleset_version"`
+	Notes               string `json:"notes,omitempty"`
 }
 
 // Snapshot is a loaded, verified ruleset ready for engine use.
@@ -90,6 +90,30 @@ func (d Document) EnabledPackages() []Package {
 		if p.DefaultEnabled {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// RouteHosts is domains + suffixes used for sing-box special routing.
+func (p Package) RouteHosts() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(s string) {
+		s = normalizeHost(s)
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, x := range p.Domains {
+		add(x)
+	}
+	for _, x := range p.DomainSuffix {
+		add(x)
 	}
 	return out
 }
@@ -152,7 +176,7 @@ func (d Document) DirectDomains() []string {
 	return out
 }
 
-// ResolveHosts are concrete hosts for selected-route /32 seeds.
+// ResolveHosts are concrete hosts used as capture resolve seeds.
 func (d Document) ResolveHosts() []string {
 	seen := map[string]struct{}{}
 	var out []string
@@ -223,8 +247,8 @@ func normalizeHost(h string) string {
 	h = strings.TrimSpace(h)
 	h = strings.TrimPrefix(h, "*.")
 	for len(h) > 0 && h[0] == '.' {
-		// keep leading dot for suffix entries? strip for tunnel domain_suffix list  - 
-		// sing-box domain_suffix wants "discord.com" not ".discord.com"
+		// Strip a leading dot so JSON suffix entries match sing-box domain_suffix
+		// ("discord.com", not ".discord.com").
 		h = h[1:]
 	}
 	b := make([]byte, len(h))

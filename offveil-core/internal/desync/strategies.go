@@ -64,9 +64,17 @@ func SafeStrategySet() []Strategy {
 // BuildArgs returns full ciadpi argv (without binary): listen + strategy.
 // Strips any accidental --no-udp / -U so Discord voice UDP ASSOCIATE stays on.
 func BuildArgs(listenIP string, listenPort int, s Strategy) []string {
+	return BuildArgsBind(listenIP, listenPort, s, "")
+}
+
+// BuildArgsBind is BuildArgs plus optional --conn-ip (egress bind).
+func BuildArgsBind(listenIP string, listenPort int, s Strategy, connIP string) []string {
 	args := []string{
 		"--ip", listenIP,
 		"--port", strconv.Itoa(listenPort),
+	}
+	if connIP != "" {
+		args = append(args, "--conn-ip", connIP)
 	}
 	for _, a := range s.Args {
 		if a == "--no-udp" || a == "-U" {

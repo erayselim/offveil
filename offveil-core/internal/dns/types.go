@@ -28,15 +28,16 @@ type Config struct {
 	// ListenAddr is the stub bind address (default 127.0.0.1:53).
 	ListenAddr string
 	// ApplyLeakGuard rewrites TUN (+ egress) DNS to the stub and restores on Close.
-	// Default false: rewriting the physical NIC to 127.0.0.1 surprises users and
-	// is unnecessary once NRPT covers allowlist suffixes.
+	// Default false: catch-all NRPT (".") is the primary steering path. Rewriting
+	// the physical NIC to 127.0.0.1 surprises users and leaves crash leftovers.
 	ApplyLeakGuard bool
 	// TunLUID is the offveil Wintun LUID (required when ApplyLeakGuard).
 	TunLUID uint64
 	// EgressLUID is the physical NIC LUID to pin away from ISP DNS (optional).
 	EgressLUID uint64
-	// NRPTSuffixes installs Windows Name Resolution Policy for these domains
-	// (apex + suffix) pointing at the local DoH stub - without changing ipconfig DNS.
+	// NRPTSuffixes installs Windows Name Resolution Policy pointing at the local
+	// DoH stub without changing ipconfig DNS. Use NRPTCatchAll (".") for system-wide
+	// DoH; other entries become apex + suffix namespaces.
 	NRPTSuffixes []string
 	// OnQuery observes client lookups for legacy CDN auto-expand (optional).
 	OnQuery QueryObserver

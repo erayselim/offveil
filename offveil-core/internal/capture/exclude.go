@@ -3,17 +3,17 @@ package capture
 import "net/netip"
 
 // DefaultExcludePrefixes are never steered into the TUN (loop / LAN safety).
-// Matches contracts.md §3.4 DIRECT zorunlulukları for private networks.
+// Matches contracts.md §3.4 DIRECT (private / LAN).
 func DefaultExcludePrefixes() []netip.Prefix {
 	return []netip.Prefix{
-		netip.MustParsePrefix("0.0.0.0/8"),       // "this" network
-		netip.MustParsePrefix("127.0.0.0/8"),     // localhost
-		netip.MustParsePrefix("10.0.0.0/8"),      // RFC1918
-		netip.MustParsePrefix("172.16.0.0/12"),   // RFC1918
-		netip.MustParsePrefix("192.168.0.0/16"),  // RFC1918
-		netip.MustParsePrefix("169.254.0.0/16"),  // link-local
-		netip.MustParsePrefix("224.0.0.0/4"),     // multicast
-		netip.MustParsePrefix("240.0.0.0/4"),     // reserved
+		netip.MustParsePrefix("0.0.0.0/8"),      // "this" network
+		netip.MustParsePrefix("127.0.0.0/8"),    // localhost
+		netip.MustParsePrefix("10.0.0.0/8"),     // RFC1918
+		netip.MustParsePrefix("172.16.0.0/12"),  // RFC1918
+		netip.MustParsePrefix("192.168.0.0/16"), // RFC1918
+		netip.MustParsePrefix("169.254.0.0/16"), // link-local
+		netip.MustParsePrefix("224.0.0.0/4"),    // multicast
+		netip.MustParsePrefix("240.0.0.0/4"),    // reserved
 		netip.MustParsePrefix("255.255.255.255/32"),
 		netip.MustParsePrefix("::1/128"),
 		netip.MustParsePrefix("fc00::/7"),  // ULA
