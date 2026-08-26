@@ -1,11 +1,19 @@
-Protection used to follow a short site list. It now applies while the switch is on: Windows DNS goes through local DoH, and HTTPS (TCP/443) uses DPI desync by default. You do not add domains by hand.
+## What changed
 
-UDP stays on your ISP path, so games keep their ping. Steam, Riot, Epic, and Faceit store/launcher HTTPS are excluded from desync. Discord and IMVU still get extra handling when the path is dropped.
+offveil now protects traffic while **Protection is enabled**, without requiring a site list.
 
-This is not a VPN and not a full-tunnel. It will not open every site on every ISP. Crisis-day throttling of large platforms is still out of this build.
+* **DNS:** Local DoH
+* **HTTPS:** DPI desync on TCP/443
+* **UDP:** Stays on the ISP path for low game latency
+* **Exclusions:** Steam, Riot, Epic, and FACEIT store/launcher HTTPS
+* **Discord:** Gets extra handling when its normal path is dropped
 
-Download `offveil_*_x64-setup.exe` from Assets. Compare its SHA-256 with `SHA256SUMS.txt` on this release.
+offveil is **not a VPN or full-tunnel** and does not guarantee access on every ISP. Large-platform throttling is not covered by this build.
 
-If Windows shows **Windows protected your PC**, click More info, then Run anyway.
+## Download
 
-If it does not work: Settings → Save a support file, and attach that file to your report.
+Get `offveil_*_x64-setup.exe` from **Assets** and verify it with `SHA256SUMS.txt`.
+
+For **Windows protected your PC**: **More info → Run anyway**.
+
+If protection fails: **Settings → Save a support file** and attach it to your report.
