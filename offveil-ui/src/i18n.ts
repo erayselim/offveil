@@ -63,9 +63,20 @@ export type Messages = {
   updateAvailableTitle: string;
   updateAvailableHint: string;
   updateInstall: string;
+  updateInstallCta: string;
+  updateInstalling: string;
+  updateDownloadAndInstall: string;
+  updateLater: string;
+  updateRestartHint: string;
   updating: string;
   updateDownloading: string;
   updateDownloadPct: string;
+  autoCheckUpdates: string;
+  autoCheckUpdatesHint: string;
+  autoDownloadUpdates: string;
+  autoDownloadUpdatesHint: string;
+  whatsNew: string;
+  whatsNewEmpty: string;
   creditsDesc: string;
   creditsLicense: string;
   creditsDevelopedBy: string;
@@ -130,13 +141,24 @@ const tr: Messages = {
   checkUpdates: "Güncellemeleri denetle",
   checkingUpdates: "Denetleniyor…",
   upToDate: "Güncelsiniz.",
-  updateCheckFailed: "Güncelleme kontrol edilemedi.",
+  updateCheckFailed: "Denetlenemedi.",
   updateAvailableTitle: "Güncelleme var",
   updateAvailableHint: "{version} sürümü indirilmeye hazır.",
   updateInstall: "Kur",
+  updateInstallCta: "Güncellemeyi kur",
+  updateInstalling: "Kuruluyor…",
+  updateDownloadAndInstall: "İndir ve kur",
+  updateLater: "Sonra",
+  updateRestartHint: "offveil yeniden başlayacak.",
   updating: "Güncelleme hazırlanıyor…",
   updateDownloading: "İndiriliyor…",
   updateDownloadPct: "{percent}% indirildi",
+  autoCheckUpdates: "Otomatik denetle",
+  autoCheckUpdatesHint: "Açılışta yeni sürüm var mı bakar.",
+  autoDownloadUpdates: "Otomatik indir",
+  autoDownloadUpdatesHint: "Varsa arka planda indirir. Kurulum sizin onayınızla.",
+  whatsNew: "Neler yeni",
+  whatsNewEmpty: "Bu sürüm için not yok.",
   creditsDesc: "Özel ve açık erişim için yerel koruma.",
   creditsLicense: "Apache-2.0",
   creditsDevelopedBy: "Geliştiren",
@@ -201,13 +223,24 @@ const en: Messages = {
   checkUpdates: "Check for Updates",
   checkingUpdates: "Checking…",
   upToDate: "You're up to date.",
-  updateCheckFailed: "Couldn't check for updates.",
+  updateCheckFailed: "Couldn't check.",
   updateAvailableTitle: "Update available",
   updateAvailableHint: "{version} is ready to install.",
   updateInstall: "Install",
+  updateInstallCta: "Install update",
+  updateInstalling: "Installing…",
+  updateDownloadAndInstall: "Download and install",
+  updateLater: "Later",
+  updateRestartHint: "offveil will restart.",
   updating: "Preparing the update…",
   updateDownloading: "Downloading…",
   updateDownloadPct: "{percent}% downloaded",
+  autoCheckUpdates: "Check automatically",
+  autoCheckUpdatesHint: "Looks for a new version when the app starts.",
+  autoDownloadUpdates: "Download automatically",
+  autoDownloadUpdatesHint: "Downloads in the background. Install still needs your OK.",
+  whatsNew: "What's new",
+  whatsNewEmpty: "No notes for this version.",
   creditsDesc: "Local protection for private, open access.",
   creditsLicense: "Apache-2.0",
   creditsDevelopedBy: "Developed by",
@@ -266,4 +299,37 @@ export function formatUpdateHint(locale: Locale, version: string): string {
 
 export function formatUpdatePct(locale: Locale, percent: number): string {
   return t(locale).updateDownloadPct.replace("{percent}", String(percent));
+}
+
+export function updateFootLabel(
+  locale: Locale,
+  phase:
+    | "idle"
+    | "checking"
+    | "upToDate"
+    | "failed"
+    | "available"
+    | "downloading"
+    | "ready"
+    | "installing",
+): string {
+  const m = t(locale);
+  switch (phase) {
+    case "checking":
+      return m.checkingUpdates;
+    case "upToDate":
+      return m.upToDate;
+    case "failed":
+      return m.updateCheckFailed;
+    case "available":
+      return m.updateAvailableTitle;
+    case "downloading":
+      return m.updateDownloading;
+    case "ready":
+      return m.updateInstallCta;
+    case "installing":
+      return m.updateInstalling;
+    default:
+      return m.checkUpdates;
+  }
 }

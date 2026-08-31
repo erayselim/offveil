@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0-b4",
+  "notes": {
+    "tr": "Güncelleme varsa ana ekranda kalır. Notlar kurulumdan önce; Ayarlar’da Neler yeni ve otomatik denetle/indir.",
+    "en": "An available update stays on the home button. Notes show before install; Settings has What’s new and auto check/download."
+  }
+}

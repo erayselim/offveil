@@ -18,7 +18,7 @@ export async function checkAppUpdate(): Promise<Update | null> {
   return check({ timeout: 20_000 });
 }
 
-export async function installAppUpdate(
+export async function downloadAppUpdate(
   update: Update,
   onProgress: (percent: number) => void,
 ): Promise<void> {
@@ -43,6 +43,9 @@ export async function installAppUpdate(
         break;
     }
   });
+}
+
+export async function installDownloadedUpdate(update: Update): Promise<void> {
   await invoke("prepare_update");
   await update.install();
 }
@@ -52,4 +55,27 @@ export function discardUpdate(update: Update | null) {
   void update.close().catch(() => {
     /* already consumed or dropped */
   });
+}
+
+export type UpdateUiPhase =
+  | "idle"
+  | "checking"
+  | "upToDate"
+  | "failed"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "installing";
+
+export function isUpdateActionPhase(phase: UpdateUiPhase): boolean {
+  return (
+    phase === "available" ||
+    phase === "downloading" ||
+    phase === "ready" ||
+    phase === "installing"
+  );
+}
+
+export function isUpdateBusyPhase(phase: UpdateUiPhase): boolean {
+  return phase === "checking" || phase === "installing";
 }

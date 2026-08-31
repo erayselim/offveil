@@ -2,7 +2,7 @@ package version
 
 const (
 	// Version is the core daemon semver.
-	Version = "1.0.0-b3"
+	Version = "1.0.0-b4"
 	// ContractsVersion matches docs/contracts.md major.
 	ContractsVersion = 1
 )

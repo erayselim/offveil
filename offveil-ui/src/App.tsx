@@ -10,7 +10,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { Update } from "@tauri-apps/plugin-updater";
 import { X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AppearancePage } from "@/components/appearance-page";
@@ -57,18 +56,14 @@ import {
   detectLocale,
   formatDiagLine,
   formatTestLine,
-  formatUpdateHint,
-  formatUpdatePct,
   persistLocale,
   t,
+  updateFootLabel,
   type Locale,
 } from "./i18n";
-import {
-  checkAppUpdate,
-  discardUpdate,
-  installAppUpdate,
-  isNoNewerRelease,
-} from "./updates";
+import { UpdateFlowDialog } from "./update-dialog";
+import { isUpdateActionPhase, isUpdateBusyPhase } from "./updates";
+import { useAppUpdates } from "./use-app-updates";
 import {
   applyTheme,
   detectThemePref,
@@ -263,17 +258,8 @@ export default function App() {
   const [panel, setPanel] = useState<Panel>("home");
   const [quitOpen, setQuitOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  const [updateOpen, setUpdateOpen] = useState(false);
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [updateHint, setUpdateHint] = useState<"upToDate" | "failed" | null>(
-    null,
-  );
   const [resetHint, setResetHint] = useState(false);
-  const [installingUpdate, setInstallingUpdate] = useState(false);
-  const [downloadPct, setDownloadPct] = useState(0);
   const pollRef = useRef<number | null>(null);
-  const updateHintTimer = useRef<number | null>(null);
   const resetHintTimer = useRef<number | null>(null);
   const paletteIconRef = useRef<PaletteIconHandle>(null);
   const settingsIconRef = useRef<SettingsIconHandle>(null);
@@ -281,18 +267,14 @@ export default function App() {
   const deleteIconRef = useRef<DeleteIconHandle>(null);
   const cloudIconRef = useRef<CloudDownloadIconHandle>(null);
   const m = t(locale);
+  const updates = useAppUpdates({
+    busy,
+    locale,
+    protection: status?.protection ?? false,
+  });
 
   const fail = (e: unknown) => {
     setError(String(e));
-  };
-
-  const flashUpdateHint = (kind: "upToDate" | "failed") => {
-    setUpdateHint(kind);
-    if (updateHintTimer.current) window.clearTimeout(updateHintTimer.current);
-    updateHintTimer.current = window.setTimeout(() => {
-      setUpdateHint(null);
-      updateHintTimer.current = null;
-    }, 5000);
   };
 
   const flashResetHint = () => {
@@ -460,7 +442,6 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (updateHintTimer.current) window.clearTimeout(updateHintTimer.current);
       if (resetHintTimer.current) window.clearTimeout(resetHintTimer.current);
     };
   }, []);
@@ -638,60 +619,6 @@ export default function App() {
     void invoke("tray_quit");
   }
 
-  function closeUpdateDialog() {
-    if (installingUpdate) return;
-    discardUpdate(pendingUpdate);
-    setPendingUpdate(null);
-    setDownloadPct(0);
-    setUpdateOpen(false);
-  }
-
-  async function onCheckUpdates() {
-    if (busy || checkingUpdates || installingUpdate) return;
-    setCheckingUpdates(true);
-    setError(null);
-    try {
-      const update = await checkAppUpdate();
-      if (!update) {
-        flashUpdateHint("upToDate");
-        return;
-      }
-      setPendingUpdate(update);
-      setUpdateOpen(true);
-    } catch (e) {
-      if (isNoNewerRelease(e)) {
-        flashUpdateHint("upToDate");
-      } else {
-        flashUpdateHint("failed");
-      }
-    } finally {
-      setCheckingUpdates(false);
-    }
-  }
-
-  async function onInstallUpdate() {
-    if (!pendingUpdate || installingUpdate) return;
-    const update = pendingUpdate;
-    setInstallingUpdate(true);
-    setDownloadPct(0);
-    setError(null);
-    try {
-      await installAppUpdate(update, setDownloadPct);
-    } catch (e) {
-      fail(e);
-      try {
-        await refreshStatus();
-      } catch {
-        /* keep prior status */
-      }
-    } finally {
-      discardUpdate(update);
-      setPendingUpdate(null);
-      setInstallingUpdate(false);
-      setDownloadPct(0);
-    }
-  }
-
   async function onRevert() {
     if (busy) return;
     setResetOpen(false);
@@ -825,9 +752,13 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        className="home-foot-btn"
-                        disabled={busy || checkingUpdates || installingUpdate}
-                        onClick={() => void onCheckUpdates()}
+                        className={
+                          isUpdateActionPhase(updates.phase)
+                            ? "home-foot-btn is-action"
+                            : "home-foot-btn"
+                        }
+                        disabled={busy || isUpdateBusyPhase(updates.phase)}
+                        onClick={() => updates.onButtonClick()}
                         onMouseEnter={() =>
                           cloudIconRef.current?.startAnimation()
                         }
@@ -836,13 +767,9 @@ export default function App() {
                         }
                       >
                         <CloudDownloadIcon ref={cloudIconRef} size={16} />
-                        {checkingUpdates
-                          ? m.checkingUpdates
-                          : updateHint === "upToDate"
-                            ? m.upToDate
-                            : updateHint === "failed"
-                              ? m.updateCheckFailed
-                              : m.checkUpdates}
+                        <span aria-live="polite">
+                          {updateFootLabel(locale, updates.phase)}
+                        </span>
                       </button>
                     </div>
                   </footer>
@@ -859,6 +786,20 @@ export default function App() {
                   onAutostartToggle={() => void onAutostartToggle()}
                   autoconnectOn={autoconnectOn}
                   onAutoconnectToggle={() => void onAutoconnectToggle()}
+                  autoCheckOn={updates.prefs.autoCheck}
+                  onAutoCheckToggle={() =>
+                    updates.setPrefs({
+                      ...updates.prefs,
+                      autoCheck: !updates.prefs.autoCheck,
+                    })
+                  }
+                  autoDownloadOn={updates.prefs.autoDownload}
+                  onAutoDownloadToggle={() =>
+                    updates.setPrefs({
+                      ...updates.prefs,
+                      autoDownload: !updates.prefs.autoDownload,
+                    })
+                  }
                   busy={busy}
                   protection={protection}
                   onConnectionTest={() => void onConnectionTest()}
@@ -942,62 +883,20 @@ export default function App() {
             </div>
           </DialogContent>
         </Dialog>
-        <Dialog
-          open={updateOpen}
+        <UpdateFlowDialog
+          open={updates.dialogOpen}
+          phase={updates.phase}
+          locale={locale}
+          version={updates.pending?.version ?? ""}
+          notes={updates.notes}
+          downloadPct={updates.downloadPct}
+          error={updates.dialogError}
+          m={m}
           onOpenChange={(open) => {
-            if (!open) closeUpdateDialog();
+            if (!open) updates.closeDialog();
           }}
-        >
-          <DialogContent
-            showCloseButton={false}
-            overlayClassName="bg-foreground/25"
-            className="max-w-72 gap-5 rounded-2xl p-5"
-            onPointerDownOutside={(event) => {
-              if (installingUpdate) event.preventDefault();
-            }}
-            onEscapeKeyDown={(event) => {
-              if (installingUpdate) event.preventDefault();
-            }}
-          >
-            <DialogHeader className="gap-1">
-              <DialogTitle className="app-page-title">
-                {installingUpdate
-                  ? downloadPct >= 100
-                    ? m.updating
-                    : m.updateDownloading
-                  : m.updateAvailableTitle}
-              </DialogTitle>
-              <DialogDescription className="pref-hint">
-                {installingUpdate
-                  ? formatUpdatePct(locale, downloadPct)
-                  : formatUpdateHint(locale, pendingUpdate?.version ?? "")}
-              </DialogDescription>
-            </DialogHeader>
-            {installingUpdate ? (
-              <div className="update-progress">
-                <div className="update-progress-track">
-                  <div
-                    className="update-progress-fill"
-                    style={{ width: `${downloadPct}%` }}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="confirm-actions">
-                <DialogClose asChild>
-                  <button type="button">{m.cancel}</button>
-                </DialogClose>
-                <button
-                  type="button"
-                  className="is-confirm"
-                  onClick={() => void onInstallUpdate()}
-                >
-                  {m.updateInstall}
-                </button>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
+          onPrimary={() => updates.onPrimary()}
+        />
       </div>
     </TooltipProvider>
   );

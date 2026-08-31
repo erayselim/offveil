@@ -7,8 +7,17 @@ import { Lockup } from "@/brand";
 import { AppPage, ChoiceSeg } from "@/components/app-page";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import type { Locale, Messages } from "@/i18n";
+import { bundledWhatsNew } from "@/whats-new";
 
 const LICENSE_URL = "https://github.com/erayselim/offveil/blob/main/LICENSE";
 const AUTHOR_URL = "https://github.com/erayselim";
@@ -23,6 +32,10 @@ export function SettingsPage({
   onAutostartToggle,
   autoconnectOn,
   onAutoconnectToggle,
+  autoCheckOn,
+  onAutoCheckToggle,
+  autoDownloadOn,
+  onAutoDownloadToggle,
   busy,
   protection,
   onConnectionTest,
@@ -42,6 +55,10 @@ export function SettingsPage({
   onAutostartToggle: () => void;
   autoconnectOn: boolean;
   onAutoconnectToggle: () => void;
+  autoCheckOn: boolean;
+  onAutoCheckToggle: () => void;
+  autoDownloadOn: boolean;
+  onAutoDownloadToggle: () => void;
   busy: boolean;
   protection: boolean;
   onConnectionTest: () => void;
@@ -54,6 +71,7 @@ export function SettingsPage({
   onShareIssue: () => void;
 }) {
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +86,8 @@ export function SettingsPage({
       cancelled = true;
     };
   }, []);
+
+  const whatsNewNotes = bundledWhatsNew(appVersion, locale);
 
   return (
     <AppPage title={m.settings} backLabel={m.back} onBack={onBack}>
@@ -111,6 +131,43 @@ export function SettingsPage({
           onCheckedChange={() => onAutoconnectToggle()}
         />
       </div>
+
+      <div className="pref-row">
+        <label htmlFor="auto-check" className="pref-copy">
+          <span className="pref-label">{m.autoCheckUpdates}</span>
+          <span className="pref-hint">{m.autoCheckUpdatesHint}</span>
+        </label>
+        <Switch
+          id="auto-check"
+          checked={autoCheckOn}
+          onCheckedChange={() => onAutoCheckToggle()}
+        />
+      </div>
+
+      <div className="pref-row">
+        <label htmlFor="auto-download" className="pref-copy">
+          <span className="pref-label">{m.autoDownloadUpdates}</span>
+          <span className="pref-hint">{m.autoDownloadUpdatesHint}</span>
+        </label>
+        <Switch
+          id="auto-download"
+          checked={autoDownloadOn}
+          onCheckedChange={() => onAutoDownloadToggle()}
+        />
+      </div>
+
+      <button
+        type="button"
+        className="pref-row pref-row-btn"
+        onClick={() => setWhatsNewOpen(true)}
+      >
+        <span className="pref-copy">
+          <span className="pref-label">{m.whatsNew}</span>
+          <span className="pref-hint">
+            {appVersion ? `v${appVersion}` : m.whatsNewEmpty}
+          </span>
+        </span>
+      </button>
 
       <div className="tool-stack">
         <div className="tool-item">
@@ -198,6 +255,31 @@ export function SettingsPage({
           </button>
         </div>
       </div>
+
+      <Dialog open={whatsNewOpen} onOpenChange={setWhatsNewOpen}>
+        <DialogContent
+          showCloseButton={false}
+          overlayClassName="bg-foreground/25"
+          className="max-w-72 gap-4 overflow-hidden rounded-2xl p-5"
+        >
+          <DialogHeader className="gap-1">
+            <DialogTitle className="app-page-title">{m.whatsNew}</DialogTitle>
+            <DialogDescription className="pref-hint">
+              {appVersion ? `v${appVersion}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="update-notes">
+            {whatsNewNotes ?? m.whatsNewEmpty}
+          </p>
+          <div className="confirm-actions confirm-actions-single">
+            <DialogClose asChild>
+              <button type="button" className="is-confirm">
+                {m.close}
+              </button>
+            </DialogClose>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppPage>
   );
 }

@@ -1,14 +1,12 @@
 ## What changed
 
-offveil now protects traffic while **Protection is enabled**, without requiring a site list.
+In-app updates are no longer a one-shot dialog.
 
-* **DNS:** Local DoH
-* **HTTPS:** DPI desync on TCP/443
-* **UDP:** Stays on the ISP path for low game latency
-* **Exclusions:** Steam, Riot, Epic, and FACEIT store/launcher HTTPS
-* **Discord:** Gets extra handling when its normal path is dropped
+* **Home:** Check stays as **Update available** (or **Install update** after download). Up to date / failed still flash briefly.
+* **Before install:** Short notes, then Download and install. Closing the dialog does not cancel a download.
+* **Settings:** Auto-check on launch (default on), auto-download (off), and **What's new**.
 
-offveil is **not a VPN or full-tunnel** and does not guarantee access on every ISP. Large-platform throttling is not covered by this build.
+Protection behavior is unchanged: DNS + HTTPS desync while on, game UDP on the ISP, Steam / Riot / Epic / FACEIT excluded.
 
 ## Download
 
