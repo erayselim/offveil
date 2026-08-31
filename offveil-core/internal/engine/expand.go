@@ -102,8 +102,8 @@ func (e *Engine) expandCandidate(host string) bool {
 	}
 	doc := e.rulesetSnap.Doc
 	e.mu.Unlock()
-	_, ok = doc.MatchPackage(host)
-	return ok
+	pkg, ok := doc.MatchPackage(host)
+	return ok && !pkg.IsCanary()
 }
 
 // handleExpandQuery is called from the DNS stub when a client looks up a host.

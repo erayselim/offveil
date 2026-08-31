@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,8 +21,20 @@ import (
 const DefaultTimeout = 4 * time.Second
 
 // ThrottleThreshold marks suspiciously slow TLS as throttle_suspect.
-// OONI TR throttle studies compare target TLS timing vs control baseline.
 const ThrottleThreshold = 2500 * time.Millisecond
+
+// ThrottleCutoff is the TLS duration that marks throttle_suspect.
+// OONI compares target TLS time to other hosts on a comparable path;
+// we use max(absolute, 3× control TLS).
+func ThrottleCutoff(controlTLS time.Duration) time.Duration {
+	cut := ThrottleThreshold
+	if controlTLS > 0 {
+		if rel := 3 * controlTLS; rel > cut {
+			cut = rel
+		}
+	}
+	return cut
+}
 
 // MaxDialIPs is how many resolved A records to try (CDN / multi-homed).
 const MaxDialIPs = 2
@@ -50,6 +63,9 @@ type Options struct {
 	VerifyHTTP bool
 	// HTTPHead overrides HTTP verify (tests).
 	HTTPHead func(ctx context.Context, host string) error
+	// ControlTLS is the control-host TLS duration for relative throttle.
+	// Zero → absolute ThrottleThreshold only.
+	ControlTLS time.Duration
 }
 
 // Target probes one hostname: DoH (+system poison check) → TCP+TLS SNI (multi-IP).
@@ -164,7 +180,7 @@ func Target(ctx context.Context, host string, opt Options) Result {
 		if err == nil {
 			tlsOK = true
 			bestTook = tookTLS
-			if tookTLS >= ThrottleThreshold {
+			if tookTLS >= ThrottleCutoff(opt.ControlTLS) {
 				bestClass = ClassThrottleSuspect
 				bestErr = fmt.Errorf("slow tls %s", tookTLS.Round(time.Millisecond))
 			} else {
@@ -400,7 +416,7 @@ func Session(ctx context.Context, hosts []string, opt Options) Report {
 	}
 	out := Report{Results: make([]Result, 0, len(hosts))}
 
-	controlOpen := true
+	controlHealthy := true
 	if !opt.SkipControl {
 		ch := opt.ControlHost
 		if ch == "" {
@@ -417,31 +433,49 @@ func Session(ctx context.Context, hosts []string, opt Options) Report {
 				LookupSystem: opt.LookupSystem,
 				SkipControl:  true,
 			})
-			controlOpen = ctrl.Class == ClassOpen || ctrl.Class == ClassThrottleSuspect
+			// Slow path / outage: do not promote targets to tunnel.
+			controlHealthy = ctrl.Class == ClassOpen
+			if controlHealthy {
+				opt.ControlTLS = ctrl.Took
+			}
 		}
 	}
 
-	chosen := "direct"
-	for _, h := range hosts {
-		r := Target(ctx, h, opt)
-		if !controlOpen && (r.Class == ClassIPDrop || r.Class == ClassTimeout || r.Class == ClassDPIReset) {
-			// General outage - prefer timeout / desync over aggressive tunnel.
-			if r.Class == ClassIPDrop {
-				r.Class = ClassTimeout
+	results := make([]Result, len(hosts))
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Add(1)
+		go func(i int, h string) {
+			defer wg.Done()
+			r := Target(ctx, h, opt)
+			if !controlHealthy && (r.Class == ClassIPDrop || r.Class == ClassTimeout || r.Class == ClassDPIReset || r.Class == ClassThrottleSuspect) {
+				if r.Class == ClassIPDrop || r.Class == ClassThrottleSuspect {
+					if r.Class == ClassThrottleSuspect {
+						r.Class = ClassOpen
+						r.Path = PathFor(r.Class)
+					} else {
+						r.Class = ClassTimeout
+						r.Path = PathFor(r.Class)
+					}
+					r.Detail = strings.TrimSpace(r.Detail + "; control also down")
+					r.Confidence = 0.45
+				}
+			} else if controlHealthy && r.Class == ClassTimeout {
+				r.Class = ClassDPIReset
 				r.Path = PathFor(r.Class)
-				r.Detail = strings.TrimSpace(r.Detail + "; control also down")
-				r.Confidence = 0.45
+				r.Detail = strings.TrimSpace(r.Detail + "; control open → dpi_suspect")
+				r.Confidence = 0.7
+			} else if controlHealthy && r.Class == ClassThrottleSuspect {
+				r.Confidence = 0.85
+				r.Detail = strings.TrimSpace(r.Detail + "; control open → targeted throttle")
 			}
-		} else if controlOpen && r.Class == ClassTimeout {
-			// Control OK + target ambiguous → lean DPI (SNI filter common in TR).
-			r.Class = ClassDPIReset
-			r.Path = PathFor(r.Class)
-			r.Detail = strings.TrimSpace(r.Detail + "; control open → dpi_suspect")
-			r.Confidence = 0.7
-		} else if controlOpen && r.Class == ClassThrottleSuspect {
-			r.Confidence = 0.85
-			r.Detail = strings.TrimSpace(r.Detail + "; control open → targeted throttle")
-		}
+			results[i] = r
+		}(i, h)
+	}
+	wg.Wait()
+
+	chosen := "direct"
+	for _, r := range results {
 		out.Results = append(out.Results, r)
 		chosen = PreferPath(chosen, r.Path)
 	}

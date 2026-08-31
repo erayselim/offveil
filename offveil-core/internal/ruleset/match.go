@@ -72,7 +72,7 @@ func (d Document) ExpandForHost(observed string, already map[string]struct{}) []
 		return nil
 	}
 	pkg, ok := d.MatchPackage(h)
-	if !ok {
+	if !ok || pkg.IsCanary() {
 		return nil
 	}
 	seen := map[string]struct{}{}
@@ -131,7 +131,7 @@ func looksLikeCDN(host string) bool {
 func (d Document) TargetSeeds() []TargetSeed {
 	var out []TargetSeed
 	for _, p := range d.EnabledPackages() {
-		if p.PathForce == "direct" {
+		if p.PathForce == "direct" || p.IsCanary() {
 			continue
 		}
 		label := p.Label

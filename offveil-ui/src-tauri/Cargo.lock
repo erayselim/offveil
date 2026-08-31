@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "offveil-ui"
-version = "1.0.0-b4"
+version = "1.0.0-b5"
 dependencies = [
  "serde",
  "serde_json",

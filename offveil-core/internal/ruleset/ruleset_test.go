@@ -20,7 +20,7 @@ func TestParseBundled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version < 5 {
+	if doc.Version < 6 {
 		t.Fatalf("version %d", doc.Version)
 	}
 	tun := doc.TunnelDomains()
@@ -43,6 +43,13 @@ func TestParseBundled(t *testing.T) {
 	ph := doc.ProbeHosts()
 	if len(ph) < 2 || ph[0] != "discord.com" {
 		t.Fatalf("probe hosts: %v", ph)
+	}
+	if contains(ph, "www.youtube.com") {
+		t.Fatalf("canary must not be in session ProbeHosts: %v", ph)
+	}
+	ch := doc.CanaryProbeHosts()
+	if !contains(ch, "www.youtube.com") || !contains(ch, "web.telegram.org") {
+		t.Fatalf("canary probe hosts: %v", ch)
 	}
 	for _, bad := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
 		if contains(ph, bad) || contains(rh, bad) {
@@ -77,7 +84,7 @@ func TestRemoteUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := ruleset.BundledActive()
-	remoteBody := []byte(strings.Replace(string(body), `"version": 5`, `"version": 99`, 1))
+	remoteBody := []byte(strings.Replace(string(body), `"version": 6`, `"version": 99`, 1))
 	sig := ruleset.Sign(priv, remoteBody)
 
 	mux := http.NewServeMux()

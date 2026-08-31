@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-b4",
+  "version": "1.0.0-b5",
   "notes": {
-    "tr": "Güncelleme varsa ana ekranda kalır. Notlar kurulumdan önce; Ayarlar’da Neler yeni ve otomatik denetle/indir.",
-    "en": "An available update stays on the home button. Notes show before install; Settings has What’s new and auto check/download."
+    "tr": "Kriz günü yavaşlayan sosyal siteler sessizce tünele alınır. Ana ekran aynı; Discord ayrı kalır.",
+    "en": "On crisis-day throttle, social suffixes silently take the selective tunnel. Same one switch; Discord stays its own path."
   }
 }

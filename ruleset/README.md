@@ -5,7 +5,7 @@ section 5.
 
 | File | |
 |------|--|
-| `active.json` | Discord + IMVU (legacy-cdn) + Steam/Riot/Epic/Faceit DIRECT (v5) |
+| `active.json` | Discord + IMVU + crisis canary + Steam/Riot/Epic/Faceit DIRECT (v6) |
 | `active.json.sig` | Ed25519 signature (base64) |
 | `channel.json` | Update channel (`releases/latest/download`) |
 | `keys/` | Public key. Private key is a CI secret only (`REVOKED.md`) |
@@ -46,6 +46,16 @@ the TUN protocol split (`UDP → direct`) keeps it on the ISP path.
 - Faceit: `faceit.com`
 
 Skipped by `MatchPackage`, expand, and probe.
+
+## Canary (crisis throttle)
+
+`kind: canary`. Not a status card. Session-start probe stays Discord/IMVU.
+
+Background TLS probe of `www.youtube.com`, `www.instagram.com`, `x.com`,
+`www.tiktok.com`, `web.telegram.org`. `throttle_suspect` or `ip_drop` sends
+the package suffixes (YouTube/Meta/X/TikTok/Telegram/Signal) to the selective
+tunnel. Open / DPI stay on default HTTPS desync. Control-host slow path does
+not promote to tunnel.
 
 ## Updates
 

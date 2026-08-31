@@ -196,3 +196,82 @@ func TestPreferPath(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestCanaryPath(t *testing.T) {
+	if probe.CanaryPath(probe.ClassOpen, "direct") != "desync" {
+		t.Fatal("open canary stays default desync")
+	}
+	if probe.CanaryPath(probe.ClassDPIReset, "desync") != "desync" {
+		t.Fatal()
+	}
+	if probe.CanaryPath(probe.ClassThrottleSuspect, "tunnel") != "tunnel" {
+		t.Fatal()
+	}
+	if probe.CanaryPath(probe.ClassIPDrop, "") != "tunnel" {
+		t.Fatal()
+	}
+}
+
+func TestSessionControlThrottleDoesNotPromote(t *testing.T) {
+	rep := probe.Session(context.Background(), []string{"www.youtube.com"}, probe.Options{
+		Timeout:      8 * time.Second,
+		Resolve:      fixedResolve,
+		LookupSystem: noSystemPoison,
+		ControlHost:  "www.microsoft.com",
+		DialTLS: func(_ context.Context, _, serverName string) error {
+			time.Sleep(probe.ThrottleThreshold + 40*time.Millisecond)
+			return nil
+		},
+	})
+	if len(rep.Results) != 1 {
+		t.Fatal(rep)
+	}
+	if rep.Results[0].Class != probe.ClassOpen {
+		t.Fatalf("slow control must not tunnel canary, got %+v", rep.Results[0])
+	}
+	if rep.Chosen == "tunnel" {
+		t.Fatalf("chosen=%s", rep.Chosen)
+	}
+}
+
+func TestSessionRelativeThrottle(t *testing.T) {
+	rep := probe.Session(context.Background(), []string{"www.youtube.com"}, probe.Options{
+		Timeout:      8 * time.Second,
+		Resolve:      fixedResolve,
+		LookupSystem: noSystemPoison,
+		ControlHost:  "www.microsoft.com",
+		DialTLS: func(_ context.Context, _, serverName string) error {
+			if serverName == "www.microsoft.com" {
+				return nil
+			}
+			time.Sleep(probe.ThrottleThreshold + 40*time.Millisecond)
+			return nil
+		},
+	})
+	if len(rep.Results) != 1 || rep.Results[0].Class != probe.ClassThrottleSuspect {
+		t.Fatalf("fast control + slow target → throttle, got %+v", rep)
+	}
+}
+
+func TestSessionRelativeThrottleDemote(t *testing.T) {
+	rep := probe.Session(context.Background(), []string{"www.youtube.com"}, probe.Options{
+		Timeout:      10 * time.Second,
+		Resolve:      fixedResolve,
+		LookupSystem: noSystemPoison,
+		ControlHost:  "www.microsoft.com",
+		DialTLS: func(_ context.Context, _, serverName string) error {
+			if serverName == "www.microsoft.com" {
+				time.Sleep(1200 * time.Millisecond)
+				return nil
+			}
+			time.Sleep(probe.ThrottleThreshold + 40*time.Millisecond)
+			return nil
+		},
+	})
+	if len(rep.Results) != 1 {
+		t.Fatal(rep)
+	}
+	if rep.Results[0].Class != probe.ClassOpen {
+		t.Fatalf("target slower than 2.5s but not 3× control → open, got %+v", rep.Results[0])
+	}
+}

@@ -1,6 +1,6 @@
 [package]
 name = "offveil-ui"
-version = "1.0.0-b4"
+version = "1.0.0-b5"
 description = "offveil Windows client"
 authors = ["offveil"]
 edition = "2021"

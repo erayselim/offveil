@@ -1,7 +1,7 @@
 {
   "name": "offveil-ui",
   "private": true,
-  "version": "1.0.0-b4",
+  "version": "1.0.0-b5",
   "type": "module",
   "scripts": {
     "dev": "vite",

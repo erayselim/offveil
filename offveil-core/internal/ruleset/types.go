@@ -14,10 +14,14 @@ type Document struct {
 	Packages  []Package `json:"packages"`
 }
 
-// Package is one curated domain set (discord, direct-games, …).
+// KindCanary marks crisis-day throttle packages (not status cards).
+const KindCanary = "canary"
+
+// Package is one curated domain set (discord, direct-games, canary, …).
 type Package struct {
 	ID             string   `json:"id"`
 	Label          string   `json:"label"`
+	Kind           string   `json:"kind,omitempty"` // "" special | "canary"
 	DefaultEnabled bool     `json:"default_enabled"`
 	PathForce      string   `json:"path_force,omitempty"` // "direct" | "desync" | "tunnel"
 	Domains        []string `json:"domains,omitempty"`
@@ -25,6 +29,11 @@ type Package struct {
 	ResolveHosts   []string `json:"resolve_hosts,omitempty"`
 	ProbeHosts     []string `json:"probe_hosts,omitempty"`
 	Notes          string   `json:"notes,omitempty"`
+}
+
+// IsCanary is crisis-day throttle/IP-drop → selective tunnel, not a status card.
+func (p Package) IsCanary() bool {
+	return strings.EqualFold(p.Kind, KindCanary)
 }
 
 // Channel describes the signed remote update endpoint.
@@ -134,7 +143,7 @@ func (d Document) TunnelDomains() []string {
 		out = append(out, s)
 	}
 	for _, p := range d.EnabledPackages() {
-		if p.PathForce == "direct" {
+		if p.PathForce == "direct" || p.IsCanary() {
 			continue
 		}
 		for _, x := range p.Domains {
@@ -192,7 +201,7 @@ func (d Document) ResolveHosts() []string {
 		out = append(out, s)
 	}
 	for _, p := range d.EnabledPackages() {
-		if p.PathForce == "direct" {
+		if p.PathForce == "direct" || p.IsCanary() {
 			continue
 		}
 		if len(p.ResolveHosts) > 0 {
@@ -208,8 +217,17 @@ func (d Document) ResolveHosts() []string {
 	return out
 }
 
-// ProbeHosts are session-start cascade targets.
+// ProbeHosts are session-start cascade targets (special packages only).
 func (d Document) ProbeHosts() []string {
+	return d.probeHosts(false)
+}
+
+// CanaryProbeHosts are background crisis-day targets (not session-start).
+func (d Document) CanaryProbeHosts() []string {
+	return d.probeHosts(true)
+}
+
+func (d Document) probeHosts(canary bool) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	add := func(s string) {
@@ -227,17 +245,20 @@ func (d Document) ProbeHosts() []string {
 		if p.PathForce == "direct" {
 			continue
 		}
+		if p.IsCanary() != canary {
+			continue
+		}
 		if len(p.ProbeHosts) > 0 {
 			for _, x := range p.ProbeHosts {
 				add(x)
 			}
 			continue
 		}
-		if len(p.Domains) > 0 {
+		if !canary && len(p.Domains) > 0 {
 			add(p.Domains[0])
 		}
 	}
-	if len(out) == 0 {
+	if !canary && len(out) == 0 {
 		out = []string{"discord.com"}
 	}
 	return out

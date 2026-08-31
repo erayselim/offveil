@@ -1,6 +1,6 @@
 {
-  "version": 5,
-  "updated_at": "2026-08-26",
+  "version": 6,
+  "updated_at": "2026-09-01",
   "packages": [
     {
       "id": "discord",
@@ -78,6 +78,53 @@
         "secure.imvu.com"
       ],
       "notes": "Classic client (IMVUClient.exe) ignores system proxy. CDN siblings (webasset/static/userimages/asset-server *-akm) cover half-loaded avatars/products. Domain expand records siblings under .imvu.com."
+    },
+    {
+      "id": "canary",
+      "label": "Canary",
+      "kind": "canary",
+      "default_enabled": true,
+      "domains": [
+        "www.youtube.com",
+        "youtube.com",
+        "www.instagram.com",
+        "instagram.com",
+        "x.com",
+        "twitter.com",
+        "www.tiktok.com",
+        "tiktok.com",
+        "web.telegram.org",
+        "telegram.org"
+      ],
+      "domain_suffix": [
+        ".youtube.com",
+        ".googlevideo.com",
+        ".ytimg.com",
+        ".youtu.be",
+        ".instagram.com",
+        ".cdninstagram.com",
+        ".facebook.com",
+        ".facebook.net",
+        ".fbcdn.net",
+        ".whatsapp.com",
+        ".whatsapp.net",
+        ".x.com",
+        ".twitter.com",
+        ".twimg.com",
+        ".tiktok.com",
+        ".tiktokcdn.com",
+        ".telegram.org",
+        ".t.me",
+        ".signal.org"
+      ],
+      "probe_hosts": [
+        "www.youtube.com",
+        "www.instagram.com",
+        "x.com",
+        "www.tiktok.com",
+        "web.telegram.org"
+      ],
+      "notes": "Crisis-day throttle / IP-drop → selective tunnel. Not a status card. UDP stays default DIRECT unless tunneled. Signal suffix rides the same crisis window; no extra probe."
     },
     {
       "id": "direct-games",

@@ -155,6 +155,9 @@ start
        open?        -> that package UDP direct (HTTPS still desync)
        sni/dpi?     -> that package UDP desync
        ip/desync fail? -> that package suffix → selective tunnel
+  -> canary probe (background; youtube/instagram/x/tiktok/telegram)
+       throttle_suspect / ip_drop → those suffixes → selective tunnel
+       else stay on default HTTPS desync (no special UDP)
   -> default HTTPS never follows Discord's path
 ```
 
@@ -246,8 +249,8 @@ File: `ruleset/active.json`. Signature: `active.json.sig` (Ed25519, base64).
 
 ```json
 {
-  "version": 5,
-  "updated_at": "2026-08-26",
+  "version": 6,
+  "updated_at": "2026-09-01",
   "packages": [
     {
       "id": "discord",
@@ -295,7 +298,9 @@ File: `ruleset/active.json`. Signature: `active.json.sig` (Ed25519, base64).
 }
 ```
 
-Package tags: `discord`, `social`, `legacy-cdn`, `direct-games`, ...
+Package tags: `discord`, `canary`, `legacy-cdn`, `direct-games`, ...
+`kind: "canary"` is not a status card; probe is background; only
+`throttle_suspect` / `ip_drop` send its suffixes to the selective tunnel.
 
 ### 5.1 Update channel
 
@@ -331,7 +336,7 @@ Network change or sleep triggers silent self-heal.
 - DoH / DNS hijack
 - Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
 - Sniffed QUIC reject (not port 443) so HTTP/3 falls back to TCP TLS
-- Selective tunnel outbound(s) for Discord IP-drop only
+- Selective tunnel outbound(s) for special IP-drop and canary throttle/IP-drop suffixes
 
 ### 6.2 ByeDPI
 

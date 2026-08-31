@@ -90,6 +90,42 @@ func TestIMVUPackageAndExpand(t *testing.T) {
 	if !sawIMVU {
 		t.Fatal("TargetSeeds missing imvu")
 	}
+	for _, s := range seeds {
+		if s.ID == "canary" {
+			t.Fatal("TargetSeeds must skip canary")
+		}
+	}
+}
+
+func TestCanaryPackage(t *testing.T) {
+	doc, err := ruleset.ParseDocument(ruleset.BundledActive())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := doc.MatchPackage("www.youtube.com")
+	if !ok || !pkg.IsCanary() {
+		t.Fatalf("youtube canary: ok=%v pkg=%+v", ok, pkg)
+	}
+	if sug := doc.ExpandForHost("www.youtube.com", nil); len(sug) != 0 {
+		t.Fatalf("canary expand: %+v", sug)
+	}
+	if contains(doc.TunnelDomains(), "youtube.com") {
+		t.Fatal("TunnelDomains must not include canary suffixes by default")
+	}
+	if contains(doc.ResolveHosts(), "www.youtube.com") {
+		t.Fatal("ResolveHosts must skip canary")
+	}
+	if contains(doc.ProbeHosts(), "www.youtube.com") {
+		t.Fatal("ProbeHosts must skip canary")
+	}
+	if !contains(doc.CanaryProbeHosts(), "x.com") {
+		t.Fatal("CanaryProbeHosts missing x.com")
+	}
+	for _, h := range []string{"steampowered.com", "riotgames.com"} {
+		if contains(doc.CanaryProbeHosts(), h) {
+			t.Fatalf("games leaked into canary probe: %s", h)
+		}
+	}
 }
 
 func TestTunnelDomainsIncludeIMVU(t *testing.T) {

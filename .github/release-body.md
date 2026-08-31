@@ -1,12 +1,10 @@
 ## What changed
 
-In-app updates are no longer a one-shot dialog.
+Crisis-day social throttle now takes the selective tunnel without a new switch.
 
-* **Home:** Check stays as **Update available** (or **Install update** after download). Up to date / failed still flash briefly.
-* **Before install:** Short notes, then Download and install. Closing the dialog does not cancel a download.
-* **Settings:** Auto-check on launch (default on), auto-download (off), and **What's new**.
-
-Protection behavior is unchanged: DNS + HTTPS desync while on, game UDP on the ISP, Steam / Riot / Epic / FACEIT excluded.
+* Background canary probes YouTube / Instagram / X / TikTok / Telegram Web. Slow TLS or IP-drop sends those suffixes to WARP/Reality.
+* Discord / IMVU stay on their own path. Default HTTPS desync and game UDP are unchanged.
+* A slow home network does not promote canary to tunnel (control host must be healthy).
 
 ## Download
 

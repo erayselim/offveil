@@ -98,6 +98,9 @@ type Engine struct {
 	asnPathStore  *policy.ASNPathStore
 
 	reprobeCancel context.CancelFunc
+	lastCanaryAt  time.Time
+
+	dataplaneTunnel []string
 
 	// Legacy CDN / half-load domain expand.
 	expandSeen        map[string]struct{}
@@ -406,10 +409,6 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	if len(probeHosts) > 0 {
 		probeHost = probeHosts[0]
 	}
-	discordPath := targetPath(targets, "discord")
-	if discordPath == "" || discordPath == "none" {
-		discordPath = policy.PathDesync
-	}
 
 	var dsi desync.Info
 	asn := e.policy.ASN()
@@ -468,13 +467,10 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 		_ = store.Put(asn, strat, probeHost)
 	}
 
-	needTunnel := discordPath == policy.PathTunnel
 	if dsi.LastProbe != "" && dsi.LastProbe != desync.FailOK {
 		if store != nil && stratSource == "asn-cache" {
 			_ = store.Delete(asn)
 		}
-		needTunnel = true
-		discordPath = policy.PathTunnel
 		outcome := string(dsi.LastProbe)
 		switch dsi.LastProbe {
 		case desync.FailReset:
@@ -489,7 +485,8 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 			"class", dsi.LastProbe, "strategy", dsi.StrategyID)
 	}
 
-	tunnelHosts, desyncUDP := splitSpecialHosts(rs.Doc, targets)
+	tunnelHosts, desyncUDP := splitSpecialHosts(rs.Doc, targets, e.policy)
+	needTunnel := len(tunnelHosts) > 0
 	tunCfg := tunnel.DefaultConfig()
 	tunCfg.Sink = e.policy
 	tunCfg.AssignJob = e.job.Assign
@@ -509,9 +506,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	if needTunnel {
 		tunCfg.AllowlistOutbound = "tunnel"
-		if len(probeHosts) > 0 {
-			tunCfg.ProbeHost = probeHosts[0]
-		}
+		tunCfg.ProbeHost = tunnelLivenessHost(rs.Doc, e.policy, probeHosts)
 	} else {
 		tunCfg.AllowlistOutbound = "desync"
 		tunCfg.ProbeHost = ""
@@ -545,9 +540,11 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 		if dataplaneOK {
 			attachCaptureAdapter(e.cap, capture.AdapterName)
 			if ti.ProviderID != tunnel.ProviderDesync && needTunnel {
-				setTarget(targets, "discord", policy.PathTunnel, "ok")
-				if e.policy != nil {
-					e.policy.OnTunnelOK(probeHost, string(ti.ProviderID))
+				if targetPath(targets, "discord") == policy.PathTunnel {
+					setTarget(targets, "discord", policy.PathTunnel, "ok")
+				}
+				if e.policy != nil && tunCfg.ProbeHost != "" {
+					e.policy.OnTunnelOK(tunCfg.ProbeHost, string(ti.ProviderID))
 				}
 			}
 			slog.Info("engine: TUN dataplane up", "provider", ti.ProviderID, "special_tunnel", needTunnel)
@@ -555,6 +552,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 			setTarget(targets, "discord", policy.PathTunnel, "retry")
 		}
 	}
+	e.dataplaneTunnel = append([]string(nil), tunnelHosts...)
 
 	for i := range targets {
 		if targets[i].Path == "" || targets[i].Path == "none" {
@@ -626,6 +624,9 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.startReprobeLoop()
 	e.startReliabilityLocked()
 	e.freezeSupportLocked()
+	if os.Getenv("OFFVEIL_CANARY_BG") != "0" {
+		go e.probeCanary()
+	}
 
 	return e.statusLocked(), nil
 }
@@ -659,6 +660,8 @@ func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 	e.expandSeen = nil
 	e.expandSuggestions = nil
 	e.expandRoutesAdded = 0
+	e.dataplaneTunnel = nil
+	e.lastCanaryAt = time.Time{}
 	e.targets = []ipc.TargetStatus{
 		{ID: "discord", Label: "Discord", Outcome: "unknown", Path: "none"},
 	}
@@ -767,7 +770,7 @@ func (e *Engine) Test(hosts []string) (*probe.Report, *ipc.RPCError) {
 	}
 	if len(hosts) == 0 {
 		if e.rulesetSnap != nil {
-			hosts = e.rulesetSnap.Doc.ProbeHosts()
+			hosts = append(e.rulesetSnap.Doc.ProbeHosts(), e.rulesetSnap.Doc.CanaryProbeHosts()...)
 		}
 		if len(hosts) == 0 {
 			hosts = probe.CuratedHosts()
@@ -837,6 +840,7 @@ func (e *Engine) reprobeLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.silentReprobe()
+			e.maybeCanary()
 		}
 	}
 }
@@ -1041,13 +1045,19 @@ func egressIPv4(info *capture.Info) string {
 	return info.Egress.IPv4
 }
 
-func splitSpecialHosts(doc ruleset.Document, targets []ipc.TargetStatus) (tunnelHosts, desyncUDP []string) {
+func splitSpecialHosts(doc ruleset.Document, targets []ipc.TargetStatus, pol *policy.Store) (tunnelHosts, desyncUDP []string) {
 	for _, pkg := range doc.EnabledPackages() {
 		if strings.EqualFold(pkg.PathForce, "direct") {
 			continue
 		}
 		hosts := pkg.RouteHosts()
 		if len(hosts) == 0 {
+			continue
+		}
+		if pkg.IsCanary() {
+			if canaryPackageWantsTunnel(pkg, pol) {
+				tunnelHosts = append(tunnelHosts, hosts...)
+			}
 			continue
 		}
 		switch targetPath(targets, pkg.ID) {
@@ -1060,4 +1070,53 @@ func splitSpecialHosts(doc ruleset.Document, targets []ipc.TargetStatus) (tunnel
 		}
 	}
 	return tunnelHosts, desyncUDP
+}
+
+func canaryPackageWantsTunnel(pkg ruleset.Package, pol *policy.Store) bool {
+	if pol == nil {
+		return false
+	}
+	for _, h := range pkg.ProbeHosts {
+		if pe, ok := pol.Lookup(h); ok && pe.Path == policy.PathTunnel {
+			return true
+		}
+	}
+	return false
+}
+
+func tunnelLivenessHost(doc ruleset.Document, pol *policy.Store, fallback []string) string {
+	for _, pkg := range doc.EnabledPackages() {
+		if !pkg.IsCanary() {
+			continue
+		}
+		for _, h := range pkg.ProbeHosts {
+			if pol != nil {
+				if pe, ok := pol.Lookup(h); ok && pe.Path == policy.PathTunnel {
+					return h
+				}
+			}
+		}
+	}
+	if len(fallback) > 0 {
+		return fallback[0]
+	}
+	return "discord.com"
+}
+
+func sameHostSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, h := range a {
+		seen[h]++
+	}
+	for _, h := range b {
+		n, ok := seen[h]
+		if !ok || n == 0 {
+			return false
+		}
+		seen[h] = n - 1
+	}
+	return true
 }

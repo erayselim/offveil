@@ -73,6 +73,13 @@ func pathRank(path string) int {
 	}
 }
 
+func CanaryPath(class Class, path string) string {
+	if class == ClassIPDrop || class == ClassThrottleSuspect || path == "tunnel" {
+		return "tunnel"
+	}
+	return "desync"
+}
+
 // PreferPath returns the more forced of two cascade paths.
 func PreferPath(a, b string) string {
 	if pathRank(b) > pathRank(a) {

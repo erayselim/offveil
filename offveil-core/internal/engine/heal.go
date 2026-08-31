@@ -19,7 +19,7 @@ const (
 
 // HealInfo is reliability diagnostics (status.heal; UI may ignore).
 type HealInfo struct {
-	LastReason string `json:"last_reason,omitempty"` // network_change | power_resume
+	LastReason string `json:"last_reason,omitempty"` // network_change | power_resume | canary_tunnel
 	LastAt     string `json:"last_at,omitempty"`
 	Count      int    `json:"count"`
 	Watching   bool   `json:"watching"`
@@ -99,7 +99,7 @@ func (e *Engine) SelfHeal(reason string) {
 	if e.policy != nil {
 		invalidated = e.policy.ObserveNetwork(ni)
 	}
-	need := reason == "power_resume" || invalidated
+	need := reason == "power_resume" || reason == "canary_tunnel" || invalidated
 	if !need {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)

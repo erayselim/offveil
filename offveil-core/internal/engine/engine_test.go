@@ -41,6 +41,7 @@ func newTestEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
 	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
+	t.Setenv("OFFVEIL_CANARY_BG", "0")
 	uniquePolicyCache(t)
 	store, err := desync.OpenStrategyStore("")
 	if err != nil {
@@ -795,5 +796,135 @@ func TestConnectionTestDoesNotDemoteTunnel(t *testing.T) {
 	}
 	if st2.Summary != "Açık" {
 		t.Fatalf("summary=%q", st2.Summary)
+	}
+}
+
+func TestCanaryThrottleStartsTunnelNotDiscord(t *testing.T) {
+	uniquePolicyCache(t)
+	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
+	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
+	t.Setenv("OFFVEIL_CANARY_BG", "0")
+
+	reg := cleanup.NewRegistry()
+	var tunCfgs []tunnel.Config
+	eng := engine.New(reg).
+		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
+			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
+		}).
+		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
+			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
+		}).
+		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
+			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
+		}).
+		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+			tunCfgs = append(tunCfgs, cfg)
+			pid := tunnel.ProviderWARP
+			if cfg.AllowlistOutbound == "desync" {
+				pid = tunnel.ProviderDesync
+			}
+			return tunnel.NewFakeSession(tunnel.Info{
+				ProviderID: pid, Up: true, LastProbe: tunnel.FailOK,
+			}), nil
+		}).
+		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
+			rep := probe.Report{Results: make([]probe.Result, 0, len(hosts))}
+			for _, h := range hosts {
+				r := probe.Result{Target: h, OK: true, Class: probe.ClassDPIReset, Path: "desync"}
+				if strings.Contains(h, "youtube") || strings.Contains(h, "instagram") ||
+					h == "x.com" || strings.Contains(h, "tiktok") || strings.Contains(h, "telegram") {
+					r.Class = probe.ClassThrottleSuspect
+					r.Path = "tunnel"
+				}
+				rep.Results = append(rep.Results, r)
+			}
+			return rep
+		}).
+		WithNetInfo(fakeNet)
+
+	st, err := eng.Start("auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tunCfgs) == 0 || tunCfgs[0].AllowlistOutbound != "desync" {
+		t.Fatalf("session start must stay desync dataplane, got %+v", tunCfgs)
+	}
+	var discord ipc.TargetStatus
+	for _, tg := range st.Targets {
+		if tg.ID == "discord" {
+			discord = tg
+		}
+		if tg.ID == "canary" {
+			t.Fatal("canary must not appear in status targets")
+		}
+	}
+	if discord.Path == "tunnel" {
+		t.Fatalf("discord must not follow canary: %+v", discord)
+	}
+
+	eng.ProbeCanaryForTest()
+	st2 := eng.Status()
+	if len(tunCfgs) < 2 {
+		t.Fatalf("canary heal should rebuild dataplane, starts=%d", len(tunCfgs))
+	}
+	last := tunCfgs[len(tunCfgs)-1]
+	if last.AllowlistOutbound != "tunnel" {
+		t.Fatalf("outbound=%q want tunnel", last.AllowlistOutbound)
+	}
+	joined := strings.Join(last.TunnelDomains, ",")
+	if !strings.Contains(joined, "youtube.com") {
+		t.Fatalf("TunnelDomains missing youtube: %v", last.TunnelDomains)
+	}
+	spec := strings.Join(last.SpecialDomains, ",")
+	if !strings.Contains(spec, "discord.com") {
+		t.Fatalf("Discord should stay desync UDP special, got %v", last.SpecialDomains)
+	}
+	if strings.Contains(spec, "youtube.com") {
+		t.Fatalf("canary must not be desyncUDP: %v", last.SpecialDomains)
+	}
+	for _, tg := range st2.Targets {
+		if tg.ID == "discord" && tg.Path == "tunnel" {
+			t.Fatalf("discord inherited canary tunnel: %+v", tg)
+		}
+	}
+}
+
+func TestCanaryOpenKeepsDesyncDataplane(t *testing.T) {
+	uniquePolicyCache(t)
+	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
+	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
+	t.Setenv("OFFVEIL_CANARY_BG", "0")
+
+	reg := cleanup.NewRegistry()
+	var tunCfgs []tunnel.Config
+	eng := engine.New(reg).
+		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
+			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
+		}).
+		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
+			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
+		}).
+		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
+			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
+		}).
+		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+			tunCfgs = append(tunCfgs, cfg)
+			return tunnel.NewFakeSession(tunnel.Info{
+				ProviderID: tunnel.ProviderDesync, Up: true, LastProbe: tunnel.FailOK,
+			}), nil
+		}).
+		WithProbe(fakeDesyncProbe).
+		WithNetInfo(fakeNet)
+
+	if _, err := eng.Start("auto"); err != nil {
+		t.Fatal(err)
+	}
+	n := len(tunCfgs)
+	eng.ProbeCanaryForTest()
+	if len(tunCfgs) != n {
+		t.Fatalf("open canary must not rebuild, before=%d after=%d", n, len(tunCfgs))
+	}
+	if tunCfgs[0].AllowlistOutbound != "desync" {
+		t.Fatalf("outbound=%q", tunCfgs[0].AllowlistOutbound)
 	}
 }
