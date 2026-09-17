@@ -1,12 +1,13 @@
-//! Windows Service bootstrap.
+//! Demand-start core bootstrap.
 //!
-//! After NSIS (or a one-time elevated `setup`), `offveil-core` is a demand-start
-//! service. The UI is `asInvoker`. Authenticated Users may `StartService`
-//! (SDDL from the installer / `setup`) so toggle, restart, and login
-//! auto-connect never prompt UAC.
+//! After NSIS / LaunchDaemon setup, `offveil-core` is demand-start. The UI is
+//! unprivileged. Windows: Authenticated Users may `StartService` (SDDL).
+//! Darwin: `%admin` may `sudo -n … start` (`/etc/sudoers.d/offveil`).
+//! Toggle, restart, and login auto-connect never prompt again.
 //!
-//! Elevated `offveil-core setup` is only for a missing SCM entry or a DACL
-//! that rejects start (broken / pre-grant install).
+//! Elevated `offveil-core setup` is only for a missing service or a grant
+//! that rejects start (broken / first install). Windows SCM stays
+//! `cfg(windows)`; Darwin uses launchctl via the canonical binary.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::core_ipc;
 
+#[cfg(windows)]
 const SERVICE_NAME: &str = "offveil-core";
 const PIPE_WAIT: Duration = Duration::from_secs(20);
 const SETUP_PIPE_WAIT: Duration = Duration::from_secs(30);
@@ -43,6 +45,11 @@ pub struct BootstrapInfo {
     pub pipe_ok: bool,
 }
 
+fn push_core_names(out: &mut Vec<PathBuf>, dir: &Path) {
+    out.push(dir.join("offveil-core.exe"));
+    out.push(dir.join("offveil-core"));
+}
+
 pub fn resolve_core_path() -> Option<PathBuf> {
     if let Ok(p) = env::var("OFFVEIL_CORE_PATH") {
         let pb = PathBuf::from(p);
@@ -55,35 +62,50 @@ pub fn resolve_core_path() -> Option<PathBuf> {
 
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("offveil-core.exe"));
-            candidates.push(dir.join("offveil-core").join("offveil-core.exe"));
-            if let Some(repo) = dir
-                .ancestors()
-                .find(|p| p.join("offveil-core").join("offveil-core.exe").is_file())
-            {
-                candidates.push(repo.join("offveil-core").join("offveil-core.exe"));
+            push_core_names(&mut candidates, dir);
+            push_core_names(&mut candidates, &dir.join("offveil-core"));
+            // Tauri macOS resources live in Contents/Resources, binary in Contents/MacOS.
+            if let Some(contents) = dir.parent() {
+                push_core_names(&mut candidates, &contents.join("Resources"));
+            }
+            if let Some(repo) = dir.ancestors().find(|p| {
+                p.join("offveil-core").join("offveil-core.exe").is_file()
+                    || p.join("offveil-core").join("offveil-core").is_file()
+                    || p.join("offveil-core").join("dist").join("offveil-core").is_file()
+            }) {
+                push_core_names(&mut candidates, &repo.join("offveil-core"));
+                push_core_names(&mut candidates, &repo.join("offveil-core").join("dist"));
             }
             if let Some(repo) = dir.ancestors().nth(4) {
-                candidates.push(repo.join("offveil-core").join("offveil-core.exe"));
+                push_core_names(&mut candidates, &repo.join("offveil-core"));
+                push_core_names(&mut candidates, &repo.join("offveil-core").join("dist"));
             }
         }
     }
 
     if let Ok(cwd) = env::current_dir() {
-        candidates.push(cwd.join("offveil-core.exe"));
-        candidates.push(cwd.join("offveil-core").join("offveil-core.exe"));
-        candidates.push(cwd.join("..").join("offveil-core").join("offveil-core.exe"));
-        candidates.push(
-            cwd.join("..")
-                .join("..")
-                .join("offveil-core")
-                .join("offveil-core.exe"),
+        push_core_names(&mut candidates, &cwd);
+        push_core_names(&mut candidates, &cwd.join("offveil-core"));
+        push_core_names(&mut candidates, &cwd.join("offveil-core").join("dist"));
+        push_core_names(&mut candidates, &cwd.join("..").join("offveil-core"));
+        push_core_names(
+            &mut candidates,
+            &cwd.join("..").join("offveil-core").join("dist"),
+        );
+        push_core_names(
+            &mut candidates,
+            &cwd.join("..").join("..").join("offveil-core"),
+        );
+        push_core_names(
+            &mut candidates,
+            &cwd.join("..").join("..").join("offveil-core").join("dist"),
         );
     }
 
     if let Ok(pf) = env::var("ProgramFiles") {
-        candidates.push(PathBuf::from(pf).join("offveil").join("offveil-core.exe"));
+        push_core_names(&mut candidates, &PathBuf::from(pf).join("offveil"));
     }
+    candidates.push(PathBuf::from("/Library/Application Support/offveil/offveil-core"));
 
     candidates.into_iter().find(|c| c.is_file())
 }
@@ -113,7 +135,12 @@ pub fn service_installed() -> bool {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn service_installed() -> bool {
+    Path::new(darwin::LAUNCH_DAEMON_PLIST).is_file() && Path::new(darwin::CANONICAL_CORE).is_file()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn service_installed() -> bool {
     false
 }
@@ -145,7 +172,13 @@ fn service_start_granted() -> bool {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn service_start_granted() -> bool {
+    // Sudoers is the SERVICE_START analogue; the file existing is the fast check.
+    Path::new(darwin::SUDOERS_PATH).is_file()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn service_start_granted() -> bool {
     false
 }
@@ -227,7 +260,12 @@ fn scm_start_err(op: &str, err: u32) -> String {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn start_scm() -> Result<(), String> {
+    darwin::start_launchd()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn start_scm() -> Result<(), String> {
     Err("Windows dışı platformda servis yok".into())
 }
@@ -262,7 +300,7 @@ pub fn probe() -> BootstrapInfo {
 
     BootstrapInfo {
         state: BootstrapState::NeedsInstall,
-        message: "İlk kurulum: offveil core servisi kurulacak (tek UAC)".into(),
+        message: "İlk kurulum: offveil core servisi kurulacak (tek yönetici onayı)".into(),
         core_path,
         service_installed: installed,
         pipe_ok: false,
@@ -283,7 +321,7 @@ pub fn ensure_service() -> Result<BootstrapInfo, String> {
     }
 
     let core = resolve_core_path().ok_or_else(|| {
-        "offveil-core.exe bulunamadı. OFFVEIL_CORE_PATH ayarlayın veya core'u UI yanına koyun."
+        "offveil-core bulunamadı. OFFVEIL_CORE_PATH ayarlayın veya core'u UI yanına koyun."
             .to_string()
     })?;
 
@@ -362,10 +400,136 @@ fn elevate_setup(core: &Path) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        darwin::elevate_setup(core)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = core;
-        Err("Windows dışı platformda servis kurulumu yok".into())
+        Err("Bu platformda servis kurulumu yok".into())
+    }
+}
+
+/// Darwin LaunchDaemon control. Windows SCM stays in the `cfg(windows)` blocks above.
+#[allow(dead_code)]
+mod darwin {
+    #[allow(dead_code)]
+    pub const LAUNCH_DAEMON_PLIST: &str = "/Library/LaunchDaemons/offveil-core.plist";
+    #[allow(dead_code)]
+    pub const CANONICAL_CORE: &str = "/Library/Application Support/offveil/offveil-core";
+    #[allow(dead_code)]
+    pub const SUDOERS_PATH: &str = "/etc/sudoers.d/offveil";
+
+    /// Same quoting as offveil-core `appservice.ElevateScript`.
+    pub fn elevate_script(exe: &std::path::Path, user: &str, action: &str) -> String {
+        let shell = format!(
+            "OFFVEIL_SETUP_USER={} {} {}",
+            sh_quote(user),
+            sh_quote(&exe.display().to_string()),
+            sh_quote(action)
+        );
+        format!(
+            "do shell script {} with administrator privileges",
+            as_quote(&shell)
+        )
+    }
+
+    fn sh_quote(s: &str) -> String {
+        format!("'{}'", s.replace('\'', r#"'"'"'"#))
+    }
+
+    fn as_quote(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
+    pub fn sudo_needs_install(stderr: &str) -> bool {
+        let s = stderr.to_ascii_lowercase();
+        s.contains("password is required")
+            || s.contains("a terminal is required")
+            || s.contains("not allowed to execute")
+            || s.contains("no such file")
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn start_launchd() -> Result<(), String> {
+        use std::process::Command;
+
+        let exe = std::path::Path::new(CANONICAL_CORE);
+        if !exe.is_file() {
+            return Err(format!(
+                "{} offveil-core LaunchDaemon not installed",
+                super::NEEDS_INSTALL
+            ));
+        }
+        let output = Command::new("/usr/bin/sudo")
+            .args(["-n", CANONICAL_CORE, "start"])
+            .output()
+            .map_err(|e| format!("sudo start: {e}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let err = String::from_utf8_lossy(&output.stderr);
+        if sudo_needs_install(&err) {
+            return Err(format!("{} sudo start: {err}", super::NEEDS_INSTALL));
+        }
+        Err(format!("launchctl start: {}", err.trim()))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn elevate_setup(core: &std::path::Path) -> Result<(), String> {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        if !core.is_file() {
+            return Err("offveil-core bulunamadı".into());
+        }
+        let user = std::env::var("USER").unwrap_or_default();
+        let script = elevate_script(core, &user, "setup");
+        let mut child = Command::new("/usr/bin/osascript")
+            .args(["-e", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("osascript: {e}"))?;
+        let mut stderr_pipe = child.stderr.take();
+
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let mut stderr = String::new();
+                    if let Some(ref mut s) = stderr_pipe {
+                        use std::io::Read;
+                        let _ = s.read_to_string(&mut stderr);
+                    }
+                    if status.success() {
+                        return Ok(());
+                    }
+                    let low = stderr.to_ascii_lowercase();
+                    if low.contains("canceled")
+                        || low.contains("cancelled")
+                        || low.contains("-128")
+                    {
+                        return Err(
+                            "Kurulum iptal edildi veya başarısız (yönetici onayı reddedilmiş olabilir)"
+                                .into(),
+                        );
+                    }
+                    return Err(format!(
+                        "offveil-core setup çıkış kodu {}",
+                        status.code().unwrap_or(1)
+                    ));
+                }
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    return Err("Servis kurulumu zaman aşımına uğradı".into());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(e) => return Err(format!("osascript wait: {e}")),
+            }
+        }
     }
 }
 
@@ -386,5 +550,26 @@ mod tests {
         assert!(is_needs_install(&format!("{NEEDS_INSTALL} OpenService: 5")));
         assert!(!is_needs_install("StartService: 1053"));
         assert!(!is_needs_install("servis başladı ama IPC hazır olmadı"));
+    }
+
+    #[test]
+    fn elevate_script_matches_core_contract() {
+        let s = darwin::elevate_script(
+            std::path::Path::new("/Library/Application Support/offveil/offveil-core"),
+            "eray",
+            "setup",
+        );
+        assert!(s.contains("with administrator privileges"));
+        assert!(s.contains("OFFVEIL_SETUP_USER="));
+        assert!(s.contains("setup"));
+        assert!(s.contains("Application Support"));
+        assert!(!s.contains("Network Extension"));
+    }
+
+    #[test]
+    fn sudo_password_prompt_means_needs_install() {
+        assert!(darwin::sudo_needs_install("sudo: a password is required\n"));
+        assert!(darwin::sudo_needs_install("sudo: a terminal is required to read the password"));
+        assert!(!darwin::sudo_needs_install("launchctl start: failed: 5"));
     }
 }

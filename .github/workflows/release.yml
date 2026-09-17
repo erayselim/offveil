@@ -11,7 +11,12 @@ permissions:
   attestations: write
 
 jobs:
+  # Darwin prerelease: .github/workflows/release-darwin.yml (v*-mac* tags).
+  # Do not add Mac artifacts or latest.json merge here (ROADMAP.mac.md §0 / §7 / §10).
+  # A Mac tag must not run this job: make_latest would steal GitHub Latest and a
+  # Mac-only latest.json would blank the Windows updater.
   windows:
+    if: ${{ !contains(github.ref_name, '-mac') }}
     runs-on: windows-latest
     env:
       GO_VERSION: "1.25.13"
@@ -88,6 +93,7 @@ jobs:
           Copy-Item ruleset/active.json.sig $out
           $ver = $env:TAG.TrimStart("v")
           $base = "https://github.com/${{ github.repository }}/releases/download/$($env:TAG)"
+          # Windows-only platforms. Do not pass -DarwinDir here.
           ./scripts/generate-latest-json.ps1 -NsisDir $out -Version $ver -DownloadBase $base -OutFile "$out/latest.json"
           Get-ChildItem $out -File | ForEach-Object {
             $h = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()

@@ -27,3 +27,7 @@ npx tauri signer generate -w ..\.secrets\tauri.key
 Put the printed **public** key in `offveil-ui/src-tauri/tauri.conf.json`
 under `plugins.updater.pubkey`. If you used `-p`, the password file is
 `.secrets/tauri.password` (gitignored).
+
+Windows release tag: `v1.0.0-b5` (no `-mac`). Uploads `latest.json`,
+`make_latest: true`. Mac prerelease tag: `v1.0.0-mac.1`. Does not upload
+`latest.json`, `make_latest: false`. Same updater pubkey on both.

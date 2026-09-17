@@ -29,6 +29,8 @@ gh attestation verify .\offveil_*_x64-setup.exe --owner erayselim
 
 SmartScreen will show "Windows protected your PC". Use **More info**, then **Run anyway**. Smart App Control blocks unsigned binaries with no bypass. We do not tell you to turn SAC off. See [docs/antivirus.md](docs/antivirus.md).
 
+Apple Silicon is a **prerelease** (`offveil_*_aarch64.dmg` on a `v*-mac*` tag, not Latest). Gatekeeper: System Settings → Privacy & Security → Open Anyway.
+
 The NSIS installer is per-machine (`C:\Program Files\offveil`, one UAC). It registers `offveil-core` as a manual-start service. The switch in the UI starts and stops protection.
 
 If something breaks, export a diagnostics zip from the app. There are no ISP presets to pick. Beta reports: [issue form](.github/ISSUE_TEMPLATE/beta.yml).

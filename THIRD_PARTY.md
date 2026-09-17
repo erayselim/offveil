@@ -7,6 +7,12 @@ via the Permitted API). This is aggregation, not a combined work.
 Corresponding source for GPL components is the pinned upstream tag, not a
 fork. Hashes below are fail-closed in `offveil-core/scripts/fetch-*.ps1`.
 
+Darwin sidecars are **not** in the Windows installer. Same tags, different
+assets: `sing-box-1.13.14-darwin-arm64.tar.gz` (SHA in
+`fetch-sing-box-darwin-arm64.sh`) and ByeDPI `v0.17.3` built with `make`
+(`build-byedpi-darwin.sh`). The Linux `*-aarch64.tar.gz` ByeDPI release is
+not used.
+
 ## sing-box (GPL-3.0-or-later)
 
 | | |

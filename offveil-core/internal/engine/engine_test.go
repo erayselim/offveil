@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func newTestEngine(t *testing.T) *engine.Engine {
 			}), nil
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			id := desync.DefaultSafeStrategy().ID
+			id := desync.NativeSafeStrategy().ID
 			if cfg.Strategy.ID != "" {
 				id = cfg.Strategy.ID
 			}
@@ -183,6 +184,9 @@ func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
 	var tunCfg tunnel.Config
 	eng := newTestEngine(t).
 		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
+			if !cfg.SkipAdapter {
+				t.Fatal("engine must leave TUN to sing-box (SkipAdapter)")
+			}
 			return capture.NewFakeSession(capture.Info{
 				RoutesApplied: 1,
 				Egress:        &capture.EgressInfo{Name: "Ethernet", IPv4: "192.168.0.10"},
@@ -257,6 +261,24 @@ func TestBadMode(t *testing.T) {
 	_, err := eng.Start("manual")
 	if err == nil || err.Code != ipc.CodeBadRequest {
 		t.Fatalf("expected bad_request, got %v", err)
+	}
+}
+
+func TestStartPrivilegeAndTunFailed(t *testing.T) {
+	eng := newTestEngine(t).WithCaptureStart(func(capture.Config) (capture.Session, error) {
+		return nil, errors.New("privilege: TUN requires root")
+	})
+	_, err := eng.Start("auto")
+	if err == nil || err.Code != ipc.CodePrivilege {
+		t.Fatalf("privilege: %v", err)
+	}
+
+	eng = newTestEngine(t).WithCaptureStart(func(capture.Config) (capture.Session, error) {
+		return nil, errors.New("configure tun interface: failed")
+	})
+	_, err = eng.Start("auto")
+	if err == nil || err.Code != ipc.CodeTunFailed {
+		t.Fatalf("tun_failed: %v", err)
 	}
 }
 

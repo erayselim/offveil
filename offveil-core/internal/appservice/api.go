@@ -9,8 +9,9 @@ import (
 // API implements ipc.Handler against the Engine.
 type API struct {
 	Eng *engine.Engine
-	// Shutdown stops protection and asks SCM to stop the Windows service
-	// (UI quit). Optional; nil in unit tests.
+	// Shutdown stops protection and asks the service manager to stop the
+	// process (UI quit: Windows SCM / Darwin launchd unload, no elevation).
+	// Optional; nil in unit tests.
 	Shutdown func()
 }
 
@@ -60,8 +61,8 @@ func (a *API) Handle(method string, params map[string]any) (any, *ipc.RPCError) 
 		return st, nil
 
 	case "shutdown":
-		// UI exit: tear down protection, then stop Windows service (no UAC  -
-		// LocalSystem stops itself via SCM).
+		// UI exit: tear down protection, then stop the demand-start service
+		// (Windows SCM / Darwin launchd unload). Already privileged; no UAC.
 		if st := a.Eng.Status(); st.Protection || st.State != engine.StateStopped {
 			if _, err := a.Eng.Stop(); err != nil && err.Code != ipc.CodeNotRunning {
 				return nil, err

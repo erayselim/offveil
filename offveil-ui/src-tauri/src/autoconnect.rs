@@ -1,7 +1,8 @@
 //! Auto-connect: start protection when the UI process launches (default on).
 //!
 //! The core service is demand-start. After a reboot it is stopped, so we
-//! StartService (no UAC — AU is granted start in the NSIS hook) then IPC `start`.
+//! start it (Windows `StartService` / Darwin passwordless `sudo -n … start`)
+//! then IPC `start`. Never prompts for admin.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,10 +17,24 @@ use crate::QUITTING;
 static CONNECTING: AtomicBool = AtomicBool::new(false);
 
 fn disabled_marker(app: &AppHandle) -> PathBuf {
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("com.offveil.app")
-    });
+    let dir = app.path().app_config_dir().unwrap_or_else(|_| fallback_config_dir());
     dir.join("autoconnect-disabled")
+}
+
+fn fallback_config_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("com.offveil.app")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("Library/Application Support/com.offveil.app")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        PathBuf::from("com.offveil.app")
+    }
 }
 
 pub fn pref_enabled(app: &AppHandle) -> bool {
@@ -48,34 +63,37 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     Ok(enabled)
 }
 
-/// Best-effort: bring the service up and turn protection on. Never prompts UAC.
+/// Best-effort: bring the service up and turn protection on. Never prompts admin.
 pub fn spawn(app: &AppHandle) {
     if !pref_enabled(app) {
         return;
     }
-    // ACCESS_DENIED / missing SCM DACL cannot recover without UAC — don't retry.
+    // Missing service / start grant cannot recover without admin — don't retry.
     if matches!(service::probe().state, BootstrapState::NeedsInstall) {
         return;
     }
     if CONNECTING.swap(true, Ordering::SeqCst) {
         return;
     }
-    thread::spawn(|| {
-        let _ok = try_connect_loop();
+    let marker = disabled_marker(app);
+    thread::spawn(move || {
+        let _ok = try_connect_loop(&marker);
         CONNECTING.store(false, Ordering::SeqCst);
     });
 }
 
 fn is_permanent_err(err: &str) -> bool {
-    err.contains(service::NEEDS_INSTALL) || err.contains("OpenService: 5")
+    err.contains(service::NEEDS_INSTALL)
+        || err.contains("OpenService: 5")
+        || err.contains("password is required")
 }
 
-fn try_connect_loop() -> bool {
+fn try_connect_loop(disabled: &PathBuf) -> bool {
     for attempt in 0..16 {
         if QUITTING.load(Ordering::SeqCst) {
             return false;
         }
-        if marker_from_env().is_file() {
+        if disabled.is_file() {
             return false;
         }
         match try_connect_once() {
@@ -91,12 +109,6 @@ fn try_connect_loop() -> bool {
         }
     }
     false
-}
-
-fn marker_from_env() -> PathBuf {
-    PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
-        .join("com.offveil.app")
-        .join("autoconnect-disabled")
 }
 
 fn try_connect_once() -> Result<(), String> {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,19 @@ const (
 // IPv4 for local desync; WARP stays selective via route rules.
 func SplitDefaultCIDRs() []string {
 	return []string{"0.0.0.0/1", "128.0.0.0/1"}
+}
+
+// tunInterfaceName is the sing-box tun.interface_name.
+// Darwin rejects names like "offveil" / "tun0" ("bad tun name"); empty lets
+// sing-box pick utunN. Windows keeps the Wintun friendly name.
+func tunInterfaceName(name string) string {
+	if runtime.GOOS == "darwin" {
+		return ""
+	}
+	if name == "" {
+		return "offveil"
+	}
+	return name
 }
 
 // SingBoxBuild is the generated selective tunnel config + metadata.
@@ -123,10 +137,9 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		},
 	}
 	if p.EnableTUN {
-		inbounds = append(inbounds, map[string]any{
+		tunIn := map[string]any{
 			"type":                  "tun",
 			"tag":                   "tun-in",
-			"interface_name":        p.TUNInterface,
 			"address":               []string{p.TUNAddress},
 			"mtu":                   p.TUNMTU,
 			"auto_route":            true,
@@ -134,7 +147,11 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"route_address":         p.RouteCIDRs,
 			"route_exclude_address": routeExcludeAddresses(p),
 			"stack":                 "system",
-		})
+		}
+		if name := tunInterfaceName(p.TUNInterface); name != "" {
+			tunIn["interface_name"] = name
+		}
+		inbounds = append(inbounds, tunIn)
 	}
 
 	cfg := map[string]any{

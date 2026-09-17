@@ -14,7 +14,7 @@ func NewFakeSession(info Info) *FakeSession {
 		info.SocksAddr = "127.0.0.1:18080"
 	}
 	if info.StrategyID == "" {
-		info.StrategyID = DefaultSafeStrategy().ID
+		info.StrategyID = NativeSafeStrategy().ID
 	}
 	info.Up = true
 	return &FakeSession{info: info}

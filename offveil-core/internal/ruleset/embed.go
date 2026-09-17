@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 )
 
 //go:embed bundled/active.json
@@ -25,18 +26,7 @@ func CacheDir() (string, error) {
 	if d := os.Getenv("OFFVEIL_RULESET_CACHE"); d != "" {
 		return d, nil
 	}
-	if runtime.GOOS == "windows" {
-		base := os.Getenv("ProgramData")
-		if base == "" {
-			base = `C:\ProgramData`
-		}
-		return filepath.Join(base, "offveil", "ruleset"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "offveil", "ruleset"), nil
+	return filepath.Join(appdir.Root(), "ruleset"), nil
 }
 
 // FindRepoRuleset looks for ruleset/active.json relative to exe / cwd (dev).

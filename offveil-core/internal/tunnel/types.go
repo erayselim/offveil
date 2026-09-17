@@ -45,7 +45,7 @@ const (
 
 // Config controls the selective tunnel outbound.
 type Config struct {
-	// BinaryPath is sing-box.exe. Empty → resolve next to offveil-core / third_party.
+	// BinaryPath is sing-box (sing-box.exe on Windows). Empty → Locate next to core.
 	BinaryPath string
 	// ListenIP defaults to 127.0.0.1.
 	ListenIP string
@@ -78,10 +78,11 @@ type Config struct {
 	// SkipStart skips launching sing-box (unit tests / config-only).
 	SkipStart bool
 
-	// EnableTUN lets sing-box own Wintun (contracts.md §6.1).
+	// EnableTUN lets sing-box own the TUN (contracts.md §6.1).
 	// Go capture must not create a competing adapter when this is true.
 	EnableTUN bool
-	// TUNInterface is the Wintun adapter name (default capture.AdapterName).
+	// TUNInterface is the Wintun adapter name on Windows (default capture.AdapterName).
+	// Darwin omits it so sing-box selects utunN.
 	TUNInterface string
 	// TUNAddress is the TUN IPv4 prefix (default 10.87.0.1/30).
 	TUNAddress string

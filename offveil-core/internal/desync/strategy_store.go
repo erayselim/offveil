@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 )
 
 const (
@@ -38,23 +39,12 @@ type StrategyStore struct {
 	data strategyStoreFile
 }
 
-// StrategyCacheDir returns ProgramData/offveil/desync (Windows) or XDG path.
+// StrategyCacheDir returns <appdir>/desync (or OFFVEIL_DESYNC_CACHE).
 func StrategyCacheDir() (string, error) {
 	if d := os.Getenv("OFFVEIL_DESYNC_CACHE"); d != "" {
 		return d, nil
 	}
-	if runtime.GOOS == "windows" {
-		base := os.Getenv("ProgramData")
-		if base == "" {
-			base = `C:\ProgramData`
-		}
-		return filepath.Join(base, "offveil", "desync"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "offveil", "desync"), nil
+	return filepath.Join(appdir.Root(), "desync"), nil
 }
 
 // DefaultStrategyStorePath is desync-strategies.json under StrategyCacheDir.

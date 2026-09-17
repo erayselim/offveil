@@ -6,7 +6,8 @@ import (
 )
 
 // Hook is a best-effort cleanup step (routes, DNS, adapters, child engines).
-// Later phases (TUN/DNS) register concrete hooks here.
+// Same contract on Windows and Darwin (docs/contracts.md §9): leftover DNS
+// pointing at 127.0.0.1 is a black hole and must be restored.
 type Hook func() error
 
 // Registry runs registered hooks on stop / crash / service shutdown.

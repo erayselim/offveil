@@ -35,9 +35,12 @@ type Config struct {
 	TunLUID uint64
 	// EgressLUID is the physical NIC LUID to pin away from ISP DNS (optional).
 	EgressLUID uint64
-	// NRPTSuffixes installs Windows Name Resolution Policy pointing at the local
-	// DoH stub without changing ipconfig DNS. Use NRPTCatchAll (".") for system-wide
-	// DoH; other entries become apex + suffix namespaces.
+	// NRPTSuffixes steers system DNS at the local DoH stub.
+	// Windows: Name Resolution Policy (no ipconfig rewrite). Use NRPTCatchAll
+	// (".") for system-wide DoH; other entries become apex + suffix namespaces.
+	// Darwin: networksetup -setdnsservers on Wi-Fi / Ethernet / Thunderbolt
+	// (not utun / VPN). Snapshot is written first; restore uses the old list
+	// or empty. /etc/resolver/ is never used.
 	NRPTSuffixes []string
 	// OnQuery observes client lookups for legacy CDN auto-expand (optional).
 	OnQuery QueryObserver
@@ -57,7 +60,7 @@ type Info struct {
 	DoHEndpoints   []string `json:"doh_endpoints,omitempty"`
 	StubUp         bool     `json:"stub_up"`
 	LeakGuard      bool     `json:"leak_guard"`
-	NRPT           bool     `json:"nrpt,omitempty"`
+	NRPT           bool     `json:"nrpt,omitempty"` // Windows NRPT or Darwin networksetup applied
 	PoisonHits     int      `json:"poison_hits"`
 	Queries        uint64   `json:"queries"`
 	PlainFallbacks uint64   `json:"plain_fallbacks"`

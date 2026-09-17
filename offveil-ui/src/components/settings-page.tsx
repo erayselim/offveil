@@ -196,6 +196,9 @@ export function SettingsPage({
             {m.diagnostics}
           </Button>
           {diagNote && <p className="tool-status">{diagNote}</p>}
+          {typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent) && (
+            <p className="pref-hint">{m.privateRelayHint}</p>
+          )}
           {diagPath && (
             <div className="tool-result-actions">
               <Button

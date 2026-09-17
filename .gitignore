@@ -20,6 +20,7 @@ ruleset/mvp.json
 
 # Internal planning / review notes
 ROADMAP.md
+ROADMAP.mac.md
 PLAN.md
 TODO.md
 NOTES.md
@@ -36,9 +37,14 @@ CLAUDE.md
 
 # Build / release staging (licenses in bundle-bin are committed)
 dist-release/
+offveil-core/dist/
+offveil-core/offveil-core
 offveil-ui/src-tauri/gen/
 offveil-ui/src-tauri/bundle-bin/*.exe
 offveil-ui/src-tauri/bundle-bin/*.dll
+offveil-ui/src-tauri/bundle-bin/offveil-core
+offveil-ui/src-tauri/bundle-bin/sing-box
+offveil-ui/src-tauri/bundle-bin/ciadpi
 
 # Local diagnostics dumps
 offveil-diag/
@@ -53,8 +59,14 @@ offveil-core/ciadpi.exe
 offveil-core/sing-box.exe
 offveil-core/wintun.dll
 offveil-core/third_party/byedpi/ciadpi.exe
+offveil-core/third_party/byedpi/ciadpi
 offveil-core/third_party/sing-box/sing-box.exe
+offveil-core/third_party/sing-box/sing-box
+offveil-core/third_party/sing-box/README.darwin.md
 offveil-core/third_party/wintun/wintun.dll
+offveil-core/ciadpi
+offveil-core/sing-box
+
 *.test
 *.out
 coverage.*

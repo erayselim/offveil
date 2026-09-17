@@ -4,9 +4,7 @@ package dns
 
 import (
 	"fmt"
-	"net"
 	"net/netip"
-	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -124,13 +122,4 @@ func onlyLoopbackIPv4(addrs []netip.Addr) bool {
 		n++
 	}
 	return n > 0
-}
-
-func localResolverListening() bool {
-	c, err := net.DialTimeout("tcp", "127.0.0.1:53", 200*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = c.Close()
-	return true
 }

@@ -12,10 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 	"github.com/erayselim/offveil/offveil-core/internal/version"
 )
 
@@ -42,14 +42,14 @@ type NetworkInfo struct {
 
 // CascadeInfo is the current protection decision surface.
 type CascadeInfo struct {
-	State        string         `json:"state"`
-	Protection   bool           `json:"protection"`
-	Summary      string         `json:"summary"`
-	OutboundHint string         `json:"outbound_hint,omitempty"`
-	Health       string         `json:"health,omitempty"`
-	Targets      []TargetRow    `json:"targets,omitempty"`
-	ErrorClass   string         `json:"error_class,omitempty"` // sanitized class, not raw paths
-	LastError    string         `json:"last_error,omitempty"`  // scrubbed message
+	State        string      `json:"state"`
+	Protection   bool        `json:"protection"`
+	Summary      string      `json:"summary"`
+	OutboundHint string      `json:"outbound_hint,omitempty"`
+	Health       string      `json:"health,omitempty"`
+	Targets      []TargetRow `json:"targets,omitempty"`
+	ErrorClass   string      `json:"error_class,omitempty"` // sanitized class, not raw paths
+	LastError    string      `json:"last_error,omitempty"`  // scrubbed message
 }
 
 // TargetRow is one curated package outcome.
@@ -62,9 +62,9 @@ type TargetRow struct {
 
 // ProbeInfo is the last probe report without host PII beyond curated domains.
 type ProbeInfo struct {
-	ASN     string      `json:"asn,omitempty"`
-	ISPHint string      `json:"isp_hint,omitempty"`
-	Results []ProbeRow  `json:"results,omitempty"`
+	ASN     string     `json:"asn,omitempty"`
+	ISPHint string     `json:"isp_hint,omitempty"`
+	Results []ProbeRow `json:"results,omitempty"`
 }
 
 // ProbeRow is one probe classification.
@@ -84,23 +84,12 @@ type BundleMeta struct {
 	Note      string `json:"note,omitempty"`
 }
 
-// Dir returns ProgramData/offveil/diagnostics (or OFFVEIL_DIAG_DIR).
+// Dir returns the diagnostics folder (or OFFVEIL_DIAG_DIR).
 func Dir() (string, error) {
 	if d := os.Getenv("OFFVEIL_DIAG_DIR"); d != "" {
 		return d, nil
 	}
-	if runtime.GOOS == "windows" {
-		base := os.Getenv("ProgramData")
-		if base == "" {
-			base = `C:\ProgramData`
-		}
-		return filepath.Join(base, "offveil", "diagnostics"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "offveil", "diagnostics"), nil
+	return filepath.Join(appdir.Root(), "diagnostics"), nil
 }
 
 // WriteZip creates diagnostics-<timestamp>.zip under Dir and returns meta.
@@ -128,17 +117,17 @@ func WriteZip(in Input) (*BundleMeta, error) {
 	}, in.Notes...)
 
 	envelope := map[string]any{
-		"bundle_version":     bundleVersion,
-		"core_version":       version.Version,
-		"contracts_version":  version.ContractsVersion,
-		"created_at":         in.CreatedAt,
-		"network":            in.Network,
-		"cascade":            in.Cascade,
-		"probe":              in.Probe,
-		"sidecars":           in.Sidecars,
-		"ruleset":            in.Ruleset,
-		"heal":               in.Heal,
-		"notes":              in.Notes,
+		"bundle_version":    bundleVersion,
+		"core_version":      version.Version,
+		"contracts_version": version.ContractsVersion,
+		"created_at":        in.CreatedAt,
+		"network":           in.Network,
+		"cascade":           in.Cascade,
+		"probe":             in.Probe,
+		"sidecars":          in.Sidecars,
+		"ruleset":           in.Ruleset,
+		"heal":              in.Heal,
+		"notes":             in.Notes,
 	}
 
 	raw, err := json.MarshalIndent(envelope, "", "  ")
@@ -284,7 +273,7 @@ func scrubNode(v any) any {
 // Match Windows / Unix home directory prefixes; replace username only.
 // Placeholder must not re-match (avoid `\Users\<redacted>` loops).
 var (
-	winUserPath = regexp.MustCompile(`(?i)(?:[a-z]:)?[/\\]+users[/\\]+[^/\\]+`)
+	winUserPath  = regexp.MustCompile(`(?i)(?:[a-z]:)?[/\\]+users[/\\]+[^/\\]+`)
 	unixHomePath = regexp.MustCompile(`(?i)(/Users|/home)/[^/\s"']+`)
 )
 

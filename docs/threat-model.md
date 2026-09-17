@@ -36,7 +36,12 @@ Remote (SMB) pipe clients are rejected.
 
 - App: Tauri updater endpoint is `releases/latest/download/latest.json` on
   this GitHub repo. Artifacts are signed with the embedded updater pubkey.
+  GitHub Latest is the Windows `v*` release. Mac `v*-mac*` prereleases do
+  not upload `latest.json` and do not set `make_latest`. Platform keys
+  (`windows-x86_64`, later `darwin-aarch64`) isolate OS; a missing Mac
+  key is "no update", not a Windows installer.
 - Ruleset: `channel.json` `base_url` + `.sig`. Rotate by putting a new key
   in the embed and the Actions secret; list the old key in
   `ruleset/keys/REVOKED.md`.
-- Maintainers never upload binaries from a laptop. CI on `v*` tags only.
+- Maintainers never upload binaries from a laptop. CI on `v*` tags only
+  (Windows) and `v*-mac*` tags (Apple Silicon prerelease).

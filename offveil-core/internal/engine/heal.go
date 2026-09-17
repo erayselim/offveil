@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
+	offdns "github.com/erayselim/offveil/offveil-core/internal/dns"
 	"github.com/erayselim/offveil/offveil-core/internal/netinfo"
 	"github.com/erayselim/offveil/offveil-core/internal/netwatch"
 	"github.com/erayselim/offveil/offveil-core/internal/power"
@@ -240,6 +241,9 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 			"count":       h.Count,
 			"watching":    h.Watching,
 		}
+	}
+	if notes := offdns.RelayDiagNotes(); len(notes) > 0 {
+		in.Notes = append(in.Notes, notes...)
 	}
 	return in
 }

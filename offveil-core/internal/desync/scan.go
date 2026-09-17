@@ -33,7 +33,7 @@ type ScanConfig struct {
 	Timeout time.Duration
 	// PerStrategy caps each candidate probe (default ScanPerStrategyTimeout).
 	PerStrategy time.Duration
-	// Candidates defaults to ScanCandidates().
+	// Candidates defaults to NativeScanCandidates().
 	Candidates []Strategy
 	// SkipIDs are not tried (e.g. already-failed default).
 	SkipIDs map[string]struct{}
@@ -42,8 +42,8 @@ type ScanConfig struct {
 	// Resolve looks up host via DoH for --no-domain strategies.
 	Resolve func(ctx context.Context, host string) (netip.Addr, error)
 	// AssignJob attaches trial processes to the engine Job Object.
-	AssignJob func(*os.Process) error
-	BasePort  int
+	AssignJob  func(*os.Process) error
+	BasePort   int
 	BinaryPath string
 }
 
@@ -84,7 +84,7 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 	}
 	cands := cfg.Candidates
 	if len(cands) == 0 {
-		cands = ScanCandidates()
+		cands = NativeScanCandidates()
 	}
 	startFn := cfg.Start
 	if startFn == nil {

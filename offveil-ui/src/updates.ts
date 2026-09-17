@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
-/** No newer artifact on the GitHub Releases endpoint (including 404). */
+/** No newer artifact on the GitHub Releases endpoint (including 404).
+ * Mac also hits this when GitHub Latest `latest.json` has no `darwin-aarch64`
+ * yet — that is not a failed check. */
 export function isNoNewerRelease(err: unknown): boolean {
   const s = String(err).toLowerCase();
   return (
@@ -10,7 +12,8 @@ export function isNoNewerRelease(err: unknown): boolean {
     s.includes("could not fetch") ||
     s.includes("error sending request") ||
     s.includes("failed to fetch") ||
-    s.includes("no release")
+    s.includes("no release") ||
+    s.includes("platforms object")
   );
 }
 

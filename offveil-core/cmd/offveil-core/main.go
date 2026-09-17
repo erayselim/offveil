@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -76,22 +75,22 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Fprintf(os.Stderr, `offveil-core - offveil Windows daemon
+	fmt.Fprintf(os.Stderr, `offveil-core - offveil protection daemon
 
 Usage:
-  offveil-core                 Run as Windows Service (SCM)
+  offveil-core                 Run as service (Windows SCM / Darwin launchd)
   offveil-core run             Interactive foreground (dev)
-  offveil-core install         Install Windows Service "offveil-core"
-  offveil-core uninstall       Remove leftover NRPT/DNS, then the Windows Service
-  offveil-core repair          Restore leftover DNS/NRPT/adapter (no IPC; stop-fail safe)
+  offveil-core install         Install service "offveil-core"
+  offveil-core uninstall       Remove leftover DNS/network state, then the service
+  offveil-core repair          Restore leftover DNS/network/adapter (no IPC; stop-fail safe)
   offveil-core setup           Install (if needed) + start - single elevation for UI
   offveil-core start|stop      Control installed service
-  offveil-core status          Query SCM status
+  offveil-core status          Query service status
   offveil-core client -method ping|status|start|stop|restart|health|test|repair
   offveil-core version
 
 IPC: %s
-`, ipc.PipePath)
+`, ipc.Endpoint())
 }
 
 func runService() error {
@@ -141,6 +140,18 @@ func printRepair(res repair.Result) {
 }
 
 func mustServiceControl(action string) {
+	if action == "install" || action == "uninstall" {
+		if err := elevateIfNeeded(action); err != nil {
+			slog.Error(action, "err", err)
+			os.Exit(1)
+		}
+	}
+	if action == "install" {
+		if err := prepareServiceInstall(); err != nil {
+			slog.Error(action, "err", err)
+			os.Exit(1)
+		}
+	}
 	p := appservice.NewProgram()
 	svc, err := appservice.NewService(p)
 	if err != nil {
@@ -151,12 +162,18 @@ func mustServiceControl(action string) {
 	switch action {
 	case "install":
 		opErr = svc.Install()
+		if opErr == nil {
+			afterInstall()
+		}
 	case "uninstall":
 		opErr = svc.Uninstall()
+		if opErr == nil {
+			afterUninstall()
+		}
 	case "start":
-		opErr = svc.Start()
+		opErr = startService(svc)
 	case "stop":
-		opErr = svc.Stop()
+		opErr = stopService(svc)
 	}
 	if opErr != nil {
 		slog.Error(action, "err", opErr)
@@ -166,6 +183,14 @@ func mustServiceControl(action string) {
 }
 
 func mustSetup() {
+	if err := elevateIfNeeded("setup"); err != nil {
+		slog.Error("setup", "err", err)
+		os.Exit(1)
+	}
+	if err := prepareServiceInstall(); err != nil {
+		slog.Error("setup prepare", "err", err)
+		os.Exit(1)
+	}
 	p := appservice.NewProgram()
 	svc, err := appservice.NewService(p)
 	if err != nil {
@@ -187,7 +212,7 @@ func mustSetup() {
 		}
 	}
 	if st != service.StatusRunning {
-		if err := svc.Start(); err != nil {
+		if err := startService(svc); err != nil {
 			slog.Error("setup start", "err", err)
 			os.Exit(1)
 		}
@@ -196,38 +221,14 @@ func mustSetup() {
 		fmt.Printf("setup: already running (%s)\n", appservice.Name)
 	}
 	// Demand-start: UI owns lifecycle (quit → stop). Re-apply after older Automatic installs.
-	configureManualStart()
-	configureStartDACL()
-}
-
-func configureManualStart() {
-	// sc.exe config … start= demand - no UAC needed when already elevated via setup.
-	out, err := runSC("config", appservice.Name, "start=", "demand")
-	if err != nil {
-		slog.Warn("setup: could not set StartType=manual", "err", err, "out", out)
-		return
-	}
-	slog.Info("setup: StartType=manual (UI lifecycle)")
-}
-
-// Authenticated Users may StartService without UAC so login auto-connect works.
-func configureStartDACL() {
-	sddl := "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;AU)"
-	out, err := runSC("sdset", appservice.Name, sddl)
-	if err != nil {
-		slog.Warn("setup: could not set service DACL", "err", err, "out", out)
-		return
-	}
-	slog.Info("setup: AU SERVICE_START granted")
-}
-
-func runSC(args ...string) (string, error) {
-	cmd := exec.Command("sc.exe", args...)
-	b, err := cmd.CombinedOutput()
-	return string(b), err
+	configureDemandStart()
 }
 
 func printServiceStatus() {
+	if s, ok := probeStatus(); ok {
+		fmt.Printf("%s: %s\n", appservice.Name, s)
+		return
+	}
 	p := appservice.NewProgram()
 	svc, err := appservice.NewService(p)
 	if err != nil {

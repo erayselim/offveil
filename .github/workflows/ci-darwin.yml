@@ -1,0 +1,127 @@
+# Darwin core compile + IPC ping + sidecars. Isolated from Windows CI and from release.yml.
+# Mac failure does not skip windows-latest jobs (separate workflow).
+# Do not upload latest.json or attach assets to GitHub Releases from this file.
+# DMG / prerelease: .github/workflows/release-darwin.yml (v*-mac* tags).
+name: ci-darwin
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.13"
+          cache-dependency-path: offveil-core/go.sum
+      - name: Test
+        working-directory: offveil-core
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
+      - name: Build darwin/arm64
+        working-directory: offveil-core
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+          GOARCH: arm64
+        run: go build -trimpath -ldflags="-s -w" -o dist/offveil-core ./cmd/offveil-core
+      - name: Fetch sing-box darwin-arm64
+        working-directory: offveil-core
+        run: bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
+      - name: Build ByeDPI from pinned tag
+        working-directory: offveil-core
+        run: bash ./scripts/build-byedpi-darwin.sh dist
+      - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
+        working-directory: offveil-core
+        run: |
+          set -euo pipefail
+          for bin in dist/ciadpi dist/sing-box; do
+            echo "file $bin"
+            file "$bin"
+            if file "$bin" | grep -qi elf; then
+              echo "linux ELF sidecar: $bin" >&2
+              exit 1
+            fi
+            if ! file "$bin" | grep -qi arm64; then
+              echo "not arm64: $bin" >&2
+              exit 1
+            fi
+            codesign --verify --verbose "$bin"
+          done
+          set +e
+          ./dist/ciadpi --help > /tmp/ciadpi-help.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/ciadpi-help.txt
+          if [ "$status" -ge 128 ]; then
+            echo "ciadpi --help killed (status=$status)" >&2
+            exit 1
+          fi
+          if ! grep -qi 'help\|port\|split\|disorder' /tmp/ciadpi-help.txt; then
+            echo "ciadpi --help produced no usage text" >&2
+            exit 1
+          fi
+          ./dist/sing-box version
+      - name: Ping over unix socket
+        working-directory: offveil-core
+        env:
+          OFFVEIL_IPC_SOCK: ${{ runner.temp }}/offveil/core.sock
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$OFFVEIL_IPC_SOCK")"
+          ./dist/offveil-core run &
+          pid=$!
+          cleanup() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in $(seq 1 50); do
+            if [[ -S "$OFFVEIL_IPC_SOCK" ]]; then
+              ./dist/offveil-core client -method ping
+              exit 0
+            fi
+            sleep 0.1
+          done
+          echo "socket not ready: $OFFVEIL_IPC_SOCK" >&2
+          exit 1
+      - name: Upload darwin/arm64 binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: offveil-core-darwin-arm64
+          path: |
+            offveil-core/dist/offveil-core
+            offveil-core/dist/ciadpi
+            offveil-core/dist/sing-box
+          if-no-files-found: error
+
+  ui:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: offveil-ui/package-lock.json
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - name: Typecheck
+        working-directory: offveil-ui
+        run: |
+          npm ci
+          npm run typecheck
+      - name: Cargo test (unix socket, launchd, LaunchAgent)
+        working-directory: offveil-ui/src-tauri
+        run: cargo test

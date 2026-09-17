@@ -1,29 +1,48 @@
 //! User-login autostart for the tray UI.
 //!
-//! `tauri-plugin-autostart` (auto-launch 0.5) writes an unquoted path, so a
-//! per-machine install under `C:\Program Files\offveil\` never actually starts.
-//! We write HKCU Run ourselves with a quoted command, re-enable Task Manager's
-//! StartupApproved flag, and repair the key on every launch (default: on).
+//! Windows: HKCU Run with a quoted command (tauri-plugin-autostart 0.5 writes
+//! an unquoted path, so `C:\Program Files\offveil\` never starts).
+//! Darwin: `~/Library/LaunchAgents/com.offveil.app.plist` (RunAtLoad, no
+//! KeepAlive). Product default is on — same as Windows.
 
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+#[cfg(windows)]
 const VALUE_NAME: &str = "offveil";
+#[cfg(windows)]
 const LEGACY_VALUE_NAMES: &[&str] = &["offveil-ui"];
+#[cfg(windows)]
 const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(windows)]
 const APPROVED_SUBKEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 const TRAY_ARG: &str = "--tray";
 /// 02 + 8 zero bytes = enabled in Task Manager / Settings > Startup apps.
+#[cfg(windows)]
 const STARTUP_APPROVED_ENABLED: [u8; 12] = [
     0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 fn disabled_marker(app: &AppHandle) -> PathBuf {
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("com.offveil.app")
-    });
+    let dir = app.path().app_config_dir().unwrap_or_else(|_| fallback_config_dir());
     dir.join("autostart-disabled")
+}
+
+fn fallback_config_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("com.offveil.app")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("Library/Application Support/com.offveil.app")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        PathBuf::from("com.offveil.app")
+    }
 }
 
 pub fn pref_enabled(app: &AppHandle) -> bool {
@@ -72,6 +91,7 @@ fn is_cargo_debug_exe(path: &Path) -> bool {
     false
 }
 
+#[cfg(windows)]
 fn run_command() -> Result<String, String> {
     let exe = exe_path()?;
     let path = exe.to_string_lossy().replace('"', "");
@@ -114,11 +134,96 @@ fn apply_registry(enabled: bool) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        apply_launch_agent(enabled)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = enabled;
         Ok(())
     }
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const AGENT_LABEL: &str = "com.offveil.app";
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn launch_agent_plist(exe: &Path) -> String {
+    let path = xml_escape(&exe.to_string_lossy());
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{AGENT_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{path}</string>
+		<string>{TRAY_ARG}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>
+"#
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn agent_plist_path() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join("Library/LaunchAgents")
+        .join(format!("{AGENT_LABEL}.plist"))
+}
+
+#[cfg(target_os = "macos")]
+fn apply_launch_agent(enabled: bool) -> Result<(), String> {
+    let plist_path = agent_plist_path();
+    if enabled {
+        let exe = exe_path()?;
+        let body = launch_agent_plist(&exe);
+        if let Some(parent) = plist_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("LaunchAgents: {e}"))?;
+        }
+        std::fs::write(&plist_path, body).map_err(|e| format!("LaunchAgent write: {e}"))?;
+        // Do not bootstrap: RunAtLoad would spawn a second UI. Next login loads the file.
+        Ok(())
+    } else {
+        bootout_agent();
+        if plist_path.is_file() {
+            std::fs::remove_file(&plist_path).map_err(|e| format!("LaunchAgent remove: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn bootout_agent() {
+    let uid = unsafe {
+        #[link(name = "c")]
+        extern "C" {
+            fn getuid() -> u32;
+        }
+        getuid()
+    };
+    let target = format!("gui/{uid}/{AGENT_LABEL}");
+    let _ = std::process::Command::new("/bin/launchctl")
+        .args(["bootout", &target])
+        .status();
 }
 
 #[cfg(windows)]
@@ -209,5 +314,35 @@ mod win {
             let _ = RegDeleteValueW(hkey, wname.as_ptr());
             let _ = RegCloseKey(hkey);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_agent_plist_is_login_not_keepalive() {
+        let xml = launch_agent_plist(Path::new("/Applications/offveil.app/Contents/MacOS/offveil"));
+        assert!(xml.contains("<string>com.offveil.app</string>"));
+        assert!(xml.contains("--tray"));
+        assert!(xml.contains("<key>RunAtLoad</key>"));
+        let after = xml
+            .split("<key>KeepAlive</key>")
+            .nth(1)
+            .expect("KeepAlive key");
+        assert!(
+            after.trim_start().starts_with("<false/>"),
+            "KeepAlive must be false so Quit does not respawn the UI: {after}"
+        );
+        assert!(xml.contains("/Applications/offveil.app/Contents/MacOS/offveil"));
+    }
+
+    #[test]
+    fn launch_agent_plist_escapes_xml() {
+        let xml = launch_agent_plist(Path::new("/tmp/offveil&ui<x>"));
+        assert!(xml.contains("&amp;"));
+        assert!(xml.contains("&lt;"));
+        assert!(!xml.contains("/tmp/offveil&ui<x>"));
     }
 }

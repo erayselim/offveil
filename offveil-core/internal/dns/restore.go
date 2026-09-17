@@ -4,18 +4,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
+
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 )
 
 const restoreSnapshotVer = 1
 
 // RestoreSnapshot is the on-disk leak-guard undo record.
-// Written before DNS is rewritten so a crash can still restore the NIC.
+// Written before DNS is rewritten so a crash can still restore the NIC
+// (Windows) or networksetup services (Darwin).
 type RestoreSnapshot struct {
 	Version int         `json:"version"`
 	StubIP  string      `json:"stub_ip,omitempty"`
 	Tun     *RestoreNIC `json:"tun,omitempty"`
 	Egress  *RestoreNIC `json:"egress,omitempty"`
+	// Services is Darwin networksetup undo (Wi-Fi / Ethernet / Thunderbolt).
+	// Windows ignore this field.
+	Services []ServiceDNS `json:"services,omitempty"`
 }
 
 // RestoreNIC is one adapter's previous IPv4 DNS servers.
@@ -24,23 +29,20 @@ type RestoreNIC struct {
 	DNS  []string `json:"dns"`
 }
 
-// DefaultRestorePath is ProgramData/offveil/dns-restore.json (or OFFVEIL_DNS_RESTORE).
+// ServiceDNS is one Darwin networksetup service's previous DNS servers.
+// DHCP true (or empty DNS) restores with `empty` so DHCP takes over again.
+type ServiceDNS struct {
+	Name string   `json:"name"`
+	DNS  []string `json:"dns,omitempty"`
+	DHCP bool     `json:"dhcp,omitempty"`
+}
+
+// DefaultRestorePath is <appdir>/dns-restore.json (or OFFVEIL_DNS_RESTORE).
 func DefaultRestorePath() string {
 	if p := os.Getenv("OFFVEIL_DNS_RESTORE"); p != "" {
 		return p
 	}
-	if runtime.GOOS == "windows" {
-		base := os.Getenv("ProgramData")
-		if base == "" {
-			base = `C:\ProgramData`
-		}
-		return filepath.Join(base, "offveil", "dns-restore.json")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "offveil-dns-restore.json")
-	}
-	return filepath.Join(home, ".local", "share", "offveil", "dns-restore.json")
+	return filepath.Join(appdir.Root(), "dns-restore.json")
 }
 
 // SaveRestoreSnapshot writes the leak-guard undo file (best-effort callers ignore error).

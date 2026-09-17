@@ -7,6 +7,9 @@ via the Permitted API). This is aggregation, not a combined work.
 Corresponding source for GPL components is the pinned upstream tag, not a
 fork. Hashes below are fail-closed in `offveil-core/scripts/fetch-*.ps1`.
 
+This file is the Windows installer copy. Darwin sidecars use the same tags
+via `fetch-sing-box-darwin-arm64.sh` / `build-byedpi-darwin.sh` (not this bundle).
+
 ## sing-box (GPL-3.0-or-later)
 
 | | |

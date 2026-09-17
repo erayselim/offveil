@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/proc"
+	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
 )
 
 type session struct {
@@ -176,6 +178,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	cmd := exec.Command(bin, "run", "-c", cfgPath)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	proc.PrepareCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, false, FailDial, fmt.Errorf("sing-box start: %w", err)
 	}
@@ -430,41 +433,5 @@ func resolveBinary(explicit string) (string, error) {
 		}
 		return explicit, nil
 	}
-	names := []string{"sing-box.exe", "sing-box"}
-	var candidates []string
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		for _, n := range names {
-			candidates = append(candidates,
-				filepath.Join(dir, n),
-				filepath.Join(dir, "third_party", "sing-box", n),
-			)
-		}
-	}
-	if wd, err := os.Getwd(); err == nil {
-		for _, n := range names {
-			candidates = append(candidates,
-				filepath.Join(wd, n),
-				filepath.Join(wd, "third_party", "sing-box", n),
-				filepath.Join(wd, "..", "third_party", "sing-box", n),
-			)
-		}
-	}
-	candidates = append(candidates,
-		filepath.Join("third_party", "sing-box", "sing-box.exe"),
-		filepath.Join("third_party", "sing-box", "sing-box"),
-	)
-	if runtime.GOOS != "windows" {
-		candidates = append(candidates, "sing-box")
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			abs, err := filepath.Abs(c)
-			if err != nil {
-				return c, nil
-			}
-			return abs, nil
-		}
-	}
-	return "", fmt.Errorf("sing-box not found (run scripts/fetch-sing-box.ps1)")
+	return sidecar.Locate(sidecar.SingBox)
 }

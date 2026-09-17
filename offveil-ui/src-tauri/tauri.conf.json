@@ -11,6 +11,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -49,13 +50,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "bundle-bin/offveil-core.exe": "offveil-core.exe",
-      "bundle-bin/sing-box.exe": "sing-box.exe",
-      "bundle-bin/ciadpi.exe": "ciadpi.exe",
-      "bundle-bin/wintun.dll": "wintun.dll",
       "bundle-bin/LICENSE": "LICENSE",
       "bundle-bin/THIRD_PARTY.md": "THIRD_PARTY.md",
-      "bundle-bin/wintun-LICENSE.txt": "licenses/wintun-LICENSE.txt",
       "bundle-bin/byedpi-LICENSE.txt": "licenses/byedpi-LICENSE.txt",
       "bundle-bin/sing-box-LICENSE.txt": "licenses/sing-box-LICENSE.txt",
       "bundle-bin/sing-box-COPYING.txt": "licenses/sing-box-COPYING.txt"

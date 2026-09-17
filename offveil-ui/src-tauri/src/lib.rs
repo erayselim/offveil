@@ -78,11 +78,7 @@ async fn get_status() -> Result<Status, String> {
         // Do not pre-ping (was doubling latency / freezes). status itself fails fast if down.
         match core_ipc::status() {
             Ok(s) => Ok(s),
-            Err(e)
-                if e.contains("pipe not found")
-                    || e.contains("pipe open")
-                    || e.contains("pipe unavailable") =>
-            {
+            Err(e) if core_ipc::is_unreachable(&e) => {
                 Err(format!("not_connected: Core servisine bağlanılamadı ({e})"))
             }
             Err(e) => Err(e),
@@ -191,19 +187,84 @@ fn open_diag_folder(path: String) -> Result<(), String> {
     let canon = target
         .canonicalize()
         .map_err(|e| format!("yol açılamadı: {e}"))?;
-    let mut root = std::path::PathBuf::from(
-        std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into()),
-    );
-    root.push("offveil");
-    let root_canon = root.canonicalize().unwrap_or(root);
-    if !canon.starts_with(&root_canon) {
-        return Err("yalnızca ProgramData\\offveil altı açılır".into());
+    if !path_under_diag_root(&canon) {
+        return Err(diag_deny_msg().into());
     }
-    std::process::Command::new("explorer")
-        .arg(&canon)
-        .spawn()
-        .map_err(|e| format!("explorer: {e}"))?;
-    Ok(())
+    open_folder(&canon)
+}
+
+fn diag_allow_root() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let mut root = std::path::PathBuf::from(
+            std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".into()),
+        );
+        root.push("offveil");
+        root
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::path::PathBuf::from("/Library/Application Support/offveil")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        std::path::PathBuf::from("/tmp/offveil")
+    }
+}
+
+fn diag_deny_msg() -> &'static str {
+    #[cfg(windows)]
+    {
+        r"yalnızca ProgramData\offveil altı açılır"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "yalnızca Application Support/offveil altı açılır"
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        "yalnızca offveil veri klasörü açılır"
+    }
+}
+
+fn path_under_diag_root(canon: &std::path::Path) -> bool {
+    let root = diag_allow_root();
+    let root_canon = root.canonicalize().unwrap_or(root);
+    if canon.starts_with(&root_canon) {
+        return true;
+    }
+    if let Ok(extra) = std::env::var("OFFVEIL_DIAG_DIR") {
+        let extra = std::path::PathBuf::from(extra);
+        let extra = extra.canonicalize().unwrap_or(extra);
+        if canon.starts_with(&extra) {
+            return true;
+        }
+    }
+    false
+}
+
+fn open_folder(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("explorer: {e}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("open: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = path;
+        Err("klasör açma bu platformda yok".into())
+    }
 }
 
 #[tauri::command]
@@ -525,6 +586,10 @@ fn position_over_tray(win: &tauri::WebviewWindow) {
     });
     let margin = (12.0 * scale).round() as i32;
     let x = work.position.x + work.size.width as i32 - outer.width as i32 - margin;
+    // Windows taskbar is typically bottom; macOS menu bar is top.
+    #[cfg(target_os = "macos")]
+    let y = work.position.y + margin;
+    #[cfg(not(target_os = "macos"))]
     let y = work.position.y + work.size.height as i32 - outer.height as i32 - margin;
     let _ = win.set_position(PhysicalPosition::new(
         x.max(work.position.x),
@@ -665,7 +730,7 @@ fn autoconnect_set(app: AppHandle, enabled: bool) -> Result<bool, String> {
     autoconnect::set_enabled(&app, enabled)
 }
 
-/// Stop offveil-core (protection + Windows service), then exit the UI.
+/// Stop offveil-core (protection + demand-start service), then exit the UI.
 fn quit_with_core(app: &AppHandle) {
     if QUITTING.swap(true, Ordering::SeqCst) {
         return;
@@ -674,7 +739,7 @@ fn quit_with_core(app: &AppHandle) {
     std::thread::spawn(move || {
         if core_ipc::is_reachable() {
             let _ = core_ipc::shutdown();
-            // Brief wait for SCM to release the pipe / process.
+            // Brief wait for the service manager to release the transport.
             std::thread::sleep(std::time::Duration::from_millis(400));
         }
         app.exit(0);
@@ -740,6 +805,11 @@ pub fn run() {
             }
 
             let _ = tray.build(app)?;
+
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
 
             autostart::sync_on_launch(app.handle());
             autoconnect::spawn(app.handle());
@@ -811,4 +881,27 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{diag_allow_root, path_under_diag_root};
+    use std::path::Path;
+
+    #[test]
+    fn diag_root_is_machine_data_dir() {
+        let root = diag_allow_root();
+        let s = root.to_string_lossy();
+        assert!(s.contains("offveil"));
+        #[cfg(windows)]
+        assert!(s.contains("offveil"));
+        #[cfg(target_os = "macos")]
+        assert!(s.contains("Application Support"));
+    }
+
+    #[test]
+    fn diag_allowlist_rejects_other_trees() {
+        assert!(!path_under_diag_root(Path::new("/tmp")));
+        assert!(!path_under_diag_root(Path::new(r"C:\Windows")));
+    }
 }

@@ -1,16 +1,22 @@
-//! Named-pipe JSON-RPC client → offveil-core (`\\.\pipe\offveil-core`).
+//! JSON-RPC client → offveil-core.
+//! Windows: named pipe `\\.\pipe\offveil-core`.
+//! Darwin: unix socket `/var/run/offveil/core.sock` (override `OFFVEIL_IPC_SOCK`).
 //! Kontrat: docs/contracts.md §2.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
 pub const PIPE_PATH: &str = r"\\.\pipe\offveil-core";
+/// LaunchDaemon socket when the UI is a normal user (docs/contracts.md §2).
+#[cfg_attr(not(unix), allow(dead_code))]
+pub const DARWIN_ROOT_SOCKET: &str = "/var/run/offveil/core.sock";
 
+#[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
+#[cfg(windows)]
 const ERROR_FILE_NOT_FOUND: i32 = 2;
 
 #[derive(Debug, Serialize)]
@@ -144,17 +150,20 @@ pub fn call_with(method: &str, params: Option<Value>, opts: CallOpts) -> Result<
 }
 
 fn try_once(body: &[u8]) -> Result<Value, String> {
-    let file = open_pipe()?;
-    let mut writer = file.try_clone().map_err(|e| format!("pipe clone: {e}"))?;
-    writer
+    let stream = connect()?;
+    rpc_roundtrip(stream, body)
+}
+
+fn rpc_roundtrip<S: Read + Write>(mut stream: S, body: &[u8]) -> Result<Value, String> {
+    stream
         .write_all(body)
         .map_err(|e| format!("pipe write: {e}"))?;
-    writer
+    stream
         .write_all(b"\n")
         .map_err(|e| format!("pipe write nl: {e}"))?;
-    writer.flush().map_err(|e| format!("pipe flush: {e}"))?;
+    stream.flush().map_err(|e| format!("pipe flush: {e}"))?;
 
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader
         .read_line(&mut line)
@@ -174,24 +183,96 @@ fn try_once(body: &[u8]) -> Result<Value, String> {
     Ok(resp.result.unwrap_or(Value::Null))
 }
 
-fn open_pipe() -> Result<std::fs::File, String> {
-    #[cfg(windows)]
-    {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(PIPE_PATH)
-            .map_err(|e| match e.raw_os_error() {
-                Some(ERROR_PIPE_BUSY) => "pipe busy".into(),
-                Some(ERROR_FILE_NOT_FOUND) => "pipe not found".into(),
-                _ => format!("pipe open: {e}"),
-            })
+#[cfg(windows)]
+fn connect() -> Result<std::fs::File, String> {
+    use std::fs::OpenOptions;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(PIPE_PATH)
+        .map_err(|e| match e.raw_os_error() {
+            Some(ERROR_PIPE_BUSY) => "pipe busy".into(),
+            Some(ERROR_FILE_NOT_FOUND) => "pipe not found".into(),
+            _ => format!("pipe open: {e}"),
+        })
+}
+
+#[cfg(unix)]
+fn connect() -> Result<std::os::unix::net::UnixStream, String> {
+    use std::io::ErrorKind;
+    use std::os::unix::net::UnixStream;
+
+    let path = dial_path();
+    match UnixStream::connect(&path) {
+        Ok(stream) => {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
+            Ok(stream)
+        }
+        Err(e) => {
+            let busy = matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+                || e.raw_os_error() == Some(35); // EAGAIN on Darwin
+            if busy {
+                return Err("pipe busy".into());
+            }
+            match e.kind() {
+                ErrorKind::NotFound | ErrorKind::ConnectionRefused => {
+                    Err("socket not found".into())
+                }
+                _ => Err(format!("socket open: {e}")),
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        let _ = OpenOptions::new();
-        Err("named pipe IPC is Windows-only".into())
+}
+
+#[cfg(not(any(windows, unix)))]
+fn connect() -> Result<std::fs::File, String> {
+    Err("named pipe IPC is Windows-only".into())
+}
+
+/// Path the UI dials. Matches core `ipc.DialPath` (env, then root socket, then temp).
+#[cfg(unix)]
+pub fn dial_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("OFFVEIL_IPC_SOCK") {
+        let p = p.trim();
+        if !p.is_empty() {
+            return std::path::PathBuf::from(p);
+        }
     }
+    let root = std::path::PathBuf::from(DARWIN_ROOT_SOCKET);
+    if is_unix_socket(&root) {
+        return root;
+    }
+    std::env::temp_dir()
+        .join(format!("offveil-{}", current_uid()))
+        .join("core.sock")
+}
+
+#[cfg(unix)]
+fn is_unix_socket(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::metadata(path)
+        .map(|m| m.file_type().is_socket())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    #[link(name = "c")]
+    extern "C" {
+        fn getuid() -> u32;
+    }
+    unsafe { getuid() }
+}
+
+/// True when core is down / unreachable (not a business-logic RPC error).
+pub fn is_unreachable(err: &str) -> bool {
+    err.contains("pipe not found")
+        || err.contains("socket not found")
+        || err.contains("pipe open")
+        || err.contains("socket open")
+        || err.contains("pipe unavailable")
+        || err.contains("socket unavailable")
 }
 
 /// Single quick probe - must not block the UI for seconds when core is down.
@@ -335,7 +416,7 @@ pub struct DiagnosticsBundle {
     pub note: Option<String>,
 }
 
-/// Stop protection if needed, then ask the Windows service to exit (UI quit).
+/// Stop protection if needed, then ask the demand-start service to exit (UI quit).
 pub fn shutdown() -> Result<(), String> {
     let _ = call_with(
         "shutdown",
@@ -345,11 +426,11 @@ pub fn shutdown() -> Result<(), String> {
             busy_retries: 5,
         },
     );
-    // Pipe may close before a full JSON response - treat unreachable as success.
+    // Transport may close before a full JSON response - treat unreachable as success.
     Ok(())
 }
 
-/// IPC `diagnostics` - PII-safe zip under ProgramData/offveil/diagnostics.
+/// IPC `diagnostics` - PII-safe zip under the machine data dir (`diagnostics/`).
 pub fn diagnostics() -> Result<DiagnosticsBundle, String> {
     let v = call_with(
         "diagnostics",
@@ -360,4 +441,39 @@ pub fn diagnostics() -> Result<DiagnosticsBundle, String> {
         },
     )?;
     serde_json::from_value(v).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreachable_matches_pipe_and_socket() {
+        assert!(is_unreachable("pipe not found"));
+        assert!(is_unreachable("socket not found"));
+        assert!(is_unreachable("pipe open: access denied"));
+        assert!(is_unreachable("socket open: permission denied"));
+        assert!(is_unreachable("pipe unavailable"));
+        assert!(!is_unreachable("already_running: protection on"));
+        assert!(!is_unreachable("not_running"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dial_path_honors_env() {
+        let prev = std::env::var("OFFVEIL_IPC_SOCK").ok();
+        std::env::set_var("OFFVEIL_IPC_SOCK", "/tmp/offveil-test-core.sock");
+        let got = dial_path();
+        match prev {
+            Some(v) => std::env::set_var("OFFVEIL_IPC_SOCK", v),
+            None => std::env::remove_var("OFFVEIL_IPC_SOCK"),
+        }
+        assert_eq!(got, std::path::PathBuf::from("/tmp/offveil-test-core.sock"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_root_socket_constant() {
+        assert_eq!(DARWIN_ROOT_SOCKET, "/var/run/offveil/core.sock");
+    }
 }

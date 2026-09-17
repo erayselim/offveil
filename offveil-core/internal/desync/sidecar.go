@@ -6,12 +6,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/proc"
+	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
 )
 
 type session struct {
@@ -39,7 +40,7 @@ func Start(cfg Config) (Session, error) {
 		cfg.ListenPort = 18080
 	}
 	if cfg.Strategy.ID == "" || len(cfg.Strategy.Args) == 0 {
-		cfg.Strategy = DefaultSafeStrategy()
+		cfg.Strategy = NativeSafeStrategy()
 	}
 	if cfg.ProbeTimeout <= 0 {
 		cfg.ProbeTimeout = 8 * time.Second
@@ -55,6 +56,7 @@ func Start(cfg Config) (Session, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	proc.PrepareCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("desync: start ciadpi: %w", err)
 	}
@@ -178,37 +180,5 @@ func resolveBinary(explicit string) (string, error) {
 		}
 		return explicit, nil
 	}
-	candidates := []string{}
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "ciadpi.exe"),
-			filepath.Join(dir, "ciadpi"),
-			filepath.Join(dir, "third_party", "byedpi", "ciadpi.exe"),
-		)
-	}
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(wd, "ciadpi.exe"),
-			filepath.Join(wd, "third_party", "byedpi", "ciadpi.exe"),
-			filepath.Join(wd, "..", "third_party", "byedpi", "ciadpi.exe"),
-		)
-	}
-	// Repo-relative when running tests from package dir.
-	candidates = append(candidates,
-		filepath.Join("third_party", "byedpi", "ciadpi.exe"),
-	)
-	if runtime.GOOS != "windows" {
-		candidates = append(candidates, "ciadpi")
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			abs, err := filepath.Abs(c)
-			if err != nil {
-				return c, nil
-			}
-			return abs, nil
-		}
-	}
-	return "", fmt.Errorf("ciadpi not found (run scripts/fetch-byedpi.ps1 and place next to offveil-core.exe)")
+	return sidecar.Locate(sidecar.ByeDPI)
 }

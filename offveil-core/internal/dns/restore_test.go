@@ -14,6 +14,10 @@ func TestRestoreSnapshotRoundtrip(t *testing.T) {
 	snap := RestoreSnapshot{
 		StubIP: "127.0.0.1",
 		Egress: &RestoreNIC{LUID: 42, DNS: []string{"192.168.1.1"}},
+		Services: []ServiceDNS{
+			{Name: "Wi-Fi", DNS: []string{"192.168.1.1"}},
+			{Name: "Ethernet", DHCP: true},
+		},
 	}
 	if err := SaveRestoreSnapshot(snap); err != nil {
 		t.Fatal(err)
@@ -27,6 +31,9 @@ func TestRestoreSnapshotRoundtrip(t *testing.T) {
 	}
 	if len(got.Egress.DNS) != 1 || got.Egress.DNS[0] != "192.168.1.1" {
 		t.Fatalf("dns=%v", got.Egress.DNS)
+	}
+	if len(got.Services) != 2 || got.Services[0].Name != "Wi-Fi" || !got.Services[1].DHCP {
+		t.Fatalf("services=%+v", got.Services)
 	}
 	if err := ClearRestoreSnapshot(); err != nil {
 		t.Fatal(err)

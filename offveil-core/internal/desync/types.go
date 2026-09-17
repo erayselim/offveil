@@ -42,7 +42,7 @@ type Strategy struct {
 
 // Config controls the ByeDPI sidecar.
 type Config struct {
-	// BinaryPath is ciadpi.exe. Empty → resolve next to offveil-core / third_party.
+	// BinaryPath is ciadpi (ciadpi.exe on Windows). Empty → Locate next to core.
 	BinaryPath string
 	// ListenIP defaults to 127.0.0.1.
 	ListenIP string
@@ -70,7 +70,7 @@ func DefaultConfig() Config {
 	return Config{
 		ListenIP:     "127.0.0.1",
 		ListenPort:   18080,
-		Strategy:     DefaultSafeStrategy(),
+		Strategy:     NativeSafeStrategy(),
 		ProbeHost:    "discord.com",
 		ProbeTimeout: 8 * time.Second,
 	}

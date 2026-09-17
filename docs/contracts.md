@@ -8,25 +8,40 @@ Go orchestrator + sing-box + ByeDPI sidecar. UI is Tauri 2.
 ## 1. Process model
 
 ```text
-[offveil-ui.exe]  --named pipe-->  [offveil-core Windows Service]
-                                         |
-                                         |- manages sing-box (in-process or child)
-                                         `- manages ciadpi.exe (ByeDPI child)
+[offveil-ui]  --IPC-->  [offveil-core service]
+                              |
+                              |- manages sing-box
+                              `- manages ciadpi (ByeDPI child)
 ```
 
+Windows: named pipe `\\.\pipe\offveil-core` → `offveil-core` Windows Service.
+Darwin: unix socket `/var/run/offveil/core.sock` → root LaunchDaemon
+(`KeepAlive` false, `RunAtLoad` false).
+
 - The UI does not touch TUN, DNS, or routes.
-- Core runs as `LOCAL SYSTEM` or an equivalently privileged service account.
-- IPC is localhost named pipe only. No remote clients.
+- Core runs as `LOCAL SYSTEM` (Windows) or root (Darwin), or an equivalently privileged service account.
+- IPC is localhost only. No remote clients.
 - Per-machine NSIS registers `offveil-core` (StartType=manual). The UI runs
   `asInvoker`. After install the UI starts the service with `StartService`
   (no UAC; Authenticated Users are granted `SERVICE_START`). Elevated
   `offveil-core setup` is only a fallback if the SCM entry is missing or
   its DACL rejects start. After that the UI talks over the pipe.
+- Darwin: `offveil-core setup` is one-time admin (`osascript` with
+  administrator privileges; not a Network Extension, not a `.pkg` for this
+  phase). It installs `/Library/LaunchDaemons/offveil-core.plist`, copies
+  the binary under `/Library/Application Support/offveil`, creates group
+  `offveil`, and writes `/etc/sudoers.d/offveil` so `%admin` may
+  `start`/`stop` without a password (SERVICE_START analogue). UI open:
+  `launchctl load` + `start`. UI `shutdown`: launchd `unload`. Boot does
+  not start the daemon.
 
 ## 2. IPC (UI <-> core)
 
-Transport: Windows named pipe `\\.\pipe\offveil-core`.
-Encoding: request/response JSON.
+Transport:
+- Windows: named pipe `\\.\pipe\offveil-core`. Protected DACL: LocalSystem + Authenticated Users. Remote clients rejected (`FILE_PIPE_REJECT_REMOTE_CLIENTS`).
+- Darwin: pathname unix socket `/var/run/offveil/core.sock` when running as root; interactive/CI uses `$TMPDIR/offveil-<uid>/core.sock`. Non-root clients dial the root socket when it exists. Override: `OFFVEIL_IPC_SOCK`. Mode `0600` (same-user) or `0660` owned by the setup user / group `offveil`. No abstract sockets; no remote.
+
+Encoding: request/response JSON. Envelope and methods are the same on both OS.
 
 ### 2.1 Envelope
 
@@ -72,10 +87,12 @@ Error:
 | `test` | `{ "targets"?: string[] }` | `TestReport` | Connection test |
 | `diagnostics` | | `DiagnosticsBundle` | PII-safe zip path (`path`, `sha256`, `created_at`) |
 | `repair` | | `{ "status": Status, "steps": [...] }` | UI "Revert changes": stop protection, restore leftover DNS/NRPT/adapter, flush DNS cache, clear learned DPI policy. Best-effort; does not reset Winsock or other apps. |
-| `shutdown` | | `{ "ok": true }` | Stop protection and the Windows service (UI exit, no UAC) |
+| `shutdown` | | `{ "ok": true }` | Stop protection and the demand-start service (UI exit; Windows SCM / Darwin launchd unload, no admin prompt) |
 
-Pipe: `\\.\pipe\offveil-core`. Protected DACL: LocalSystem + Authenticated
+Pipe (Windows): `\\.\pipe\offveil-core`. Protected DACL: LocalSystem + Authenticated
 Users. Remote clients rejected (`FILE_PIPE_REJECT_REMOTE_CLIENTS`).
+
+Socket (Darwin): see Transport above. JSON methods are unchanged.
 
 `mode` is `"auto"` only. No other modes are exposed.
 
@@ -127,7 +144,7 @@ Main screen is `protection` + `summary` (plus tunnel `retry_hint`). Copy is
 | `not_running` | `stop` / `test` while stopped |
 | `already_running` | `start` again |
 | `privilege` | Missing service/TUN rights |
-| `tun_failed` | Wintun did not come up |
+| `tun_failed` | TUN did not come up (Wintun / utun) |
 | `engine_failed` | sing-box or ByeDPI crashed |
 | `internal` | Unexpected |
 
@@ -149,7 +166,7 @@ direct | desync | tunnel
 
 ```text
 start
-  -> DoH always (system DNS → local stub via catch-all NRPT; not ISP)
+  -> DoH always (system DNS → local stub; not ISP)
   -> ByeDPI + TUN always (TCP/443 → desync; UDP → direct; exclude/LAN excepted)
   -> curated probe applies to special packages only (Discord/IMVU)
        open?        -> that package UDP direct (HTTPS still desync)
@@ -161,12 +178,18 @@ start
   -> default HTTPS never follows Discord's path
 ```
 
-While protection is on, Windows DNS Client queries go to `127.0.0.1:53` (NRPT
-namespace `.`). The stub answers over DoH. TUN installs split-default
-(`0.0.0.0/1` + `128.0.0.0/1`) so unlisted TCP/443 hits local ByeDPI; this is
-not `0.0.0.0/0` WARP. Leak-guard (NIC `SetDNS`) is off. Stop, crash-cleanup,
-`repair`, and uninstall must remove the catch-all NRPT rule — a leftover
-would blackhole all DNS. Split-default routes go away with the TUN.
+While protection is on, system DNS queries go to `127.0.0.1:53`. Windows:
+catch-all NRPT namespace `.`. Darwin: `networksetup -setdnsservers <service>
+127.0.0.1` on Wi-Fi / Ethernet / Thunderbolt (not utun / VPN;
+`networksetup` does not list utun). `/etc/resolver/` is not used. The stub
+answers over DoH. TUN installs split-default (`0.0.0.0/1` + `128.0.0.0/1`)
+so unlisted TCP/443 hits local ByeDPI; this is not `0.0.0.0/0` WARP.
+Leak-guard (NIC `SetDNS`) is off. Stop, crash-cleanup, `repair`, and
+uninstall must undo that rewrite — leftover `127.0.0.1` blackholes DNS.
+Windows removes the NRPT rule. Darwin restores the snapshot or `empty`, then
+`killall -HUP mDNSResponder`. iCloud Private Relay / Limit IP tracking
+override manual DNS; diagnostics records them; core does not disable them.
+Split-default routes go away with the TUN.
 
 ### 3.3 Cache record
 
@@ -326,23 +349,26 @@ DNS stub query watch -> `MatchPackage` / `ExpandForHost` -> capture
 package path (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
 tunnel). Generic UDP stays on the ISP path. Sniffed QUIC is rejected in
 sing-box so HTTPS falls back to TCP TLS; raw UDP/443 is not dropped.
-Network change or sleep triggers silent self-heal.
+Network change or sleep triggers silent self-heal (Windows power notifications;
+Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 
 ## 6. Engine wiring
 
 ### 6.1 sing-box
 
-- TUN (Wintun) inbound with split-default `route_address` (never `0.0.0.0/0`)
+- TUN inbound with split-default `route_address` (`0.0.0.0/1` + `128.0.0.0/1`, never `0.0.0.0/0`). `auto_route` on. Windows: Wintun `interface_name` `offveil`. Darwin: omit `interface_name` (sing-box picks `utunN`; `"offveil"` is a bad tun name). Go capture is snapshot-only (`SkipAdapter`).
 - DoH / DNS hijack
 - Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
 - Sniffed QUIC reject (not port 443) so HTTP/3 falls back to TCP TLS
 - Selective tunnel outbound(s) for special IP-drop and canary throttle/IP-drop suffixes
+- Sidecar: `sing-box.exe` (Windows) / `sing-box` (Darwin). Same release tag; Darwin asset `sing-box-*-darwin-arm64.tar.gz`.
 
 ### 6.2 ByeDPI
 
 - Local SOCKS listener
-- Default safe strategy set
-- Auto-strategy: `ScanCandidates` + ASN cache; no UI parameters
+- Default safe strategy set. Windows: `byedpi:windows-safe` (fake+ttl via `--auto ssl_err`). Darwin: `byedpi:darwin-safe` (`--split 1 --disorder 3+s --mod-http=h,d --auto=torst --tlsrec 1+s`; no `--fake` / `--ttl`)
+- Auto-strategy: `ScanCandidates` (Windows) or `ScanCandidatesDarwin` (adds `--oob`; never fake/ttl) + ASN cache; no UI parameters
+- Sidecar: `ciadpi.exe` (Windows, official zip) / `ciadpi` (Darwin, `make` from the same tag). Linux aarch64 tarball is not used. Ad-hoc `codesign --force -s -` after every copy on Darwin.
 
 ### 6.3 Not used
 
@@ -354,7 +380,8 @@ Network change or sleep triggers silent self-heal.
 ## 7. Privacy
 
 - No telemetry.
-- Diagnostics zip is a local file (`%ProgramData%\offveil\diagnostics`);
+- Diagnostics zip is a local file (`%ProgramData%\offveil\diagnostics` on
+  Windows, `/Library/Application Support/offveil/diagnostics` on Darwin);
   the user shares it if they want.
 - Contents: ASN, ISP hint, fingerprint hash, cascade path, probe class,
   scrubbed error_class. No public IP, SSID, MAC, user path, or credentials.
@@ -364,3 +391,27 @@ Network change or sleep triggers silent self-heal.
 
 - This file's `contracts` major: bump on breaking IPC/field changes.
 - `contracts_version = 1` (carried in `ping` / `status`).
+
+## 9. Crash cleanup
+
+Protection rewrites system DNS so queries go to the local stub (`127.0.0.1:53`).
+If that rewrite survives the core process, every name lookup blackholes.
+
+The same LIFO registry (`internal/cleanup`) runs on:
+
+- IPC `stop` / `shutdown`
+- service manager stop (Windows SCM / Darwin launchd unload)
+- panic recovery (`crashlog.Guard`)
+- `repair` and `uninstall`
+
+Order: sidecars (ByeDPI, sing-box, process group / Job Object), routes,
+adapter, DNS restore. Errors are logged, not fatal.
+
+The undo file (`dns-restore.json` under the machine data dir) is written
+*before* DNS is rewritten. Stop / crash / repair / uninstall must apply it
+(Windows: catch-all NRPT; Darwin: `networksetup` snapshot or `empty`, then
+`killall -HUP mDNSResponder`). A leftover `127.0.0.1` resolver is treated
+as a defect, not as "protection still on". Darwin repair also drops leftover
+split-default routes that still point at `10.87.0.1/30`. Orphan `utun` without
+an owning FD cannot be destroyed (no Wintun `CloseOrphanAdapter`). Uninstall
+unlinks an idle `/var/run/offveil/core.sock`.

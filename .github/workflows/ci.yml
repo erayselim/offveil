@@ -9,6 +9,7 @@ permissions:
   contents: read
 
 jobs:
+  # Apple Silicon core: .github/workflows/ci-darwin.yml (separate check).
   core:
     runs-on: windows-latest
     steps:

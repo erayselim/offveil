@@ -25,3 +25,12 @@ On probe fail, `Scan` tries `ScanCandidates()` (split / disorder / fake /
 ttl / tlsrec) with a ~40s budget, then stores the winner under the ISS ASN
 in `%ProgramData%\offveil\desync\desync-strategies.json`
 (`OFFVEIL_DESYNC_CACHE` override).
+
+Darwin: do not use `byedpi-*-aarch64.tar.gz` (Linux). Build the same tag:
+
+```bash
+./scripts/build-byedpi-darwin.sh
+```
+
+`ciadpi` (no `.exe`) is ad-hoc signed after copy. Default strategy is
+`byedpi:darwin-safe` (no `--fake` / `--ttl`); scan adds `--oob`.

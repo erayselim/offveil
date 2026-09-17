@@ -1,15 +1,22 @@
-## What changed
+# offveil for Windows
 
-Crisis-day social throttle now takes the selective tunnel without a new switch.
+**Installer:** `offveil_*_x64-setup.exe`  
+**Checksums:** `SHA256SUMS.txt` on this release.
 
-* Background canary probes YouTube / Instagram / X / TikTok / Telegram Web. Slow TLS or IP-drop sends those suffixes to WARP/Reality.
-* Discord / IMVU stay on their own path. Default HTTPS desync and game UDP are unchanged.
-* A slow home network does not promote canary to tunnel (control host must be healthy).
+```powershell
+Get-FileHash -Algorithm SHA256 .\offveil_*_x64-setup.exe
+```
 
-## Download
+## This release
 
-Get `offveil_*_x64-setup.exe` from **Assets** and verify it with `SHA256SUMS.txt`.
+On crisis-day throttle, social suffixes take the selective tunnel. Same switch. HTTPS desync and game UDP stay as they were. A slow home network does not promote the canary (the control host must be healthy).
 
-For **Windows protected your PC**: **More info → Run anyway**.
+## SmartScreen
+
+Unsigned installer. **Windows protected your PC** → **More info** → **Run anyway**.
+
+Smart App Control has no bypass. We do not tell you to turn it off.
+
+## Support
 
 If protection fails: **Settings → Save a support file** and attach it to your report.

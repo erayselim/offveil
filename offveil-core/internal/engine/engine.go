@@ -190,7 +190,7 @@ func (e *Engine) WithRepair(fn RepairFunc) *Engine {
 	return e
 }
 
-// Start begins protection: Job + DoH + Wintun + DNS stub + ByeDPI desync.
+// Start begins protection: Job + DoH + capture snapshot + DNS stub + ByeDPI + TUN dataplane.
 func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -306,8 +306,9 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	dnsCfg := offdns.DefaultConfig()
 	dnsCfg.ApplyLeakGuard = false
-	// Catch-all NRPT: every Windows DNS Client name hits the stub. Leak-guard
-	// stays off (no NIC rewrite). TUN uses split-default for local desync; not full WARP.
+	// Catch-all NRPT (Windows) / networksetup (Darwin): system resolver hits
+	// the stub. Leak-guard stays off (no NIC rewrite). TUN uses split-default
+	// for local desync; not full WARP.
 	dnsCfg.NRPTSuffixes = []string{offdns.NRPTCatchAll}
 	dnsCfg.OnQuery = func(host string) {
 		if !e.expandCandidate(host) {
@@ -422,12 +423,16 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 		}
 	}
 
-	strat := desync.DefaultSafeStrategy()
+	strat := desync.NativeSafeStrategy()
 	stratSource := "default"
 	if store != nil {
 		if cached, ok := store.Lookup(asn); ok {
-			strat = cached
-			stratSource = "asn-cache"
+			if desync.UsableOnOS(cached) {
+				strat = cached
+				stratSource = "asn-cache"
+			} else {
+				_ = store.Delete(asn)
+			}
 		}
 	}
 
@@ -997,11 +1002,18 @@ func isPrivilegeErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "access is denied") ||
 		strings.Contains(msg, "access denied") ||
 		strings.Contains(msg, "elevat") ||
-		strings.Contains(msg, "privilege") {
+		strings.Contains(msg, "privilege") ||
+		strings.Contains(msg, "operation not permitted") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "requires root") ||
+		strings.Contains(msg, "must be root") {
 		return true
 	}
 	var errno interface{ Errno() uintptr }

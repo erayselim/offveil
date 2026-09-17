@@ -77,8 +77,16 @@ func StrategyByID(id string) (Strategy, bool) {
 			return s, true
 		}
 	}
+	for _, s := range ScanCandidatesDarwin() {
+		if s.ID == id {
+			return s, true
+		}
+	}
 	if id == DefaultSafeStrategy().ID {
 		return DefaultSafeStrategy(), true
+	}
+	if id == DefaultSafeStrategyDarwin().ID {
+		return DefaultSafeStrategyDarwin(), true
 	}
 	return Strategy{}, false
 }

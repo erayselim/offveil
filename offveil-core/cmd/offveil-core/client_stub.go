@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package main
 
@@ -9,5 +9,5 @@ import (
 )
 
 func dialPipe(ctx context.Context) (net.Conn, error) {
-	return nil, fmt.Errorf("client dial is Windows-only")
+	return nil, fmt.Errorf("client dial is Windows or Darwin only")
 }

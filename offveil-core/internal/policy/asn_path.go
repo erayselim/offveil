@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 )
 
 const (
@@ -35,23 +36,12 @@ type ASNPathStore struct {
 	data asnPathFile
 }
 
-// DefaultASNPathStorePath is ProgramData/offveil/policy/asn-paths.json.
+// DefaultASNPathStorePath is <appdir>/policy/asn-paths.json.
 func DefaultASNPathStorePath() (string, error) {
 	if d := os.Getenv("OFFVEIL_POLICY_CACHE"); d != "" {
 		return filepath.Join(d, "asn-paths.json"), nil
 	}
-	if runtime.GOOS == "windows" {
-		base := os.Getenv("ProgramData")
-		if base == "" {
-			base = `C:\ProgramData`
-		}
-		return filepath.Join(base, "offveil", "policy", "asn-paths.json"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "offveil", "policy", "asn-paths.json"), nil
+	return filepath.Join(appdir.Root(), "policy", "asn-paths.json"), nil
 }
 
 // OpenASNPathStore loads or creates the store (empty path → default).

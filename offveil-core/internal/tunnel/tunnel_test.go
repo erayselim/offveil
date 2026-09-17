@@ -3,6 +3,7 @@ package tunnel_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -328,6 +329,19 @@ func TestBuildSingBoxInvertDefault(t *testing.T) {
 	}
 	if strings.Contains(raw, `"final": "desync"`) || strings.Contains(raw, `"final": "tunnel"`) {
 		t.Fatal("route.final must stay direct")
+	}
+	if !strings.Contains(raw, `"auto_route": true`) {
+		t.Fatal("tun inbound needs auto_route")
+	}
+	if strings.Contains(raw, `"0.0.0.0/0"`) {
+		t.Fatal("tun must not install 0.0.0.0/0")
+	}
+	if runtime.GOOS == "darwin" {
+		if strings.Contains(raw, `"interface_name"`) {
+			t.Fatal("darwin tun must omit interface_name (utun auto)")
+		}
+	} else if !strings.Contains(raw, `"interface_name": "offveil"`) {
+		t.Fatal("windows tun interface_name offveil")
 	}
 	assertProtocolSplit(t, build.JSON)
 }

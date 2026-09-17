@@ -29,7 +29,8 @@ type Config struct {
 	Resolve ResolveFunc
 	// ApplyRoutes installs host/prefix routes into the TUN. If false, only adapter+snapshot.
 	ApplyRoutes bool
-	// SkipAdapter leaves Wintun to sing-box (contracts.md §6.1). Snapshot + resolve only.
+	// SkipAdapter leaves the TUN to sing-box (contracts.md §6.1). Snapshot + resolve only.
+	// Darwin always behaves as SkipAdapter (no Wintun).
 	SkipAdapter bool
 	MTU         int
 }

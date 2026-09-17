@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	// Name is the Windows Service internal name.
+	// Name is the service / LaunchDaemon label (Windows SCM and Darwin plist).
 	Name = "offveil-core"
-	// DisplayName is shown in services.msc.
+	// DisplayName is shown in services.msc / launchd.
 	DisplayName = "offveil core"
 	// Description explains the service purpose.
 	Description = "offveil network protection daemon (TUN/DNS/desync/tunnel orchestration)"
@@ -34,7 +34,8 @@ type Program struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	// stopSCM asks Windows to stop this service (LocalSystem; no UAC).
+	// stopSCM asks the service manager to stop this process (no UAC / no sudo:
+	// LocalSystem SCM stop, or root launchd unload).
 	stopSCM func()
 }
 
@@ -73,8 +74,8 @@ func (p *Program) Start(s service.Service) error {
 	p.cancel = cancel
 	p.stopSCM = func() {
 		if err := s.Stop(); err != nil {
-			slog.Warn("offveil-core: SCM stop failed", "err", err)
-			// Fallback: tear down in-process so the pipe is released.
+			slog.Warn("offveil-core: service stop failed", "err", err)
+			// Fallback: tear down in-process so the IPC endpoint is released.
 			_ = p.Stop(s)
 		}
 	}
@@ -97,7 +98,7 @@ func (p *Program) Stop(s service.Service) error {
 	if st := p.eng.Status(); st.Protection || st.State != engine.StateStopped {
 		_, _ = p.eng.Stop()
 	}
-	p.eng.CrashCleanup("service_stop")
+	p.eng.CrashCleanup("service_stop") // docs/contracts.md §9 — leftover DNS must not blackhole
 	if p.cancel != nil {
 		p.cancel()
 	}
@@ -105,23 +106,6 @@ func (p *Program) Stop(s service.Service) error {
 	p.wg.Wait()
 	slog.Info("offveil-core stopped")
 	return nil
-}
-
-// Config returns the kardianos service configuration.
-// StartType=manual: UI starts the service on demand; UI quit stops it.
-// End users never leave a silent daemon after closing the app.
-func Config() *service.Config {
-	return &service.Config{
-		Name:        Name,
-		DisplayName: DisplayName,
-		Description: Description,
-		Option: service.KeyValue{
-			"StartType":              "manual",
-			"OnFailure":              "restart",
-			"OnFailureDelayDuration": "5s",
-			"OnFailureResetPeriod":   60,
-		},
-	}
 }
 
 // NewService builds a service.Service for this program.

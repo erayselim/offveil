@@ -80,6 +80,7 @@ export type Messages = {
   creditsDesc: string;
   creditsLicense: string;
   creditsDevelopedBy: string;
+  privateRelayHint: string;
 };
 
 const tr: Messages = {
@@ -90,7 +91,7 @@ const tr: Messages = {
   broken: "Bozuldu",
   brokenHint: "Yenilemek için dokun.",
   preparing: "Hazırlanıyor…",
-  waitingAdmin: "UAC penceresini onaylayın.",
+  waitingAdmin: "Yönetici penceresini onaylayın.",
   needsAdmin: "Yönetici onayı gerekli.",
   starting: "Bağlanıyor…",
   disconnecting: "Kesiliyor…",
@@ -118,7 +119,7 @@ const tr: Messages = {
   themeLight: "Açık",
   themeLightHint: "Açık görünümü kullan",
   appIcon: "Uygulama ikonu",
-  appIconHint: "Sistem tepsisinde görünür.",
+  appIconHint: "Sistem tepsisinde / menü çubuğunda görünür.",
   appIconDefault: "Varsayılan",
   appIconLight: "Açık",
   appIconDark: "Koyu",
@@ -162,6 +163,7 @@ const tr: Messages = {
   creditsDesc: "Özel ve açık erişim için yerel koruma.",
   creditsLicense: "Apache-2.0",
   creditsDevelopedBy: "Geliştiren",
+  privateRelayHint: "iCloud Özel Aktarma kapalı olsun.",
 };
 
 const en: Messages = {
@@ -172,7 +174,7 @@ const en: Messages = {
   broken: "Broken",
   brokenHint: "Tap to refresh.",
   preparing: "Preparing…",
-  waitingAdmin: "Approve the UAC prompt.",
+  waitingAdmin: "Approve the administrator prompt.",
   needsAdmin: "Administrator approval needed.",
   starting: "Connecting…",
   disconnecting: "Disconnecting…",
@@ -200,7 +202,7 @@ const en: Messages = {
   themeLight: "Light",
   themeLightHint: "Use light appearance",
   appIcon: "App icon",
-  appIconHint: "Shown in the system tray.",
+  appIconHint: "Shown in the tray / menu bar.",
   appIconDefault: "Default",
   appIconLight: "Light",
   appIconDark: "Dark",
@@ -244,6 +246,7 @@ const en: Messages = {
   creditsDesc: "Local protection for private, open access.",
   creditsLicense: "Apache-2.0",
   creditsDevelopedBy: "Developed by",
+  privateRelayHint: "Keep iCloud Private Relay off.",
 };
 
 const STORAGE_KEY = "offveil.locale";

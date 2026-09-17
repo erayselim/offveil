@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package proc
 
@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-// Job is a no-op stub on non-Windows builds.
+// Job is a no-op stub on Linux and other non-Windows, non-Darwin builds.
 type Job struct{}
 
 func NewKillOnCloseJob() (*Job, error) {

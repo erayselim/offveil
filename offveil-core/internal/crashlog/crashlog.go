@@ -1,4 +1,4 @@
-// Package crashlog writes panic text to %ProgramData%\offveil\logs.
+// Package crashlog writes panic text to the machine data dir (logs/).
 // No minidump: SYSTEM process memory would leak PII / packet scraps.
 package crashlog
 
@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 )
 
 // Dir is the panic / slog fallback directory.
@@ -15,11 +17,7 @@ func Dir() string {
 	if d := os.Getenv("OFFVEIL_LOG_DIR"); d != "" {
 		return d
 	}
-	base := os.Getenv("ProgramData")
-	if base == "" {
-		base = `C:\ProgramData`
-	}
-	return filepath.Join(base, "offveil", "logs")
+	return filepath.Join(appdir.Root(), "logs")
 }
 
 // WritePanic stores recovered panic + stack. Best-effort; never panics.

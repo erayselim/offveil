@@ -23,6 +23,16 @@ is not registered.
 
 Sidecars must sit next to the exe or under `third_party/`.
 
+Darwin (CI / Apple Silicon): same tags, different fetch. Do not use the Linux
+aarch64 ByeDPI tarball.
+
+```bash
+./scripts/fetch-sing-box-darwin-arm64.sh
+./scripts/build-byedpi-darwin.sh
+# binaries: third_party/sing-box/sing-box  third_party/byedpi/ciadpi
+# ad-hoc codesign is applied after copy
+```
+
 ## Commands
 
 ```text
