@@ -21,7 +21,10 @@ type Server struct {
 
 	mu       sync.Mutex
 	listener net.Listener
+	conns    map[net.Conn]struct{}
 	wg       sync.WaitGroup
+	closed   bool
+	closeErr error
 }
 
 func NewServer(h Handler) *Server {
@@ -31,23 +34,45 @@ func NewServer(h Handler) *Server {
 // Endpoint is the local IPC address (named pipe on Windows, unix socket on Darwin).
 func Endpoint() string { return endpoint() }
 
-// Close stops the listener and waits for in-flight connections.
+// Close stops the listener, drops in-flight connections, and waits for them.
 func (s *Server) Close() error {
 	s.mu.Lock()
+	if s.closed {
+		err := s.closeErr
+		s.mu.Unlock()
+		s.wg.Wait()
+		return err
+	}
+	s.closed = true
 	ln := s.listener
 	s.listener = nil
-	s.mu.Unlock()
-	if ln == nil {
-		return nil
+	conns := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
 	}
-	err := ln.Close()
+	s.conns = nil
+	s.mu.Unlock()
+
+	var err error
+	if ln != nil {
+		err = ln.Close()
+	}
+	for _, c := range conns {
+		_ = c.Close()
+	}
 	s.wg.Wait()
+	s.mu.Lock()
+	s.closeErr = err
+	s.mu.Unlock()
 	return err
 }
 
 func (s *Server) serveListener(ctx context.Context, ln net.Listener) error {
 	s.mu.Lock()
 	s.listener = ln
+	if s.conns == nil {
+		s.conns = make(map[net.Conn]struct{})
+	}
 	s.mu.Unlock()
 
 	go func() {
@@ -68,8 +93,29 @@ func (s *Server) serveListener(ctx context.Context, ln net.Listener) error {
 		s.wg.Add(1)
 		go func(c net.Conn) {
 			defer s.wg.Done()
+			s.trackConn(c, true)
+			defer s.trackConn(c, false)
 			s.serveConn(c)
 		}(conn)
+	}
+}
+
+func (s *Server) trackConn(c net.Conn, add bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if add {
+		if s.closed {
+			_ = c.Close()
+			return
+		}
+		if s.conns == nil {
+			s.conns = make(map[net.Conn]struct{})
+		}
+		s.conns[c] = struct{}{}
+		return
+	}
+	if s.conns != nil {
+		delete(s.conns, c)
 	}
 }
 

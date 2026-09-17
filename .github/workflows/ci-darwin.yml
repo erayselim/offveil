@@ -122,6 +122,16 @@ jobs:
         run: |
           npm ci
           npm run typecheck
+      - name: Stub Darwin sidecars for cargo test
+        working-directory: offveil-ui/src-tauri
+        run: |
+          set -euo pipefail
+          mkdir -p bundle-bin
+          for f in offveil-core sing-box ciadpi; do
+            if [[ ! -e "bundle-bin/$f" ]]; then
+              printf 'stub\n' > "bundle-bin/$f"
+            fi
+          done
       - name: Cargo test (unix socket, launchd, LaunchAgent)
         working-directory: offveil-ui/src-tauri
         run: cargo test

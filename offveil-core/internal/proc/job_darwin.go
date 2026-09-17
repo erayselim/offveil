@@ -36,7 +36,7 @@ func (j *Job) Assign(p *os.Process) error {
 	if j.closed {
 		return fmt.Errorf("job: closed")
 	}
-	if err := syscall.Setpgid(p.Pid, 0); err != nil && err != syscall.EPERM && err != syscall.ESRCH {
+	if err := syscall.Setpgid(p.Pid, 0); err != nil && err != syscall.EPERM && err != syscall.EACCES && err != syscall.ESRCH {
 		return fmt.Errorf("Setpgid(%d): %w", p.Pid, err)
 	}
 	pgid, err := syscall.Getpgid(p.Pid)

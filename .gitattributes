@@ -1,1 +1,3 @@
 *.sh text eol=lf
+ruleset/*.json text eol=lf
+ruleset/*.sig binary

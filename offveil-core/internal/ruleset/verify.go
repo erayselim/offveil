@@ -1,6 +1,7 @@
 package ruleset
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
@@ -61,10 +62,26 @@ func Verify(pub ed25519.PublicKey, raw []byte, sigB64 string) error {
 }
 
 // VerifyHexKey verifies using a hex-encoded public key.
+// LF and CRLF bodies are both accepted: Windows working trees often sign
+// CRLF while git stores LF.
 func VerifyHexKey(pubHex string, raw []byte, sigB64 string) error {
 	pub, err := ParsePublicKeyHex(pubHex)
 	if err != nil {
 		return err
 	}
-	return Verify(pub, raw, sigB64)
+	err = Verify(pub, raw, sigB64)
+	if err == nil {
+		return nil
+	}
+	lf := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
+	for _, cand := range [][]byte{lf, crlf} {
+		if bytes.Equal(cand, raw) {
+			continue
+		}
+		if Verify(pub, cand, sigB64) == nil {
+			return nil
+		}
+	}
+	return err
 }
