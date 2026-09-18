@@ -75,6 +75,9 @@ jobs:
         working-directory: offveil-ui
         run: npm ci
 
+      - name: Stage Darwin bundle binaries
+        run: bash ./scripts/stage-bundle-darwin.sh
+
       - name: Tauri build (.app, aarch64-apple-darwin)
         working-directory: offveil-ui
         env:
