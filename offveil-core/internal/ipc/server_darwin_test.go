@@ -106,7 +106,7 @@ func TestWriteSocketOwner(t *testing.T) {
 
 func TestUnlinkStaleRejectsLive(t *testing.T) {
 	dir := t.TempDir()
-	sock := filepath.Join(dir, "live.sock")
+	sock := filepath.Join(dir, "v.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestUnlinkStaleRejectsLive(t *testing.T) {
 
 func TestRemoveIdleSocketLeavesLive(t *testing.T) {
 	dir := t.TempDir()
-	live := filepath.Join(dir, "live.sock")
+	live := filepath.Join(dir, "l.sock")
 	ln, err := net.Listen("unix", live)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestRemoveIdleSocketLeavesLive(t *testing.T) {
 		t.Fatal("live socket must stay")
 	}
 
-	stale := filepath.Join(dir, "stale.sock")
+	stale := filepath.Join(dir, "s.sock")
 	sln, err := net.Listen("unix", stale)
 	if err != nil {
 		t.Fatal(err)
