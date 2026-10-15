@@ -1,13 +1,13 @@
 # offveil for Apple Silicon
 
-This preview improves macOS installation and adds in-app updates. Supports M1 and later Macs.
+This preview improves macOS installation and adds in-app updates. Supports M1 and later Macs running macOS 12 or later.
 
 ## Changes
 
 - Package the core and sidecars as nested executables and verify signatures before installation.
 - Detect outdated core files after an app update and refresh them with administrator approval.
 - Discover newer Mac releases and prereleases through **Check for Updates**, verify downloads and restart after installation.
-- Build with Go 1.26.9 and updated networking dependencies containing security fixes.
+- Update to Go 1.26.9, rustls 0.23.46 and patched networking dependencies.
 
 ## Install
 
