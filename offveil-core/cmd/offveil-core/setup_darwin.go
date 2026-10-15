@@ -17,7 +17,9 @@ import (
 
 	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
+	"github.com/erayselim/offveil/offveil-core/internal/capture"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
+	offdns "github.com/erayselim/offveil/offveil-core/internal/dns"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
 	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
@@ -121,6 +123,15 @@ func stopService(svc service.Service) error {
 		return err
 	}
 	if err := ipc.RemoveIdleSocket(ipc.DefaultRootSocket); err != nil {
+		return err
+	}
+	// A first install or already-clean stop has no DNS undo record. Do not
+	// "repair" another local resolver just because it uses a loopback address.
+	if _, err := os.Stat(offdns.DefaultRestorePath()); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		_, err := capture.ClearLeftoverRoutes()
 		return err
 	}
 	// Restore only offveil's recorded DNS/routes after sidecars have exited.
