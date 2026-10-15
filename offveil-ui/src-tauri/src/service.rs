@@ -21,9 +21,13 @@ const SERVICE_NAME: &str = "offveil-core";
 const PIPE_WAIT: Duration = Duration::from_secs(20);
 const SETUP_PIPE_WAIT: Duration = Duration::from_secs(30);
 
+#[cfg(any(windows, test))]
 const ERROR_ACCESS_DENIED: u32 = 5;
+#[cfg(any(windows, test))]
 const ERROR_SERVICE_ALREADY_RUNNING: u32 = 1056;
+#[cfg(any(windows, test))]
 const ERROR_SERVICE_DOES_NOT_EXIST: u32 = 1060;
+#[cfg(windows)]
 const ERROR_CANCELLED: u32 = 1223;
 
 /// Prefix the UI uses to drop into the one-time admin setup screen.
@@ -192,6 +196,7 @@ pub fn is_needs_install(err: &str) -> bool {
     err.starts_with(NEEDS_INSTALL)
 }
 
+#[cfg(any(windows, test))]
 fn elevation_required(code: u32) -> bool {
     code == ERROR_ACCESS_DENIED || code == ERROR_SERVICE_DOES_NOT_EXIST
 }
@@ -262,6 +267,7 @@ fn start_scm() -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
 fn scm_start_err(op: &str, err: u32) -> String {
     if elevation_required(err) {
         format!("{NEEDS_INSTALL} {op}: {err}")

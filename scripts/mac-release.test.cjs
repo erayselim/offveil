@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { releaseVersion, manifest } = require("./mac-release.cjs");
+const { releaseVersion, releaseNotes, manifest } = require("./mac-release.cjs");
 
 test("release tags become distinct application versions", () => {
   for (const tag of ["v1.0.0-mac.9", "v1.0.0-mac.10", "v1.0.0", "v1.1.0-beta.2+build.3"]) {
@@ -26,4 +26,12 @@ test("manifest carries the final archive's signature and immutable tag URL", (t)
   assert.equal(doc.platforms["darwin-aarch64"].url, "https://github.com/erayselim/offveil/releases/download/v1.0.0-mac.10/offveil_1.0.0-mac.10_aarch64.app.tar.gz");
   fs.writeFileSync(`${tar}.sig`, " ");
   assert.throws(() => manifest({ tag: "v1.0.0-mac.10", repo: "erayselim/offveil", tar }));
+});
+
+test("Mac notes are versioned independently of the Windows release", () => {
+  const mac = JSON.parse(fs.readFileSync(path.join(__dirname, "../offveil-ui/src/whats-new.macos.json"), "utf8"));
+  assert.deepEqual(releaseNotes(`v${mac.version}`), mac.notes);
+  assert.equal(releaseNotes("v99.0.0"), null);
+  const windows = JSON.parse(fs.readFileSync(path.join(__dirname, "../offveil-ui/src/whats-new.json"), "utf8"));
+  assert.notEqual(windows.version, mac.version);
 });

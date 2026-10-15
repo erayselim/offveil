@@ -32,7 +32,7 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" != tag ]]; then
             TAG="v$(node -p "require('./offveil-ui/src-tauri/tauri.conf.json').version")"
           fi
-          node scripts/mac-release.cjs config "$TAG" "$RUNNER_TEMP/mac-release.json"
+          node scripts/mac-release.cjs config "$TAG" "$RUNNER_TEMP/mac-release.json" offveil-ui/src/whats-new.json
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
@@ -54,6 +54,12 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: offveil-ui/src-tauri -> target
+          shared-key: macos-aarch64
 
       - name: Test and build core (darwin/arm64)
         working-directory: offveil-core

@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0-mac.2",
+  "notes": {
+    "tr": "macOS kurulumu ve paket imzaları iyileştirildi. Uygulama içi güncellemeler eklendi; yeni sürüm kurulduğunda core ve yardımcı programlar da yenilenir. Go ve TLS bağımlılıkları güvenlik düzeltmeleriyle güncellendi.",
+    "en": "Improved macOS installation and bundle signing. Added in-app updates, including refreshing the core and sidecars after installation. Updated Go and TLS dependencies with security fixes."
+  }
+}

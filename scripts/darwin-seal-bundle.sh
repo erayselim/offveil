@@ -64,7 +64,7 @@ fi
 # Sign inside-out explicitly. --deep is for verification, not recursive signing.
 for name in offveil-core sing-box ciadpi "$MAIN"; do
   bin="$APP/Contents/MacOS/$name"
-  lipo -verify_arch arm64 "$bin"
+  lipo "$bin" -verify_arch arm64
   codesign --force --sign - --timestamp=none "$bin"
   codesign --verify --strict --verbose=2 "$bin"
 done

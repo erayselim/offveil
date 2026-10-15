@@ -69,6 +69,8 @@ Browser-download approval, physical-device connectivity, DNS restoration, Discor
 
 `release-darwin` derives the app and core version from the tag. It seals the final bundle, creates and signs the updater archive, then generates `latest-mac.json`. Keep the manifest, archive and archive signature together on the same release.
 
+Update `offveil-ui/src/whats-new.macos.json` for each Mac release. Matching notes are included in both the app and update manifest; Windows notes remain independent.
+
 Mac-only `v*-mac*` tags stage draft prereleases without changing GitHub Latest. Verify the artifacts and publish the draft as a prerelease to make it available to the updater. Shared `v*` tags attach Mac assets to the existing Windows release. Windows `latest.json`, checksums and release status are preserved.
 
 Discovery inspects up to 300 recent GitHub releases. API or rate-limit failures are reported as check failures. Update verification uses the existing `TAURI_SIGNING_PRIVATE_KEY`; it does not require an Apple Developer account.

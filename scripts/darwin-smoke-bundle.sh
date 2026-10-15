@@ -24,7 +24,7 @@ check_app() {
   for name in "$main" offveil-core sing-box ciadpi; do
     bin="$app/Contents/MacOS/$name"
     [[ -f "$bin" && -x "$bin" ]]
-    lipo -verify_arch arm64 "$bin"
+    lipo "$bin" -verify_arch arm64
     codesign --verify --strict --verbose=2 "$bin"
     # Copies into the archive / disk image must keep exactly the sealed bytes.
     cmp "$APP/Contents/MacOS/$name" "$bin"

@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 pub const PIPE_PATH: &str = r"\\.\pipe\offveil-core";
 /// LaunchDaemon socket when the UI is a normal user (docs/contracts.md §2).
 #[cfg_attr(not(unix), allow(dead_code))]

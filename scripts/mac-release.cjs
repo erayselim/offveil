@@ -13,6 +13,15 @@ function releaseVersion(tag) {
   return version;
 }
 
+function releaseNotes(tag) {
+  const doc = JSON.parse(fs.readFileSync(path.join(__dirname, "../offveil-ui/src/whats-new.macos.json"), "utf8"));
+  if (doc.version !== releaseVersion(tag)) return null;
+  if (typeof doc.notes?.tr !== "string" || typeof doc.notes?.en !== "string") {
+    throw new Error("Invalid Mac release notes");
+  }
+  return doc.notes;
+}
+
 function manifest({ tag, repo, tar, pubDate = new Date().toISOString() }) {
   const version = releaseVersion(tag);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("Invalid repository");
@@ -21,7 +30,7 @@ function manifest({ tag, repo, tar, pubDate = new Date().toISOString() }) {
   if (!signature) throw new Error("Empty updater signature");
   return {
     version,
-    notes: JSON.stringify({
+    notes: JSON.stringify(releaseNotes(tag) ?? {
       tr: "Mac güncellemesi. Yeniden açılışta core için yönetici onayı istenebilir.",
       en: "Mac update. Updating the core may require administrator approval after restart.",
     }),
@@ -36,13 +45,16 @@ function manifest({ tag, repo, tar, pubDate = new Date().toISOString() }) {
 if (require.main === module) {
   const [mode, ...args] = process.argv.slice(2);
   if (mode === "config") {
-    const [tag, output] = args;
+    const [tag, output, frontendNotes] = args;
     fs.writeFileSync(output, JSON.stringify({ version: releaseVersion(tag), bundle: { createUpdaterArtifacts: false } }));
+    if (frontendNotes) {
+      fs.writeFileSync(frontendNotes, JSON.stringify({ version: releaseVersion(tag), notes: releaseNotes(tag) ?? { tr: "", en: "" } }, null, 2) + "\n");
+    }
   } else if (mode === "manifest") {
     const [tag, repo, tar, output] = args;
     fs.writeFileSync(output, JSON.stringify(manifest({ tag, repo, tar }), null, 2) + "\n");
   } else {
-    throw new Error("usage: mac-release.cjs config <tag> <output> | manifest <tag> <repo> <tar> <output>");
+    throw new Error("usage: mac-release.cjs config <tag> <output> [frontend-notes] | manifest <tag> <repo> <tar> <output>");
   }
 }
-module.exports = { releaseVersion, manifest };
+module.exports = { releaseVersion, releaseNotes, manifest };
