@@ -68,7 +68,7 @@ It prints progress immediately and saves a ZIP to Downloads (or the home directo
 
 The UI and CLI connect to the system daemon at `/var/run/offveil/core.sock`. They never fall back to a process under `/var/folders`. Developers running an interactive core must explicitly set `OFFVEIL_IPC_SOCK` in both client and server.
 
-Mac auto-connect is off until explicitly enabled in Settings. The Windows preference is unchanged. Turning protection off or preparing an update stops the Mac daemon through launchd, with bounded graceful termination and recovery for a stuck job. Core refresh performs this cleanup with administrator approval before replacing the installed payload.
+Auto-connect defaults on for both macOS and Windows. Users can turn it off in Settings; an existing explicit opt-out is preserved when upgrading. Turning protection off or preparing an update stops the Mac daemon through launchd, with bounded graceful termination and recovery for a stuck job. Core refresh performs this cleanup with administrator approval before replacing the installed payload.
 
 If `1.0.0-mac.2` reports `pipe read: Resource temporarily unavailable (os error 35)` after pressing **On**, the UI's local socket read timed out. That build uses an eight-second socket timeout even for the longer startup operation. Startup also holds the engine lock, so status and diagnostics can time out behind it. This message alone does not establish whether Private Relay is enabled or why the connection failed.
 

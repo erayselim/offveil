@@ -1,4 +1,4 @@
-//! Auto-connect: Windows defaults on; macOS requires an explicit opt-in.
+//! Auto-connect defaults on for Windows and macOS; an explicit opt-out is preserved.
 //!
 //! The core service is demand-start. After a reboot it is stopped, so we
 //! start it (Windows `StartService` / Darwin passwordless `sudo -n … start`)
@@ -46,29 +46,13 @@ fn fallback_config_dir() -> PathBuf {
 }
 
 pub fn pref_enabled(app: &AppHandle) -> bool {
-    #[cfg(target_os = "macos")]
-    return disabled_marker(app)
-        .with_file_name("autoconnect-enabled")
-        .is_file()
-        && !disabled_marker(app).is_file();
-    #[cfg(not(target_os = "macos"))]
+    // Older macOS versions also wrote autoconnect-enabled. It is no longer
+    // needed: only the disabled marker determines the saved preference.
     !disabled_marker(app).is_file()
 }
 
 fn write_pref(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let path = disabled_marker(app);
-    #[cfg(target_os = "macos")]
-    {
-        let opted_in = path.with_file_name("autoconnect-enabled");
-        if enabled {
-            if let Some(parent) = opted_in.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(opted_in, b"1").map_err(|e| e.to_string())?;
-        } else if opted_in.exists() {
-            std::fs::remove_file(opted_in).map_err(|e| e.to_string())?;
-        }
-    }
     if enabled {
         if path.is_file() {
             std::fs::remove_file(&path).map_err(|e| format!("autoconnect pref: {e}"))?;
