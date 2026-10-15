@@ -40,6 +40,11 @@ if git remote -v | grep -qi 'releases/download'; then
   exit 1
 fi
 
+# Apply the reviewed Darwin-only outbound interface binding after verifying the
+# upstream commit. Never silently build without it: utun must not capture ciadpi.
+git apply --check "${ROOT}/patches/byedpi-darwin-bind-interface.patch"
+git apply "${ROOT}/patches/byedpi-darwin-bind-interface.patch"
+
 make
 if [[ ! -f ./ciadpi ]]; then
   echo "make did not produce ./ciadpi" >&2

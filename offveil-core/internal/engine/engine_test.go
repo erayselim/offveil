@@ -211,6 +211,9 @@ func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
 	if desCfg.ConnIP != "192.168.0.10" {
 		t.Fatalf("ConnIP=%q want egress IPv4", desCfg.ConnIP)
 	}
+	if desCfg.BindInterface != "Ethernet" {
+		t.Fatalf("BindInterface=%q", desCfg.BindInterface)
+	}
 	got := strings.Join(tunCfg.RouteCIDRs, ",")
 	if !strings.Contains(got, "0.0.0.0/1") || !strings.Contains(got, "128.0.0.0/1") {
 		t.Fatalf("RouteCIDRs=%v want split-default", tunCfg.RouteCIDRs)

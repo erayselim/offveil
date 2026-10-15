@@ -454,6 +454,9 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	desCfg.Resolve = resolveOne
 	desCfg.ProbeHost = probeHost
 	desCfg.ConnIP = egressIPv4(e.captureInfo)
+	if e.captureInfo != nil && e.captureInfo.Egress != nil {
+		desCfg.BindInterface = e.captureInfo.Egress.Name
+	}
 
 	desStart := e.startDesync
 	e.publishOperationLocked("desync")

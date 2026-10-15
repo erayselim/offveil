@@ -11,7 +11,10 @@ Darwin sidecars are **not** in the Windows installer. Same tags, different
 assets: `sing-box-1.13.14-darwin-arm64.tar.gz` (SHA in
 `fetch-sing-box-darwin-arm64.sh`) and ByeDPI `v0.17.3` built with `make`
 (`build-byedpi-darwin.sh`). The Linux `*-aarch64.tar.gz` ByeDPI release is
-not used.
+not used. The Darwin ByeDPI build applies the Apple-only outbound interface
+binding patch in `offveil-core/patches/byedpi-darwin-bind-interface.patch`.
+Its source and rationale are in `docs/mac-reliability.md`; upstream MIT notices
+are preserved. The Windows binary is unmodified.
 
 ## sing-box (GPL-3.0-or-later)
 

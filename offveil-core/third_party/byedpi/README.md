@@ -33,4 +33,9 @@ Darwin: do not use `byedpi-*-aarch64.tar.gz` (Linux). Build the same tag:
 ```
 
 `ciadpi` (no `.exe`) is ad-hoc signed after copy. Default strategy is
-`byedpi:darwin-safe` (no `--fake` / `--ttl`); scan adds `--oob`.
+`byedpi:darwin-safe` excludes `--timeout` (not compiled for Darwin), fake,
+disorder/disoob and other TTL-changing operations. It uses TCP/TLS record
+splitting and OOB. The build applies the checked-in
+`patches/byedpi-darwin-bind-interface.patch` after verifying the upstream commit.
+The Apple-only patch pins outbound sockets with `IP_BOUND_IF` / `IPV6_BOUND_IF`
+using the physical interface passed by the core in `OFFVEIL_BIND_INTERFACE`.

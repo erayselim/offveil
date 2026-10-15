@@ -1,3 +1,2 @@
-*.sh text eol=lf
-ruleset/*.json text eol=lf
-ruleset/*.sig binary
+# Unified patches contain single-space context lines and must retain LF endings.
+offveil-core/patches/*.patch text eol=lf whitespace=-blank-at-eol

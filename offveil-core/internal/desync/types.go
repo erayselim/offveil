@@ -63,6 +63,10 @@ type Config struct {
 	// ConnIP binds ciadpi outbound sockets to the physical egress IPv4
 	// (--conn-ip) so split-default TUN cannot loop dest SYNs back into Wintun.
 	ConnIP string
+	// BindInterface pins Darwin outbound sockets with IP_BOUND_IF so utun
+	// cannot capture the proxy's own TCP/UDP traffic. The bundled Darwin build
+	// consumes OFFVEIL_BIND_INTERFACE; other platforms ignore this field.
+	BindInterface string
 }
 
 // DefaultConfig returns ByeDPI sidecar defaults.
@@ -78,16 +82,17 @@ func DefaultConfig() Config {
 
 // Info is runtime desync status for engine/status.
 type Info struct {
-	SocksAddr    string    `json:"socks_addr"`
-	StrategyID   string    `json:"strategy_id"`
-	BinaryPath   string    `json:"binary_path,omitempty"`
-	PID          int       `json:"pid,omitempty"`
-	Up           bool      `json:"up"`
-	LastProbe    FailClass `json:"last_probe,omitempty"`
-	LastProbeAt  string    `json:"last_probe_at,omitempty"`
-	FailTimeouts int       `json:"fail_timeouts"`
-	FailSSLErrs  int       `json:"fail_ssl_errs"`
-	FailResets   int       `json:"fail_resets"`
+	SocksAddr     string    `json:"socks_addr"`
+	StrategyID    string    `json:"strategy_id"`
+	BindInterface string    `json:"bind_interface,omitempty"`
+	BinaryPath    string    `json:"binary_path,omitempty"`
+	PID           int       `json:"pid,omitempty"`
+	Up            bool      `json:"up"`
+	LastProbe     FailClass `json:"last_probe,omitempty"`
+	LastProbeAt   string    `json:"last_probe_at,omitempty"`
+	FailTimeouts  int       `json:"fail_timeouts"`
+	FailSSLErrs   int       `json:"fail_ssl_errs"`
+	FailResets    int       `json:"fail_resets"`
 }
 
 // Session is a running ByeDPI SOCKS desync outbound.

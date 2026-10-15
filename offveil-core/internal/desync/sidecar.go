@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,9 @@ func Start(cfg Config) (Session, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = stderr
+	if runtime.GOOS == "darwin" && cfg.BindInterface != "" {
+		cmd.Env = append(os.Environ(), "OFFVEIL_BIND_INTERFACE="+cfg.BindInterface)
+	}
 	proc.PrepareCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("desync: start ciadpi: %w", err)
@@ -106,13 +110,14 @@ func Start(cfg Config) (Session, error) {
 
 func (s *session) Info() Info {
 	info := Info{
-		SocksAddr:    s.socks,
-		StrategyID:   s.strategy.ID,
-		BinaryPath:   s.cfg.BinaryPath,
-		Up:           s.up.Load(),
-		FailTimeouts: int(s.failTimeouts.Load()),
-		FailSSLErrs:  int(s.failSSL.Load()),
-		FailResets:   int(s.failReset.Load()),
+		SocksAddr:     s.socks,
+		StrategyID:    s.strategy.ID,
+		BindInterface: s.cfg.BindInterface,
+		BinaryPath:    s.cfg.BinaryPath,
+		Up:            s.up.Load(),
+		FailTimeouts:  int(s.failTimeouts.Load()),
+		FailSSLErrs:   int(s.failSSL.Load()),
+		FailResets:    int(s.failReset.Load()),
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		info.PID = s.cmd.Process.Pid
