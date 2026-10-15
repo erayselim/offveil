@@ -14,7 +14,7 @@ References: [Apple launchd design](https://developer.apple.com/library/archive/d
 
 ## Compatible desynchronization
 
-ByeDPI is built from pinned `v0.17.3`. Its `DESYNC_DISORDER` and `DESYNC_DISOOB` cases call `setttl(sfd, 1)` internally. Merely omitting `--ttl` does not remove TTL manipulation. The Mac strategy uses split, TLS record splitting and OOB; cached strategies using explicit or implicit TTL operations are rejected. Windows strategies are independent.
+ByeDPI is built from pinned `v0.17.3`. Its `DESYNC_DISORDER` and `DESYNC_DISOOB` cases call `setttl(sfd, 1)` internally. Merely omitting `--ttl` does not remove TTL manipulation. In addition, that version compiles `--timeout` only with `TIMEOUT_SUPPORT`, which its Darwin build lacks: passing the option prevents the process from starting. The Mac strategy uses split, TLS record splitting and OOB; incompatible cached strategies are rejected. Windows strategies are independent. CI invokes the actual sidecar with every native argument set before packaging, in addition to the real protection test.
 
 References: [pinned ByeDPI source](https://github.com/hufrea/byedpi/blob/v0.17.3/desync.c), [upstream macOS discussion](https://github.com/hufrea/byedpi/issues/17), [sing-box TUN and loop-prevention requirements](https://sing-box.sagernet.org/configuration/inbound/tun/).
 

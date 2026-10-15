@@ -77,6 +77,7 @@ jobs:
           set -euo pipefail
           bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
           bash ./scripts/build-byedpi-darwin.sh dist
+          ./dist/offveil-core check-payload
 
       - name: Sign ruleset
         env:

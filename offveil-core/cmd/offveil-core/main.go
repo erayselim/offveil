@@ -17,9 +17,11 @@ import (
 
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
+	"github.com/erayselim/offveil/offveil-core/internal/desync"
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
+	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
 	"github.com/erayselim/offveil/offveil-core/internal/support"
 	"github.com/erayselim/offveil/offveil-core/internal/version"
 )
@@ -98,6 +100,16 @@ func main() {
 		if err := json.NewEncoder(os.Stdout).Encode(meta); err != nil {
 			os.Exit(1)
 		}
+	case "check-payload":
+		binary, err := sidecar.Locate(sidecar.ByeDPI)
+		if err == nil {
+			err = desync.ValidateNativeArguments(context.Background(), binary)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "payload: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("All native ByeDPI strategies were accepted by the bundled binary.")
 	case "version", "-version", "--version":
 		fmt.Printf("offveil-core %s (contracts %d)\n", version.Version, version.ContractsVersion)
 	case "help", "-h", "--help":
@@ -123,6 +135,7 @@ Usage:
   offveil-core status          Query service status
   offveil-core client -method ping|status|start|stop|restart|health|test|repair
   offveil-core support [-output /path/to/support.zip]  Save a ZIP without requiring the daemon
+  offveil-core check-payload   Validate native strategy arguments with the bundled sidecar
   offveil-core version
 
 IPC: %s

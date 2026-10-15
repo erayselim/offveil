@@ -12,7 +12,6 @@ func DefaultSafeStrategyDarwin() Strategy {
 		ID: "byedpi:darwin-safe",
 		Args: []string{
 			"--no-domain",
-			"--timeout", "3",
 			"--split", "1",
 			"--tlsrec", "1+s",
 			"--mod-http", "h,d",

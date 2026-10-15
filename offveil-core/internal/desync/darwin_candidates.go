@@ -11,7 +11,6 @@ func ScanCandidatesDarwin() []Strategy {
 			ID: "byedpi:darwin-split-sni",
 			Args: []string{
 				"--no-domain",
-				"--timeout", "3",
 				"--split", "1+s",
 				"--mod-http", "h,d",
 			},
@@ -21,7 +20,6 @@ func ScanCandidatesDarwin() []Strategy {
 			ID: "byedpi:tlsrec-sni",
 			Args: []string{
 				"--no-domain",
-				"--timeout", "3",
 				"--tlsrec", "1+s",
 			},
 			Note: "TLS record split in SNI only",
@@ -30,7 +28,6 @@ func ScanCandidatesDarwin() []Strategy {
 			ID: "byedpi:oob",
 			Args: []string{
 				"--no-domain",
-				"--timeout", "3",
 				"--oob", "1+s",
 			},
 			Note: "OOB fallback (Darwin scan; no fake/ttl)",

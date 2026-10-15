@@ -73,6 +73,7 @@ jobs:
             exit 1
           fi
           ./dist/sing-box version
+          ./dist/offveil-core check-payload
       - name: Ping over unix socket
         working-directory: offveil-core
         env:

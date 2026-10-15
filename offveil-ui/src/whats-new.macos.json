@@ -1,7 +1,7 @@
 {
   "version": "1.0.0-mac.4",
   "notes": {
-    "tr": "Mac motorunun TTL değiştiren ByeDPI işlemleri kaldırıldı. Kurulum ve güncelleme, yanıt vermeyen eski servisi de durdurup ağı geri yükler. Destek dosyası için konum seçilebilir; servis olmadan da ZIP alınır. Mac otomatik bağlantısı artık açıkça etkinleştirilir.",
-    "en": "Removed TTL-changing ByeDPI operations from the Mac engine. Installation and updates stop unresponsive old services and restore networking. Support export now asks where to save and produces a ZIP without a working daemon. Mac auto-connect now requires explicit opt-in."
+    "tr": "Mac motorunun başlamasını engelleyen --timeout argümanı ve TTL değiştiren ByeDPI işlemleri kaldırıldı. Kurulum ve güncelleme, yanıt vermeyen eski servisi de durdurup ağı geri yükler. Destek dosyası için konum seçilebilir; servis olmadan da ZIP alınır. Mac otomatik bağlantısı artık açıkça etkinleştirilir.",
+    "en": "Removed the unsupported --timeout argument that prevented the Mac engine from starting, and removed TTL-changing ByeDPI operations. Installation and updates stop unresponsive old services and restore networking. Support export now asks where to save and produces a ZIP without a working daemon. Mac auto-connect now requires explicit opt-in."
   }
 }

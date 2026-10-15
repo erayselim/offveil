@@ -39,12 +39,12 @@ func ContainsDarwinUnsupported(args []string) bool {
 	for _, arg := range args {
 		name, _, _ := strings.Cut(arg, "=")
 		switch name {
-		case "--fake", "--ttl", "--disorder", "--disoob":
+		case "--fake", "--ttl", "--disorder", "--disoob", "--timeout", "--udp-fake", "--def-ttl":
 			return true
 		}
 		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 {
 			switch arg[1] {
-			case 'f', 't', 'd', 'q':
+			case 'f', 't', 'd', 'q', 'T', 'a', 'g':
 				return true
 			}
 		}
