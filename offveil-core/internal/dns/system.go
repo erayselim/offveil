@@ -258,6 +258,13 @@ func applySystemDNSWith(ctl systemDNS, stubIP string) error {
 	if net.ParseIP(stubIP) == nil {
 		return fmt.Errorf("dns: invalid stub ip %q", stubIP)
 	}
+	previous, err := LoadRestoreSnapshot()
+	if err != nil {
+		return fmt.Errorf("dns: read pending restore: %w", err)
+	}
+	if previous != nil && len(previous.Services) > 0 {
+		return fmt.Errorf("dns: previous DNS restoration is still pending")
+	}
 	all, err := ctl.ListServices()
 	if err != nil {
 		return err
@@ -270,8 +277,7 @@ func applySystemDNSWith(ctl systemDNS, stubIP string) error {
 	for _, svc := range targets {
 		servers, dhcp, gerr := ctl.GetDNS(svc.Name)
 		if gerr != nil {
-			dhcp = true
-			servers = nil
+			return fmt.Errorf("dns: snapshot %s: %w", svc.Name, gerr)
 		}
 		snap.Services = append(snap.Services, ServiceDNS{
 			Name: svc.Name,
@@ -314,25 +320,35 @@ func restoreSystemDNSWith(ctl systemDNS, armed, stubUp bool) (detail string, err
 	restored := 0
 	var first error
 	if snap != nil {
-		armed = true
+		var pending []ServiceDNS
 		for _, svc := range snap.Services {
 			servers := svc.DNS
 			if svc.DHCP {
 				servers = nil
 			}
 			if e := ctl.SetDNS(svc.Name, servers); e != nil {
+				pending = append(pending, svc)
 				if first == nil {
-					first = e
+					first = fmt.Errorf("restore %s: %w", svc.Name, e)
 				}
 				continue
 			}
 			restored++
 		}
-		_ = ClearRestoreSnapshot()
+		if len(pending) > 0 {
+			snap.Services = pending
+			if err := SaveRestoreSnapshot(*snap); err != nil {
+				return "restore pending", fmt.Errorf("retain DNS undo record: %w", err)
+			}
+		} else if err := ClearRestoreSnapshot(); err != nil {
+			first = err
+		}
 	}
 
 	flushed := 0
-	if !stubUp || armed {
+	// A snapshot is authoritative, including original loopback resolvers. Never
+	// flush a restored service or replace a failed restore with DHCP.
+	if snap == nil && armed {
 		n, ferr := flushLeftoverStubDNS(ctl, armed, stubUp)
 		flushed = n
 		if ferr != nil && first == nil {
@@ -369,7 +385,7 @@ func flushLeftoverStubDNS(ctl systemDNS, armed, stubUp bool) (int, error) {
 		if gerr != nil || dhcp {
 			continue
 		}
-		if !onlyLoopbackStub(servers) {
+		if !onlyOffveilStub(servers) {
 			continue
 		}
 		if err := ctl.SetDNS(svc.Name, nil); err != nil {
@@ -381,6 +397,20 @@ func flushLeftoverStubDNS(ctl systemDNS, armed, stubUp bool) (int, error) {
 		flushed++
 	}
 	return flushed, first
+}
+
+// Without an undo record only the default offveil address is recognizable.
+// Other loopback addresses may belong to a user's existing local resolver.
+func onlyOffveilStub(servers []string) bool {
+	if len(servers) == 0 {
+		return false
+	}
+	for _, server := range servers {
+		if !net.ParseIP(server).Equal(net.ParseIP(stubDNSIP)) {
+			return false
+		}
+	}
+	return true
 }
 
 func leftoverStubPresent(ctl systemDNS) bool {

@@ -239,6 +239,7 @@ type fakeSystemDNS struct {
 	calls      [][]string
 	flushCount int
 	setErr     map[string]error
+	getErr     map[string]error
 }
 
 func (f *fakeSystemDNS) ListServices() ([]hwService, error) {
@@ -246,6 +247,9 @@ func (f *fakeSystemDNS) ListServices() ([]hwService, error) {
 }
 
 func (f *fakeSystemDNS) GetDNS(name string) ([]string, bool, error) {
+	if err := f.getErr[name]; err != nil {
+		return nil, false, err
+	}
 	v, ok := f.dns[name]
 	if !ok || v == nil {
 		return nil, true, nil

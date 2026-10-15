@@ -2,9 +2,9 @@
 
 package dns
 
-// RestoreLeftoverDNS undoes networksetup 127.0.0.1 leftovers using
-// dns-restore.json, then empties any remaining loopback DNS when the stub
-// is down. Flush is killall -HUP mDNSResponder.
+// RestoreLeftoverDNS restores recorded networksetup settings, retaining failed
+// services for retry. Without a record, only an armed cleanup may clear the
+// default offveil address. Original local resolvers are preserved.
 func RestoreLeftoverDNS(armed bool) (string, error) {
 	return restoreSystemDNSWith(liveSystemDNS(), armed, localResolverListening())
 }
