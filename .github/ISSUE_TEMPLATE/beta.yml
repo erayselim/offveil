@@ -21,7 +21,7 @@ body:
     id: app_version
     attributes:
       label: offveil sürümü
-      placeholder: "1.0.0-rc.1 — Ayarlar'da görebilirsiniz"
+      placeholder: "1.0.0 — Ayarlar'da görebilirsiniz"
     validations:
       required: true
   - type: input

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "notes": {
-    "tr": "Windows ve Mac artık aynı sürümde. DNS ve arka plan işlemleri hafifletildi. Tepsi ikonu sistem görünümüne uyum sağlıyor; Mac'te bağlantı ve servis kurtarma iyileştirildi.",
-    "en": "Windows and Mac now share one release. Less repeated DNS and background work, a tray icon that follows your system, and more reliable Mac connections and service recovery."
+    "tr": "DNS ve arka plan işlemleri hafifletildi. Tepsi ikonu sistem görünümüne uyum sağlıyor; Mac'te bağlantı ve servis kurtarma iyileştirildi.",
+    "en": "Less repeated DNS and background work, a tray icon that follows your system, and more reliable Mac connections and service recovery."
   }
 }

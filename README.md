@@ -15,9 +15,9 @@ One switch. Local DoH, DPI desync, and a selective tunnel when that is not enoug
 
 ## Download
 
-**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.0-rc.1/offveil_1.0.0-rc.1_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.0-rc.1/offveil_1.0.0-rc.1_aarch64.dmg)**
+**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.0/offveil_1.0.0_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.0/offveil_1.0.0_aarch64.dmg)**
 
-The shared **1.0.0-rc.1** release is a release candidate for Windows and M1-or-later Macs. Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.0-rc.1).
+**1.0.0** is the release for Windows and M1-or-later Macs. Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.0).
 
 Existing users can use **Check for Updates**. Verify downloads against `SHA256SUMS.txt` on the same release:
 

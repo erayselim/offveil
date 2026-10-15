@@ -19,7 +19,7 @@ The app is ad-hoc signed, without Developer ID or Apple notarization. An unident
 
 ## Updates
 
-**Check for Updates** discovers newer published releases and release candidates that contain a complete Mac update package. Windows-only releases and drafts are skipped. The shared `1.0.0-rc.1` release upgrades both `1.0.0-mac.3` and `1.0.0-mac.4`.
+**Check for Updates** discovers newer published releases and release candidates that contain a complete Mac update package. Windows-only releases and drafts are skipped. The shared `1.0.0` release upgrades `1.0.0-mac.3`, `1.0.0-mac.4`, and `1.0.0-rc.1`.
 
 If mac.3 cannot stop its old service before updating, quit the app and install the new DMG manually. The new app can recover that service during administrator-approved setup; the old updater cannot gain this behavior before it is upgraded.
 

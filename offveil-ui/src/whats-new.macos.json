@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "notes": {
-    "tr": "Windows ve Mac artık aynı sürümde. DNS ve arka plan işlemleri hafifletildi. Menü çubuğu ikonu sistem görünümüne uyum sağlıyor; bağlantı ve servis kurtarma iyileştirildi.",
-    "en": "Windows and Mac now share one release. Less repeated DNS and background work, a menu bar icon that follows your system, and more reliable connections and service recovery."
+    "tr": "DNS ve arka plan işlemleri hafifletildi. Menü çubuğu ikonu sistem görünümüne uyum sağlıyor; bağlantı ve servis kurtarma iyileştirildi.",
+    "en": "Less repeated DNS and background work, a menu bar icon that follows your system, and more reliable connections and service recovery."
   }
 }

@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: offveil version
-      placeholder: "1.0.0-rc.1 (from Settings)"
+      placeholder: "1.0.0 (from Settings)"
     validations:
       required: true
   - type: input
