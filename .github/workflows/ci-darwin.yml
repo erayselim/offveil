@@ -104,6 +104,28 @@ jobs:
             offveil-core/dist/sing-box
           if-no-files-found: error
 
+      - name: Setup Node for payload smoke test
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Exercise real protection before UI build
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/offveil-payload.app"
+          mkdir -p "$APP/Contents/MacOS"
+          for name in offveil-core sing-box ciadpi; do
+            cp "offveil-core/dist/$name" "$APP/Contents/MacOS/$name"
+          done
+          codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/offveil-core"
+          bash scripts/darwin-smoke-install.sh "$APP"
+      - name: Upload payload failure support
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: offveil-mac-payload-support
+          path: dist-mac-ci/failure-support.zip
+          if-no-files-found: warn
+
   ui:
     needs: core
     runs-on: macos-latest

@@ -103,10 +103,12 @@ console.log('Real protection reports active with TUN, DNS and ByeDPI up.');
 NODE
 /sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
 grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"
-/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
-echo "HTTPS through the active TUN passed."
 /usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
 echo "HTTPS through ByeDPI SOCKS passed."
+/usr/bin/curl -4 --socks5 127.0.0.1:18081 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "HTTPS through sing-box SOCKS passed."
+/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "HTTPS through the active TUN passed."
 "$INSTALLED" client -method stop -timeout 45s
 dns_snapshot > "$WORK/dns-after.txt"
 cmp "$WORK/dns-before.txt" "$WORK/dns-after.txt"
