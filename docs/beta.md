@@ -1,46 +1,30 @@
-# Public Windows beta (`1.0.0-b5`)
+# Release candidate testing
 
-No phone-home. Measurement is the GitHub issue form.
+Windows and Apple Silicon now share the same release candidate. Report results
+through the [issue forms](https://github.com/erayselim/offveil/issues/new/choose).
 
-## Target networks
+## Before testing
 
-x64 Windows 10/11, **Smart App Control off**:
+Download from the shared release and verify the file against `SHA256SUMS.txt`.
+See the [Windows security notes](antivirus.md) or [Mac installation guide](beta-mac.md)
+if the operating system blocks installation. Include the exact warning in a
+report; do not disable system-wide security protections.
 
-- Turk Telekom / TTNET
-- Superonline
-- Turksat
-- Turkcell
-- Vodafone
-- At least 2 smaller / regional ISPs
+## What to check
 
-SAC-on is a separate bucket. If install fails, mark it "SAC block" and
-leave it out of the success rate. We do not recommend turning SAC off.
+- Install on a clean system and upgrade an existing installation.
+- Check for updates from Windows b4/b5 or Mac mac.3/mac.4.
+- Turn protection on, off and on again. Confirm normal browsing still works.
+- Try Discord text, voice and media, IMVU assets, and the services affected by
+  your internet provider.
+- Change networks and test sleep/wake, then confirm protection reconnects.
+- After stopping or quitting, confirm the original network settings are restored.
+- On Mac, compare CPU and battery use while idle and during the same download
+  or video with protection on and off. Record the device and workload.
 
-## Onboarding
+In a report, include the app version, operating system/device, internet provider
+when relevant, steps and exact error. Attach a support file from Settings when
+possible. A successful hosted-runner test does not establish behavior on every
+device or provider.
 
-1. GitHub Releases only.
-2. Compare `Get-FileHash` with `SHA256SUMS.txt`.
-3. SmartScreen: More info, then Run anyway ([antivirus.md](antivirus.md)).
-4. SAC on means this beta does not cover you.
-5. Defender quarantine: exclude `C:\Program Files\offveil` and tell us.
-6. No presets. If it fails, attach the diagnostics zip to the issue.
-
-## Discord within 2 minutes
-
-Issue template: `.github/ISSUE_TEMPLATE/beta.yml`
-
-Required:
-
-- ISP name
-- Windows version (10/11 + build)
-- SAC on / off
-- Did Discord open within **2 minutes** of the toggle? (yes/no)
-- Diagnostics zip if possible
-
-Track the "yes" rate on the SAC-off cohort.
-
-## Maintainer, each release
-
-- WDSI submission ([antivirus.md](antivirus.md))
-- VirusTotal URL (triage, not a proof)
-- Keep the unsigned / SAC / hash wording in the release body
+See [release maintenance](releases.md) for packaging and update verification.

@@ -1,63 +1,49 @@
 name: Bug report
-description: Something broke — include ISP, Windows, SAC, and a diagnostics zip
-title: "[bug] "
+description: Installation, connection or update problems on Windows and Mac.
+title: "[Bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        There are no presets to pick. If it failed, attach the diagnostics zip
-        from the app (`offveil` → support file). SAC-on is out of scope
-        (`docs/antivirus.md`).
-  - type: textarea
-    id: what
+        Tell us what happened and at which step.
+        If possible, attach a ZIP from Settings → Save a support file.
+  - type: dropdown
+    id: platform
     attributes:
-      label: What happened
-      placeholder: Toggle on, Discord stayed blocked / installer blocked / DNS leftover after quit
-    validations:
-      required: true
-  - type: textarea
-    id: expected
-    attributes:
-      label: What you expected
+      label: Platform
+      options:
+        - "Windows 64-bit"
+        - "Mac — Apple Silicon"
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: offveil version
-      placeholder: "1.0.0-b5 (from Settings)"
+      placeholder: "1.0.0-rc.1 (from Settings)"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and device
+      placeholder: "Windows 11 24H2 x64 / macOS 27.0.1, MacBook Pro M1"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the steps, expected result and actual result.
     validations:
       required: true
   - type: input
     id: isp
     attributes:
-      label: ISP
-      placeholder: TT / Superonline / Turksat / Turkcell / Vodafone / other
-    validations:
-      required: true
-  - type: input
-    id: windows
-    attributes:
-      label: Windows version
-      placeholder: "Windows 11 24H2 (build 26100) x64"
-    validations:
-      required: true
-  - type: dropdown
-    id: sac
-    attributes:
-      label: Smart App Control
-      options:
-        - "Off"
-        - "On"
-        - "I don't know"
-    validations:
-      required: true
+      label: Internet provider (for connection problems)
   - type: textarea
-    id: av
+    id: support
     attributes:
-      label: SmartScreen / Defender
-      placeholder: More info → Run anyway / threat name / folder exclusion
-  - type: markdown
-    attributes:
-      value: Attach the diagnostics zip to this issue if you can.
+      label: Error message and support file
+      description: Include the exact error. You can drag a support ZIP or screenshot here.

@@ -28,6 +28,10 @@ Put the printed **public** key in `offveil-ui/src-tauri/tauri.conf.json`
 under `plugins.updater.pubkey`. If you used `-p`, the password file is
 `.secrets/tauri.password` (gitignored).
 
-Windows release tag: `v1.0.0-b5` (no `-mac`). Uploads `latest.json`,
-`make_latest: true`. Mac prerelease tag: `v1.0.0-mac.1`. Does not upload
-`latest.json`, `make_latest: false`. Same updater pubkey on both.
+Windows and Mac share one updater public key. Keep the existing signing key
+when publishing updates for installed clients; generating a replacement key
+does not migrate those clients.
+
+Shared release tags, including `v1.0.0-rc.1`, build both platforms before
+publication. See [release maintenance](releases.md) for the signed manifests,
+combined checksums and the compatibility pointer used by older Windows clients.
