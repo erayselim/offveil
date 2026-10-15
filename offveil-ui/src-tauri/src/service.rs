@@ -226,11 +226,22 @@ pub fn start_installed() -> Result<(), String> {
     if core_ipc::is_reachable() {
         return Ok(());
     }
-    start_scm()?;
-    if wait_for_pipe(PIPE_WAIT) {
-        return Ok(());
+    #[cfg(target_os = "macos")]
+    {
+        return darwin::start_responsive_service(
+            darwin::start_launchd,
+            darwin::stop_launchd,
+            || wait_for_pipe(PIPE_WAIT),
+        );
     }
-    Err("servis başladı ama IPC hazır olmadı".into())
+    #[cfg(not(target_os = "macos"))]
+    {
+        start_scm()?;
+        if wait_for_pipe(PIPE_WAIT) {
+            return Ok(());
+        }
+        Err("servis başladı ama IPC hazır olmadı".into())
+    }
 }
 
 #[cfg(windows)]
@@ -274,11 +285,6 @@ fn scm_start_err(op: &str, err: u32) -> String {
     } else {
         format!("{op}: {err}")
     }
-}
-
-#[cfg(target_os = "macos")]
-fn start_scm() -> Result<(), String> {
-    darwin::start_launchd()
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -335,11 +341,9 @@ pub fn probe() -> BootstrapInfo {
 /// Make the core reachable. `StartService` first; elevate `setup` only if the
 /// service is missing or its DACL rejects start.
 pub fn ensure_service() -> Result<BootstrapInfo, String> {
-    let updating = core_update_required();
-    if !updating && core_ipc::is_reachable() {
-        return Ok(probe());
-    }
-
+    // A live socket alone does not establish a valid installation. A legacy
+    // daemon can still answer after its canonical files disappeared; bypassing
+    // start_installed here would return NeedsInstall without ever asking setup.
     match start_installed() {
         Ok(()) => return Ok(probe()),
         Err(e) if is_needs_install(&e) => { /* repair / first install */ }
@@ -534,6 +538,28 @@ mod darwin {
             || s.contains("no such file")
     }
 
+    /// kickstart does not replace an already-running, unresponsive job. Recover
+    /// once through managed stop (including DNS restoration), then start fresh.
+    /// This runs before the protection RPC; never replay a timed-out start RPC.
+    #[cfg(any(target_os = "macos", test))]
+    pub fn start_responsive_service(
+        mut start: impl FnMut() -> Result<(), String>,
+        mut stop: impl FnMut() -> Result<(), String>,
+        mut ready: impl FnMut() -> bool,
+    ) -> Result<(), String> {
+        start()?;
+        if ready() {
+            return Ok(());
+        }
+        eprintln!("offveil: daemon did not answer ping; attempting managed recovery");
+        stop()?;
+        start()?;
+        if ready() {
+            return Ok(());
+        }
+        Err("Servis yeniden başlatıldı ama IPC yanıt vermiyor; destek dosyasını kaydedin".into())
+    }
+
     #[cfg(target_os = "macos")]
     pub fn start_launchd() -> Result<(), String> {
         use std::process::Command;
@@ -569,10 +595,11 @@ mod darwin {
         if output.status.success() {
             return Ok(());
         }
-        Err(format!(
-            "Güncelleme öncesi sistem servisi durdurulamadı: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        let err = String::from_utf8_lossy(&output.stderr);
+        if sudo_needs_install(&err) {
+            return Err(format!("{} sudo stop: {err}", super::NEEDS_INSTALL));
+        }
+        Err(format!("Sistem servisi durdurulamadı: {}", err.trim()))
     }
 
     #[cfg(target_os = "macos")]
@@ -645,5 +672,78 @@ mod tests {
             "sudo: a terminal is required to read the password"
         ));
         assert!(!darwin::sudo_needs_install("launchctl start: failed: 5"));
+    }
+
+    #[test]
+    fn hung_daemon_is_stopped_before_a_single_restart() {
+        use std::cell::RefCell;
+        let calls = RefCell::new(Vec::new());
+        let mut checks = 0;
+        darwin::start_responsive_service(
+            || {
+                calls.borrow_mut().push("start");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("stop");
+                Ok(())
+            },
+            || {
+                checks += 1;
+                checks == 2
+            },
+        )
+        .unwrap();
+        assert_eq!(*calls.borrow(), ["start", "stop", "start"]);
+    }
+
+    #[test]
+    fn responsive_daemon_is_not_restarted() {
+        darwin::start_responsive_service(
+            || Ok(()),
+            || panic!("responsive daemon must stay running"),
+            || true,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn recovery_does_not_start_over_failed_network_cleanup() {
+        let mut starts = 0;
+        let err = darwin::start_responsive_service(
+            || {
+                starts += 1;
+                Ok(())
+            },
+            || Err("DNS restoration failed".into()),
+            || false,
+        )
+        .unwrap_err();
+        assert_eq!(starts, 1);
+        assert_eq!(err, "DNS restoration failed");
+    }
+
+    #[test]
+    fn recovery_is_bounded_and_preserves_setup_errors() {
+        let mut starts = 0;
+        assert!(darwin::start_responsive_service(
+            || {
+                starts += 1;
+                Ok(())
+            },
+            || Ok(()),
+            || false,
+        )
+        .unwrap_err()
+        .contains("IPC"));
+        assert_eq!(starts, 2);
+        assert!(is_needs_install(
+            &darwin::start_responsive_service(
+                || Err(format!("{NEEDS_INSTALL} missing canonical core")),
+                || panic!("setup error must not trigger recovery"),
+                || panic!("setup error must not wait"),
+            )
+            .unwrap_err()
+        ));
     }
 }

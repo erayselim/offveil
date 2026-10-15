@@ -84,6 +84,12 @@ func prepareServiceInstall() error {
 	if err := installSidecars(); err != nil {
 		return err
 	}
+	// The old job is already booted out. Recreate its plist from the current
+	// Config, including the canonical executable and demand-start options.
+	// Keeping an older plist can keep launching a DMG/app-bundle executable.
+	if err := os.Remove(appservice.LaunchDaemonPlist); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace previous launchd registration: %w", err)
+	}
 	ensureOffveilGroup()
 	if who := setupUserName(); who != "" {
 		addUserToGroup(who)

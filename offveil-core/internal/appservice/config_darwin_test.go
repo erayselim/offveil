@@ -9,6 +9,9 @@ func TestDarwinConfigDemandStart(t *testing.T) {
 	if cfg.Name != Name {
 		t.Fatalf("Name=%s", cfg.Name)
 	}
+	if cfg.Executable != CanonicalBinary() {
+		t.Fatalf("Executable=%q, want canonical installed path", cfg.Executable)
+	}
 	if v, _ := cfg.Option["KeepAlive"].(bool); v {
 		t.Fatal("KeepAlive must be false")
 	}

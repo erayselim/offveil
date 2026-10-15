@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != Darwin || "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVI
   echo "Requires a disposable GitHub-hosted macOS runner" >&2
   exit 1
 fi
-APP="${1:?usage: darwin-smoke-install.sh <app>}"
+APP="$(cd "${1:?usage: darwin-smoke-install.sh <app>}" && pwd)"
 CORE="$APP/Contents/MacOS/offveil-core"
 INSTALLED="/Library/Application Support/offveil/offveil-core"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/offveil-upgrade.XXXXXX")"
@@ -91,7 +91,8 @@ if ! "$INSTALLED" client -method start -timeout 120s > "$WORK/protection-start.j
   sudo tail -n 100 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
   exit 1
 fi
-node - "$WORK/protection-start.json" <<'NODE'
+assert_protection_active() {
+node - "$1" <<'NODE'
 const fs = require('node:fs');
 const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const s = reply.result;
@@ -101,6 +102,8 @@ if (!reply.ok || !s?.protection || s.state !== 'active' ||
 }
 console.log('Real protection reports active with TUN, DNS and ByeDPI up.');
 NODE
+}
+assert_protection_active "$WORK/protection-start.json"
 /sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
 grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"
 /usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
@@ -154,6 +157,20 @@ fi
 ping_until_ready
 echo "Managed stop and restart of an unresponsive daemon passed."
 
+# Repeat the UI's full daemon stop/start, with traffic after each restart.
+for cycle in 1 2; do
+  "$INSTALLED" client -method start -timeout 120s > "$WORK/toggle-$cycle.json"
+  assert_protection_active "$WORK/toggle-$cycle.json"
+  /sbin/route -n get 104.18.26.120 | grep -Eq 'interface: utun[0-9]+'
+  /usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+  /usr/bin/sudo -n "$INSTALLED" stop
+  dns_snapshot > "$WORK/dns-toggle-$cycle.txt"
+  cmp "$WORK/dns-before-managed-stop.txt" "$WORK/dns-toggle-$cycle.txt"
+  /usr/bin/sudo -n "$INSTALLED" start
+  ping_until_ready
+done
+echo "Repeated managed protection toggles and routed HTTPS passed."
+
 # Exercise refresh of an existing installation with a valid, different payload.
 # Re-sign only a temporary sidecar to model an older build without corrupting it.
 for name in offveil-core sing-box ciadpi; do
@@ -172,4 +189,23 @@ ping_until_ready
 for name in offveil-core sing-box ciadpi; do
   cmp "$APP/Contents/MacOS/$name" "$(dirname "$INSTALLED")/$name"
 done
+# Model a legacy job pointing into a bundle with no canonical payload.
+/usr/bin/sudo -n "$INSTALLED" stop
+sudo /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 '$CORE'" /Library/LaunchDaemons/offveil-core.plist
+sudo /bin/launchctl bootstrap system /Library/LaunchDaemons/offveil-core.plist
+sudo /bin/launchctl kickstart system/offveil-core
+ping_until_ready
+for name in offveil-core sing-box ciadpi; do
+  sudo mv "$(dirname "$INSTALLED")/$name" "$WORK/legacy-installed-$name"
+done
+"$CORE" client -method ping
+sudo "$CORE" setup
+ping_until_ready
+registered="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' /Library/LaunchDaemons/offveil-core.plist)"
+[[ "$registered" == "$INSTALLED" ]]
+for name in offveil-core sing-box ciadpi; do
+  cmp "$APP/Contents/MacOS/$name" "$(dirname "$INSTALLED")/$name"
+done
+echo "Legacy registration and missing canonical payload repair passed."
+
 echo "First install, signature preservation, non-root IPC, demand-start and payload refresh passed."

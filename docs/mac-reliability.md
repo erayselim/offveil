@@ -8,6 +8,8 @@ The free, ad-hoc-signed distribution continues to install a conventional LaunchD
 
 On stop, launchd receives SIGTERM first. If the job still has a PID after a grace period, SIGKILL targets that launchd job identity. Remaining sidecars are signalled only after matching their complete executable paths to the installed offveil directory. DNS restoration runs after sidecars have stopped. Installation validates the new payload before quiescing the old installation and copying signed executables.
 
+A reachable socket does not replace the installation checks. Setup always recreates the stopped job's plist from the current configuration, so an older registration cannot keep launching a bundle/DMG executable. The configured executable is always the canonical installed core. If demand-start finishes but ping remains unavailable, the UI performs one managed stop/start recovery before sending any protection-start RPC. It does not replay a timed-out protection RPC or start again after failed network cleanup.
+
 The updater preserves Tauri's mandatory signature verification. The first upgrade from a broken legacy daemon may require the DMG: the updater in an already-installed old version cannot acquire behavior from the version it has not installed yet.
 
 References: [Apple launchd design](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html), [SMAppService and its registration model](https://developer.apple.com/documentation/servicemanagement/smappservice), [Tauri updater](https://v2.tauri.app/plugin/updater/).
@@ -26,6 +28,8 @@ Darwin uses sing-box's `gvisor` TUN stack. On the macOS 26 runner, both ByeDPI a
 
 Support export is a local operation independent of daemon setup. A native save dialog selects the destination. The bundled core's `support` command tries diagnostics with a short deadline, then records sanitized installation facts if the daemon is absent or stuck. Only a completed ZIP produces a success response. User paths in errors are redacted. Credentials, raw network configuration, subscription data and general daemon logs are not included.
 
+Mac support exports also inspect the system launchd job with a short deadline. Only its state, PID, run count, last exit code and whether its program is canonical are retained. Raw launchctl output, executable paths and environment variables are excluded.
+
 Subprocess stdout/stderr go to private temporary files while the parent waits with a deadline, avoiding full-pipe deadlocks. Captured responses are bounded. The native dialog temporarily suppresses blur-to-tray so the save panel and result remain visible. Only files chosen and exported in this process gain permission for the UI's Open folder action.
 
 Reference: [Tauri native dialogs](https://v2.tauri.app/plugin/dialog/).
@@ -35,3 +39,5 @@ Reference: [Tauri native dialogs](https://v2.tauri.app/plugin/dialog/).
 The disposable macOS runner installs the actual signed bundle, exports support before installation, starts real protection, verifies an `utun` route, sends HTTPS through the TUN and ByeDPI SOCKS, stops protection and compares the original DNS configuration. It also suspends the daemon and verifies managed stop/start without IPC. Neither fake sessions nor a successful `--help` invocation establish these results.
 
 Physical-device approval dialogs, ISP-specific filtering, Discord voice and sleep/wake still require device testing. Preserve that distinction in release notes.
+
+The mac.4 device report was an offline snapshot: daemon diagnostics timed out, the system socket and plist existed, but all three canonical executables were absent. It contains no active-session trace or registered executable path, so it does not establish why the first reconnect hung or prove a pending Apple approval. The installation bypass and stale-plist behavior above are independently reproducible code defects. Added runner checks cover repeated managed protection toggles with routed HTTPS and repair from a live legacy job with missing canonical payload; these still require execution on macOS.

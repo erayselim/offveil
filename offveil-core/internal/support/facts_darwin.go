@@ -18,4 +18,13 @@ func platformFacts(ctx context.Context, facts map[string]any) {
 		facts["macos_version"] = strings.TrimSpace(string(version))
 	}
 	facts["private_relay_hints"] = offdns.RelayDiagNotes()
+	inspection, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	if out, err := exec.CommandContext(inspection, "/bin/launchctl", "print", "system/offveil-core").Output(); err == nil {
+		facts["launchd"] = launchdFacts(string(out))
+	} else {
+		// Failure may mean unloaded, permission denied, or a deadline. Do not
+		// guess the state or include unfiltered command output.
+		facts["launchd"] = map[string]any{"inspection_available": false}
+	}
 }

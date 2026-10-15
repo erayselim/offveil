@@ -2,11 +2,7 @@
 
 package appservice
 
-import (
-	"os"
-
-	"github.com/kardianos/service"
-)
+import "github.com/kardianos/service"
 
 // Config is demand-start LaunchDaemon: KeepAlive=false, RunAtLoad=false.
 // Boot loads the plist but does not start the process. UI load+start;
@@ -17,15 +13,8 @@ func Config() *service.Config {
 		Name:        Name,
 		DisplayName: DisplayName,
 		Description: Description,
+		Executable:  CanonicalBinary(),
 		Option:      DarwinLaunchdOptions(),
 	}
-	if p := CanonicalBinary(); fileExists(p) {
-		cfg.Executable = p
-	}
 	return cfg
-}
-
-func fileExists(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir()
 }
