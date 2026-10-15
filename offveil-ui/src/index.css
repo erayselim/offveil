@@ -601,6 +601,35 @@
   color: var(--muted-foreground);
 }
 
+.whats-new-dialog {
+  max-width: min(18rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 4rem);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.whats-new-notes {
+  display: block;
+  min-height: 0;
+  max-height: min(10rem, 30dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+}
+
+.whats-new-notes::-webkit-scrollbar {
+  display: none;
+}
+
+.whats-new-notes:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 2px;
+}
+
 .update-dialog-error {
   margin: 0;
   overflow: hidden;

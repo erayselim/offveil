@@ -265,7 +265,7 @@ export function SettingsPage({
         <DialogContent
           showCloseButton={false}
           overlayClassName="bg-foreground/25"
-          className="max-w-72 gap-4 overflow-hidden rounded-2xl p-5"
+          className="whats-new-dialog max-w-72 gap-4 overflow-hidden rounded-2xl p-5"
         >
           <DialogHeader className="gap-1">
             <DialogTitle className="app-page-title">{m.whatsNew}</DialogTitle>
@@ -273,7 +273,12 @@ export function SettingsPage({
               {appVersion ? `v${appVersion}` : ""}
             </DialogDescription>
           </DialogHeader>
-          <p className="update-notes">
+          <p
+            className="update-notes whats-new-notes"
+            tabIndex={0}
+            role="region"
+            aria-label={m.whatsNew}
+          >
             {whatsNewNotes ?? m.whatsNewEmpty}
           </p>
           <div className="confirm-actions confirm-actions-single">
