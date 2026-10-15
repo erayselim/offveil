@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.9
 
 require (
-	github.com/Microsoft/go-winio v0.6.2
+	github.com/Microsoft/go-winio v0.6.3
 	github.com/kardianos/service v1.3.0
 	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.57.0
