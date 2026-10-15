@@ -36,6 +36,15 @@ func tunInterfaceName(name string) string {
 	return name
 }
 
+// Darwin uses the portable userspace TCP/IP stack. The system stack accepted
+// connections through SOCKS but failed the real utun TCP path on macOS 26.
+func tunStack() string {
+	if runtime.GOOS == "darwin" {
+		return "gvisor"
+	}
+	return "system"
+}
+
 // SingBoxBuild is the generated selective tunnel config + metadata.
 type SingBoxBuild struct {
 	Provider ProviderID
@@ -146,7 +155,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"strict_route":          false,
 			"route_address":         p.RouteCIDRs,
 			"route_exclude_address": routeExcludeAddresses(p),
-			"stack":                 "system",
+			"stack":                 tunStack(),
 		}
 		if name := tunInterfaceName(p.TUNInterface); name != "" {
 			tunIn["interface_name"] = name
