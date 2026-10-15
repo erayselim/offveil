@@ -5,6 +5,8 @@ This preview repairs the Mac service lifecycle, removes incompatible desynchroni
 ## Changes
 
 - Remove the unsupported `--timeout` argument that prevented the Darwin ByeDPI process from starting, along with disorder/disoob operations that change TTL internally. Mac strategies use split, TLS record splitting and OOB; incompatible cached strategies are rejected.
+- Use the gVisor TUN stack on Mac. Real macOS 26 traffic tests exposed TCP failures with the previous system stack even while both SOCKS paths were healthy.
+- Pin ByeDPI's outbound sockets to the physical interface to keep them out of utun. The small Darwin-only patch and its source revision are included in the repository.
 - Require the privileged system daemon. A core started from Terminal as a normal user no longer makes the app appear installed and ready.
 - Stop, recover and refresh the root service through launchd instead of waiting for protection RPC during an update. Restore offveil's network changes after sidecars stop.
 - Save support ZIPs through a native file dialog, including offline installation facts when the daemon is missing or unresponsive. Export remains available while protection is starting.

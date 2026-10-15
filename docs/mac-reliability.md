@@ -20,6 +20,8 @@ References: [pinned ByeDPI source](https://github.com/hufrea/byedpi/blob/v0.17.3
 
 The Darwin build applies the checked-in `byedpi-darwin-bind-interface.patch` after verifying the upstream commit. It uses `IP_BOUND_IF` / `IPV6_BOUND_IF` on outbound sockets, using the physical egress interface selected before TUN startup. The parent passes that interface through `OFFVEIL_BIND_INTERFACE`. This keeps ciadpi's own traffic out of utun; merely binding its source IPv4 did not pass the real TUN HTTPS test. The patch is Apple-only and leaves the Windows binary and argument contract unchanged.
 
+Darwin uses sing-box's `gvisor` TUN stack. On the macOS 26 runner, both ByeDPI and sing-box SOCKS HTTPS worked with the `system` stack while ordinary routed utun TCP connections timed out. The same real traffic test passes with `gvisor`. Windows retains `system`. Keep both SOCKS tests and the ordinary HTTPS test: a listening proxy port or a successful SOCKS request does not establish that the TUN TCP path works.
+
 ## Support export
 
 Support export is a local operation independent of daemon setup. A native save dialog selects the destination. The bundled core's `support` command tries diagnostics with a short deadline, then records sanitized installation facts if the daemon is absent or stuck. Only a completed ZIP produces a success response. User paths in errors are redacted. Credentials, raw network configuration, subscription data and general daemon logs are not included.

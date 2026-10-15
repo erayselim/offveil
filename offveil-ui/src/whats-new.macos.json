@@ -1,7 +1,7 @@
 {
   "version": "1.0.0-mac.4",
   "notes": {
-    "tr": "Mac motorunun başlamasını engelleyen --timeout argümanı ve TTL değiştiren ByeDPI işlemleri kaldırıldı. Kurulum ve güncelleme, yanıt vermeyen eski servisi de durdurup ağı geri yükler. Destek dosyası için konum seçilebilir; servis olmadan da ZIP alınır. Mac otomatik bağlantısı artık açıkça etkinleştirilir.",
-    "en": "Removed the unsupported --timeout argument that prevented the Mac engine from starting, and removed TTL-changing ByeDPI operations. Installation and updates stop unresponsive old services and restore networking. Support export now asks where to save and produces a ZIP without a working daemon. Mac auto-connect now requires explicit opt-in."
+    "tr": "Mac motorunun başlamasını engelleyen --timeout argümanı ve uyumsuz TTL işlemleri kaldırıldı. Gerçek utun TCP hatası gVisor yığınıyla giderildi; proxy çıkışı fiziksel arayüze sabitlendi. Kurulum/güncelleme takılmış servisi durdurup ağı geri yükler. Destek dosyası için konum seçilebilir; servis olmadan da ZIP alınır. Mac otomatik bağlantısı artık açıkça etkinleştirilir.",
+    "en": "Removed the unsupported --timeout argument and incompatible TTL operations. Fixed the real utun TCP failure with the gVisor stack and pinned proxy egress to the physical interface. Installation/updates recover stuck services and restore networking. Support export asks where to save and works without a daemon. Mac auto-connect now requires explicit opt-in."
   }
 }
