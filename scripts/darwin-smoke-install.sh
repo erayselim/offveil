@@ -11,6 +11,11 @@ CORE="$APP/Contents/MacOS/offveil-core"
 INSTALLED="/Library/Application Support/offveil/offveil-core"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/offveil-upgrade.XXXXXX")"
 cleanup() {
+  local result=$?
+  if [[ "$result" != 0 ]]; then
+    sudo tail -n 120 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
+    "$CORE" support --output "${GITHUB_WORKSPACE}/dist-mac-ci/failure-support.zip" || true
+  fi
   sudo "$CORE" stop || true
   sudo "$CORE" uninstall || true
   rm -rf "$WORK"
@@ -73,7 +78,15 @@ dns_snapshot() {
   done
 }
 dns_snapshot > "$WORK/dns-before.txt"
-/usr/bin/curl -4 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
+TEST_URL=""
+for candidate in https://github.com https://www.microsoft.com https://example.com; do
+  if /usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 15 "$candidate" -o /dev/null; then
+    TEST_URL="$candidate"
+    break
+  fi
+done
+[[ -n "$TEST_URL" ]] || { echo "No working HTTPS control endpoint before protection" >&2; exit 1; }
+echo "Baseline HTTPS passed: $TEST_URL"
 if ! "$INSTALLED" client -method start -timeout 120s > "$WORK/protection-start.json"; then
   sudo tail -n 100 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
   exit 1
@@ -86,11 +99,14 @@ if (!reply.ok || !s?.protection || s.state !== 'active' ||
     !s.tunnel?.up || !s.desync?.up || !s.dns?.stub_up) {
   throw new Error(`Real protection failed: ${JSON.stringify(reply)}`);
 }
+console.log('Real protection reports active with TUN, DNS and ByeDPI up.');
 NODE
 /sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
 grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"
-/usr/bin/curl -4 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
-/usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
+/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "HTTPS through the active TUN passed."
+/usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "HTTPS through ByeDPI SOCKS passed."
 "$INSTALLED" client -method stop -timeout 45s
 dns_snapshot > "$WORK/dns-after.txt"
 cmp "$WORK/dns-before.txt" "$WORK/dns-after.txt"

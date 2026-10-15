@@ -155,8 +155,9 @@ jobs:
           cd ../dist-mac-ci
           shasum -a 256 offveil_ci_aarch64.dmg offveil_ci_aarch64.app.tar.gz > SHA256SUMS.txt
       - name: Upload tested Mac package
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offveil-mac-install-test
           path: dist-mac-ci/
-          if-no-files-found: error
+          if-no-files-found: warn
