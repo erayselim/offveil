@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -180,42 +179,13 @@ func installCanonicalBinary() error {
 	}
 	dst := appservice.CanonicalBinary()
 	if sameFile(src, dst) {
-		return nil
+		return sidecar.VerifySignature(dst)
 	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(out, in)
-	syncErr := out.Sync()
-	closeErr := out.Close()
-	if copyErr != nil {
-		_ = os.Remove(tmp)
-		return copyErr
-	}
-	if syncErr != nil {
-		_ = os.Remove(tmp)
-		return syncErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmp)
-		return closeErr
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	if err := sidecar.CopySigned(src, dst); err != nil {
+		return fmt.Errorf("install offveil-core: %w", err)
 	}
 	_ = os.Chmod(dst, 0o755)
 	_ = os.Chown(dst, 0, 0)
-	if err := sidecar.Sign(dst); err != nil {
-		return fmt.Errorf("codesign offveil-core: %w", err)
-	}
 	slog.Info("setup: installed binary", "path", dst)
 	return nil
 }
@@ -233,8 +203,7 @@ func installSidecars() error {
 	for _, base := range []string{sidecar.ByeDPI, sidecar.SingBox} {
 		in, err := sidecar.LocateInDir(srcDir, base)
 		if err != nil {
-			slog.Warn("setup: sidecar not beside installer", "name", base)
-			continue
+			return fmt.Errorf("setup: required sidecar %s missing beside %s: %w", base, src, err)
 		}
 		dst := filepath.Join(destDir, sidecar.Names(base)[0])
 		if err := sidecar.CopySigned(in, dst); err != nil {

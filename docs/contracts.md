@@ -368,7 +368,7 @@ Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 - Local SOCKS listener
 - Default safe strategy set. Windows: `byedpi:windows-safe` (fake+ttl via `--auto ssl_err`). Darwin: `byedpi:darwin-safe` (`--split 1 --disorder 3+s --mod-http=h,d --auto=torst --tlsrec 1+s`; no `--fake` / `--ttl`)
 - Auto-strategy: `ScanCandidates` (Windows) or `ScanCandidatesDarwin` (adds `--oob`; never fake/ttl) + ASN cache; no UI parameters
-- Sidecar: `ciadpi.exe` (Windows, official zip) / `ciadpi` (Darwin, `make` from the same tag). Linux aarch64 tarball is not used. Ad-hoc `codesign --force -s -` after every copy on Darwin.
+- Sidecar: `ciadpi.exe` (Windows, official zip) / `ciadpi` (Darwin, `make` from the same tag). Linux aarch64 tarball is not used. Darwin builds are ad-hoc signed in CI. Installation copies to a new inode and verifies the embedded signature before replacement; it does not re-sign on the user's Mac.
 
 ### 6.3 Not used
 

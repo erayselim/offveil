@@ -1,24 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { Update } from "@tauri-apps/plugin-updater";
 
-/** No newer artifact on the GitHub Releases endpoint (including 404).
- * Mac also hits this when GitHub Latest `latest.json` has no `darwin-aarch64`
- * yet — that is not a failed check. */
+/** An unpublished feed is allowed; network failures must be shown as failures. */
 export function isNoNewerRelease(err: unknown): boolean {
   const s = String(err).toLowerCase();
-  return (
-    s.includes("404") ||
-    s.includes("not found") ||
-    s.includes("could not fetch") ||
-    s.includes("error sending request") ||
-    s.includes("failed to fetch") ||
-    s.includes("no release") ||
-    s.includes("platforms object")
-  );
+  if (s.includes("mac update discovery:") || s.includes("mac release json:")) {
+    return false;
+  }
+  return s.includes("404") || s.includes("no release");
 }
 
 export async function checkAppUpdate(): Promise<Update | null> {
-  return check({ timeout: 20_000 });
+  const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>(
+    "check_app_update",
+  );
+  return metadata ? new Update(metadata) : null;
 }
 
 export async function downloadAppUpdate(
@@ -49,8 +45,14 @@ export async function downloadAppUpdate(
 }
 
 export async function installDownloadedUpdate(update: Update): Promise<void> {
-  await invoke("prepare_update");
-  await update.install();
+  try {
+    await invoke("prepare_update");
+    await update.install();
+    await invoke("finish_update");
+  } catch (error) {
+    await invoke("cancel_update").catch(() => {});
+    throw error;
+  }
 }
 
 export function discardUpdate(update: Update | null) {

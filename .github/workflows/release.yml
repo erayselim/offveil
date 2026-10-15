@@ -19,7 +19,7 @@ jobs:
     if: ${{ !contains(github.ref_name, '-mac') }}
     runs-on: windows-latest
     env:
-      GO_VERSION: "1.25.13"
+      GO_VERSION: "1.26.9"
       NODE_VERSION: "22"
     steps:
       - name: Checkout

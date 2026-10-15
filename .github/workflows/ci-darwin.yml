@@ -8,6 +8,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.13"
+          go-version: "1.26.9"
           cache-dependency-path: offveil-core/go.sum
       - name: Test
         working-directory: offveil-core
@@ -103,6 +104,7 @@ jobs:
           if-no-files-found: error
 
   ui:
+    needs: core
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -117,21 +119,38 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
+          targets: aarch64-apple-darwin
+      - name: Download real Darwin payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: offveil-core-darwin-arm64
+          path: offveil-core/dist
       - name: Typecheck
         working-directory: offveil-ui
         run: |
           npm ci
           npm run typecheck
-      - name: Stub Darwin sidecars for cargo test
-        working-directory: offveil-ui/src-tauri
-        run: |
-          set -euo pipefail
-          mkdir -p bundle-bin
-          for f in offveil-core sing-box ciadpi; do
-            if [[ ! -e "bundle-bin/$f" ]]; then
-              printf 'stub\n' > "bundle-bin/$f"
-            fi
-          done
+          node --test ../scripts/mac-release.test.cjs
+      - name: Stage real Darwin sidecars
+        run: bash ./scripts/stage-bundle-darwin.sh
       - name: Cargo test (unix socket, launchd, LaunchAgent)
         working-directory: offveil-ui/src-tauri
         run: cargo test
+      - name: Build and test real app, updater archive and DMG
+        working-directory: offveil-ui
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/offveil.app"
+          mkdir -p ../dist-mac-ci
+          bash ../scripts/darwin-seal-bundle.sh --app "$APP" --tar ../dist-mac-ci/offveil_ci_aarch64.app.tar.gz --dmg ../dist-mac-ci/offveil_ci_aarch64.dmg
+          bash ../scripts/darwin-smoke-bundle.sh "$APP" ../dist-mac-ci/offveil_ci_aarch64.app.tar.gz ../dist-mac-ci/offveil_ci_aarch64.dmg
+          bash ../scripts/darwin-smoke-install.sh "$APP"
+          cd ../dist-mac-ci
+          shasum -a 256 offveil_ci_aarch64.dmg offveil_ci_aarch64.app.tar.gz > SHA256SUMS.txt
+      - name: Upload tested Mac package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: offveil-mac-install-test
+          path: dist-mac-ci/
+          if-no-files-found: error

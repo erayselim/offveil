@@ -2386,6 +2386,9 @@ dependencies = [
 name = "offveil-ui"
 version = "1.0.0-b5"
 dependencies = [
+ "reqwest",
+ "rustls",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

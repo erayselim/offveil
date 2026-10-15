@@ -1,12 +1,12 @@
-# Apple Silicon prerelease. Isolated from Windows release.yml.
-# Tag: v1.0.0-mac.1 (v*-mac*). Never make_latest, never upload latest.json.
-# GitHub Latest stays the Windows v* release (ROADMAP.mac.md §7).
+# Mac-only tags create prereleases. Shared v* tags attach Mac assets to the
+# Windows release. latest-mac.json is discovered through the GitHub releases API;
+# this workflow never changes Windows latest.json or the GitHub Latest pointer.
 name: release-darwin
 
 on:
   push:
     tags:
-      - "v*-mac*"
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -18,11 +18,23 @@ jobs:
   macos:
     runs-on: macos-latest
     env:
-      GO_VERSION: "1.25.13"
+      GO_VERSION: "1.26.9"
       NODE_VERSION: "22"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            TAG="v$(node -p "require('./offveil-ui/src-tauri/tauri.conf.json').version")"
+          fi
+          node scripts/mac-release.cjs config "$TAG" "$RUNNER_TEMP/mac-release.json"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -47,10 +59,11 @@ jobs:
         working-directory: offveil-core
         env:
           CGO_ENABLED: "0"
+          MAC_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           go test ./...
-          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/offveil-core ./cmd/offveil-core
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X github.com/erayselim/offveil/offveil-core/internal/version.Version=${MAC_VERSION}" -o dist/offveil-core ./cmd/offveil-core
 
       - name: Fetch sidecars (SHA fail-closed)
         working-directory: offveil-core
@@ -90,7 +103,7 @@ jobs:
             echo "TAURI_SIGNING_PRIVATE_KEY secret required" >&2
             exit 1
           fi
-          npm run tauri -- build --target aarch64-apple-darwin --bundles app
+          npm run tauri -- build --target aarch64-apple-darwin --bundles app --config "$RUNNER_TEMP/mac-release.json"
 
       - name: Seal .app, DMG, updater tar.gz
         id: artifacts
@@ -99,6 +112,8 @@ jobs:
           CI: "true"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MAC_VERSION: ${{ steps.version.outputs.version }}
+          MAC_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -114,13 +129,17 @@ jobs:
             echo "offveil.app not found under src-tauri/target" >&2
             exit 1
           fi
-          VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          VER="$MAC_VERSION"
           OUT="${GITHUB_WORKSPACE}/dist-release"
           mkdir -p "$OUT"
           DMG="${OUT}/offveil_${VER}_aarch64.dmg"
           TAR="${OUT}/offveil_${VER}_aarch64.app.tar.gz"
           bash "${GITHUB_WORKSPACE}/scripts/darwin-seal-bundle.sh" --app "$APP" --tar "$TAR" --dmg "$DMG"
+          bash "${GITHUB_WORKSPACE}/scripts/darwin-smoke-bundle.sh" "$APP" "$TAR" "$DMG"
+          bash "${GITHUB_WORKSPACE}/scripts/darwin-smoke-install.sh" "$APP"
           npm run tauri -- signer sign "$TAR"
+          node "${GITHUB_WORKSPACE}/scripts/mac-release.cjs" manifest "$MAC_TAG" "$GITHUB_REPOSITORY" "$TAR" "$OUT/latest-mac.json"
+          cp "${GITHUB_WORKSPACE}/docs/install-mac.txt" "$OUT/READ-ME-FIRST.txt"
           cp "${GITHUB_WORKSPACE}/ruleset/active.json" "$OUT/"
           cp "${GITHUB_WORKSPACE}/ruleset/active.json.sig" "$OUT/"
           (
@@ -150,11 +169,11 @@ jobs:
           path: dist-release/
           if-no-files-found: error
 
-      - name: GitHub Release (prerelease, not Latest)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Stage Mac prerelease
+        if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-mac')
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
-          draft: false
+          draft: true
           prerelease: true
           make_latest: false
           generate_release_notes: false
@@ -168,3 +187,24 @@ jobs:
             dist-release/SHA256SUMS.txt
             dist-release/active.json
             dist-release/active.json.sig
+            dist-release/READ-ME-FIRST.txt
+            dist-release/latest-mac.json
+
+      - name: Attach Mac assets to shared release
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-mac')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Windows owns creation and Latest status for shared tags. Wait for it;
+          # uploading files must not change its release/prerelease settings.
+          found=0
+          for i in {1..120}; do
+            if gh release view "$TAG" >/dev/null 2>&1; then found=1; break; fi
+            sleep 10
+          done
+          [[ "$found" == 1 ]] || { echo "Shared release $TAG was not published" >&2; exit 1; }
+          # Use a distinct checksum filename so Windows SHA256SUMS.txt survives.
+          mv dist-release/SHA256SUMS.txt dist-release/SHA256SUMS-mac.txt
+          gh release upload "$TAG" dist-release/*_aarch64.dmg dist-release/*_aarch64.app.tar.gz dist-release/*_aarch64.app.tar.gz.sig dist-release/latest-mac.json dist-release/SHA256SUMS-mac.txt dist-release/READ-ME-FIRST.txt --clobber

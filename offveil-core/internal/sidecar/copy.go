@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-// runCodesign is codesign --force -s - (injected in tests).
+// runCodesign verifies the embedded signature (injected in tests).
 var runCodesign = func(path string) error {
-	cmd := exec.Command("codesign", "--force", "-s", "-", path)
+	cmd := exec.Command("/usr/bin/codesign", "--verify", "--strict", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("codesign %s: %s (%w)", path, strings.TrimSpace(string(out)), err)
@@ -20,16 +20,19 @@ var runCodesign = func(path string) error {
 	return nil
 }
 
-// Sign applies an ad-hoc signature on Darwin. No-op elsewhere.
-func Sign(path string) error {
+// VerifySignature checks a Darwin binary without changing its identity or hash.
+// A byte-for-byte copy to a new inode preserves the embedded Mach-O signature.
+// Signing belongs in the build pipeline, not on the user's machine.
+func VerifySignature(path string) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
 	return runCodesign(path)
 }
 
-// CopySigned replace-copies src onto dst (new inode) and re-signs on Darwin.
-// In-place cp keeps the inode; macOS then may kill the binary (Killed: 9).
+// CopySigned replace-copies src onto dst (new inode), preserving its signature.
+// Verify the temporary copy before publishing it; never bless damaged code by
+// re-signing it or overwrite a working installation with an invalid binary.
 func CopySigned(src, dst string) error {
 	srcAbs, err := filepath.Abs(src)
 	if err != nil {
@@ -40,12 +43,12 @@ func CopySigned(src, dst string) error {
 		return err
 	}
 	if srcAbs == dstAbs {
-		return Sign(dstAbs)
+		return VerifySignature(dstAbs)
 	}
 	if err := copyReplace(srcAbs, dstAbs); err != nil {
 		return err
 	}
-	return Sign(dstAbs)
+	return nil
 }
 
 func copyReplace(src, dst string) error {
@@ -79,6 +82,10 @@ func copyReplace(src, dst string) error {
 		return closeErr
 	}
 	if err := os.Chmod(tmpName, 0o755); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := VerifySignature(tmpName); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}

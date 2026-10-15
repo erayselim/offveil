@@ -1,0 +1,39 @@
+offveil — Apple Silicon preview
+
+INSTALLATION
+
+1. Download only from https://github.com/erayselim/offveil/releases.
+   Compare the DMG's SHA-256 with the checksum file on the same release:
+     shasum -a 256 ~/Downloads/offveil_*_aarch64.dmg
+   Mac releases use SHA256SUMS.txt; shared releases use SHA256SUMS-mac.txt.
+2. Drag offveil into Applications. Launch the copy in Applications.
+3. This preview is ad-hoc signed, without Apple notarization. If the developer
+   cannot be verified, open System Settings → Privacy & Security → Open Anyway,
+   then confirm Open.
+4. Approve the administrator prompt for the core service. Turn off iCloud
+   Private Relay / Limit IP Address Tracking while testing.
+
+UPDATES
+
+Use Check for Updates for newer Mac releases and prereleases. Updating the core
+after an app update may require administrator approval again.
+
+SUPPORT
+
+A damaged-app or malware warning is different from an unidentified-developer
+warning. Report the exact alert and macOS version if installation fails.
+For protection failures, use Settings → Save a support file.
+
+Installation and troubleshooting:
+https://github.com/erayselim/offveil/blob/main/docs/beta-mac.md
+Apple's instructions: https://support.apple.com/en-us/102445
+
+TÜRKÇE KURULUM
+
+DMG'yi Applications klasörüne sürükleyin ve uygulamayı oradan açın.
+Geliştirici doğrulanamıyorsa Sistem Ayarları → Gizlilik ve Güvenlik →
+Yine de Aç yolunu izleyip Aç'ı onaylayın. Bu ön sürüm Apple tarafından
+notarize edilmemiştir. İlk core kurulumu yönetici onayı ister; güncellemeler
+sonrasında core yenilenirken yeniden onay gerekebilir. Test sırasında iCloud
+Özel Aktarma / IP Adresi Takibini Sınırla özelliklerini kapatın.
+Sorun bildirirken tam uyarıyı, macOS sürümünü ve destek dosyasını ekleyin.

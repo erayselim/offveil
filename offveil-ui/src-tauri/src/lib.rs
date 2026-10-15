@@ -1,6 +1,9 @@
+mod app_updates;
 mod autoconnect;
 mod autostart;
 mod core_ipc;
+#[cfg(any(target_os = "macos", test))]
+mod payload;
 mod service;
 
 use core_ipc::{DiagnosticsBundle, Status, TestReport};
@@ -278,12 +281,39 @@ async fn core_path() -> Option<String> {
 }
 
 #[tauri::command]
-fn prepare_update() -> Result<(), String> {
-    if core_ipc::is_reachable() {
-        let _ = core_ipc::stop();
-        std::thread::sleep(std::time::Duration::from_millis(500));
+async fn prepare_update() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    QUITTING.store(true, Ordering::SeqCst);
+    run_blocking(|| {
+        #[cfg(target_os = "macos")]
+        return service::stop_for_update();
+        #[cfg(not(target_os = "macos"))]
+        {
+            if core_ipc::is_reachable() {
+                let _ = core_ipc::stop();
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Ok(())
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+fn cancel_update() {
+    #[cfg(target_os = "macos")]
+    QUITTING.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn finish_update(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        QUITTING.store(true, Ordering::SeqCst);
+        app.restart();
     }
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 fn wants_tray_start() -> bool {
@@ -766,6 +796,9 @@ pub fn run() {
             export_diagnostics,
             open_diag_folder,
             prepare_update,
+            finish_update,
+            cancel_update,
+            app_updates::check_app_update,
             core_path,
             hide_to_tray,
             set_native_theme,

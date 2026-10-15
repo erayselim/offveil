@@ -5,8 +5,8 @@
 //! Darwin: `%admin` may `sudo -n … start` (`/etc/sudoers.d/offveil`).
 //! Toggle, restart, and login auto-connect never prompt again.
 //!
-//! Elevated `offveil-core setup` is only for a missing service or a grant
-//! that rejects start (broken / first install). Windows SCM stays
+//! Elevated `offveil-core setup` handles first install, a broken start grant,
+//! or a changed bundled Mac payload after an app update. Windows SCM stays
 //! `cfg(windows)`; Darwin uses launchctl via the canonical binary.
 
 use std::env;
@@ -71,7 +71,10 @@ pub fn resolve_core_path() -> Option<PathBuf> {
             if let Some(repo) = dir.ancestors().find(|p| {
                 p.join("offveil-core").join("offveil-core.exe").is_file()
                     || p.join("offveil-core").join("offveil-core").is_file()
-                    || p.join("offveil-core").join("dist").join("offveil-core").is_file()
+                    || p.join("offveil-core")
+                        .join("dist")
+                        .join("offveil-core")
+                        .is_file()
             }) {
                 push_core_names(&mut candidates, &repo.join("offveil-core"));
                 push_core_names(&mut candidates, &repo.join("offveil-core").join("dist"));
@@ -105,7 +108,9 @@ pub fn resolve_core_path() -> Option<PathBuf> {
     if let Ok(pf) = env::var("ProgramFiles") {
         push_core_names(&mut candidates, &PathBuf::from(pf).join("offveil"));
     }
-    candidates.push(PathBuf::from("/Library/Application Support/offveil/offveil-core"));
+    candidates.push(PathBuf::from(
+        "/Library/Application Support/offveil/offveil-core",
+    ));
 
     candidates.into_iter().find(|c| c.is_file())
 }
@@ -205,6 +210,11 @@ fn wait_for_pipe(timeout: Duration) -> bool {
 /// Start the already-installed demand-start service without UAC.
 /// Requires the SDDL grant (Authenticated Users → SERVICE_START).
 pub fn start_installed() -> Result<(), String> {
+    if core_update_required() {
+        return Err(format!(
+            "{NEEDS_INSTALL} Yeni core sürümü için yönetici onayı gerekiyor"
+        ));
+    }
     if core_ipc::is_reachable() {
         return Ok(());
     }
@@ -276,6 +286,15 @@ pub fn probe() -> BootstrapInfo {
     let installed = service_installed();
     let core_path = resolve_core_path().map(|p| p.display().to_string());
 
+    if core_update_required() {
+        return BootstrapInfo {
+            state: BootstrapState::NeedsInstall,
+            message: "Güncelleme: yeni core sürümü için yönetici onayı gerekiyor".into(),
+            core_path,
+            service_installed: installed,
+            pipe_ok,
+        };
+    }
     if pipe_ok {
         return BootstrapInfo {
             state: BootstrapState::Ready,
@@ -310,7 +329,8 @@ pub fn probe() -> BootstrapInfo {
 /// Make the core reachable. `StartService` first; elevate `setup` only if the
 /// service is missing or its DACL rejects start.
 pub fn ensure_service() -> Result<BootstrapInfo, String> {
-    if core_ipc::is_reachable() {
+    let updating = core_update_required();
+    if !updating && core_ipc::is_reachable() {
         return Ok(probe());
     }
 
@@ -325,7 +345,18 @@ pub fn ensure_service() -> Result<BootstrapInfo, String> {
             .to_string()
     })?;
 
+    #[cfg(target_os = "macos")]
+    if updating {
+        stop_for_update()?;
+    }
     elevate_setup(&core)?;
+    #[cfg(target_os = "macos")]
+    {
+        *PAYLOAD_STALE.lock().unwrap() = None;
+        if core_update_required() {
+            return Err("Yeni core dosyaları kurulamadı; kurulumu yeniden deneyin".into());
+        }
+    }
 
     if wait_for_pipe(SETUP_PIPE_WAIT) {
         return Ok(BootstrapInfo {
@@ -338,6 +369,65 @@ pub fn ensure_service() -> Result<BootstrapInfo, String> {
     }
 
     Err("Servis kuruldu ama IPC hazır olmadı (zaman aşımı). Core loglarına bakın.".into())
+}
+
+#[cfg(target_os = "macos")]
+static PAYLOAD_STALE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+fn core_update_required() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if !service_installed() {
+            return false;
+        }
+        let mut cached = PAYLOAD_STALE.lock().unwrap();
+        *cached.get_or_insert_with(|| {
+            // Only compare packaged payloads. Development / canonical-only runs
+            // must not trigger elevation or compare the installed file to itself.
+            let Ok(exe) = env::current_exe() else {
+                return false;
+            };
+            let Some(dir) = exe.parent() else {
+                return false;
+            };
+            if dir.file_name().is_none_or(|name| name != "MacOS") {
+                return false;
+            }
+            let installed = Path::new(darwin::CANONICAL_CORE).parent().unwrap();
+            let source = if dir.join("offveil-core").is_file() {
+                dir.to_path_buf()
+            } else {
+                dir.parent().unwrap().join("Resources")
+            };
+            !crate::payload::matches(&source, installed)
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Finish network cleanup and wait for the old daemon before replacing code.
+#[cfg(target_os = "macos")]
+pub fn stop_for_update() -> Result<(), String> {
+    if !core_ipc::is_reachable() {
+        return Ok(());
+    }
+    match core_ipc::stop() {
+        Ok(_) => {}
+        Err(e) if e.contains("not_running") => {}
+        Err(e) => return Err(format!("Güncelleme öncesi koruma durdurulamadı: {e}")),
+    }
+    core_ipc::shutdown()?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if !core_ipc::is_reachable() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    Err("Güncelleme öncesi eski core kapanmadı; güncelleme durduruldu".into())
 }
 
 fn elevate_setup(core: &Path) -> Result<(), String> {
@@ -508,9 +598,7 @@ mod darwin {
                         return Ok(());
                     }
                     let low = stderr.to_ascii_lowercase();
-                    if low.contains("canceled")
-                        || low.contains("cancelled")
-                        || low.contains("-128")
+                    if low.contains("canceled") || low.contains("cancelled") || low.contains("-128")
                     {
                         return Err(
                             "Kurulum iptal edildi veya başarısız (yönetici onayı reddedilmiş olabilir)"
@@ -518,8 +606,9 @@ mod darwin {
                         );
                     }
                     return Err(format!(
-                        "offveil-core setup çıkış kodu {}",
-                        status.code().unwrap_or(1)
+                        "offveil-core setup çıkış kodu {}: {}",
+                        status.code().unwrap_or(1),
+                        stderr.trim()
                     ));
                 }
                 Ok(None) if Instant::now() >= deadline => {
@@ -569,7 +658,9 @@ mod tests {
     #[test]
     fn sudo_password_prompt_means_needs_install() {
         assert!(darwin::sudo_needs_install("sudo: a password is required\n"));
-        assert!(darwin::sudo_needs_install("sudo: a terminal is required to read the password"));
+        assert!(darwin::sudo_needs_install(
+            "sudo: a terminal is required to read the password"
+        ));
         assert!(!darwin::sudo_needs_install("launchctl start: failed: 5"));
     }
 }
