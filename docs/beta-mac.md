@@ -52,7 +52,21 @@ This does not provide Apple verification. It changes only offveil's quarantine a
 
 `spctl --assess` may reject an ad-hoc build even when `codesign --verify` passes. Signature integrity and Gatekeeper trust are separate checks.
 
-For a protection failure, use **Settings → Save a support file**. Include the release tag, macOS version, exact error, and whether failure happened during installation, startup, protection, or update.
+For a protection failure, use **Settings → Save a support file**. Choose the ZIP location in the native save dialog (Downloads is suggested). The app shows the saved path and **Open folder** after the complete file is written. Export remains available during startup and does not require an installed or responsive daemon. Include the release tag, macOS version, exact error, and whether failure happened during installation, startup, protection, or update.
+
+If the daemon cannot provide a live snapshot, the ZIP records an offline collection: macOS/architecture, presence and hashes of the bundled and installed binaries, service registration/start-grant presence and the last UI operation error. Offline collection does not start protection, install anything or change network settings. An unavailable daemon's protection state is reported as unknown.
+
+The independent command-line collector is:
+
+```bash
+/Applications/offveil.app/Contents/MacOS/offveil-core support
+```
+
+It prints progress immediately and saves a ZIP to Downloads (or the home directory if Downloads is absent). `support --output /path/to/support.zip` selects another location. Executing the core with no arguments as a normal Mac user now returns guidance instead of starting an unprivileged daemon.
+
+The UI and CLI connect to the system daemon at `/var/run/offveil/core.sock`. They never fall back to a process under `/var/folders`. Developers running an interactive core must explicitly set `OFFVEIL_IPC_SOCK` in both client and server.
+
+Mac auto-connect is off until explicitly enabled in Settings. The Windows preference is unchanged. Turning protection off or preparing an update stops the Mac daemon through launchd, with bounded graceful termination and recovery for a stuck job. Core refresh performs this cleanup with administrator approval before replacing the installed payload.
 
 If `1.0.0-mac.2` reports `pipe read: Resource temporarily unavailable (os error 35)` after pressing **On**, the UI's local socket read timed out. That build uses an eight-second socket timeout even for the longer startup operation. Startup also holds the engine lock, so status and diagnostics can time out behind it. This message alone does not establish whether Private Relay is enabled or why the connection failed.
 
@@ -74,9 +88,12 @@ Automated macOS checks cover:
 - Payload startup from the app, updater archive and mounted DMG.
 - First service installation, non-root IPC, shutdown and demand-start.
 - A diagnostics ZIP created by the root daemon and read by the desktop user.
+- Support ZIP export before installation, without a working daemon.
+- Real TUN startup, routed HTTPS, direct ByeDPI SOCKS HTTPS and restoration of the original DNS settings.
+- Stopping and restarting a deliberately suspended daemon without engine IPC.
 - Replacing an existing installation while preserving binary signatures.
 
-Browser-download approval, physical-device connectivity, DNS restoration, Discord voice, sleep/wake and an update between two published versions require manual testing. Automated packaging checks do not establish these results.
+Browser-download approval, physical-device connectivity on a filtered network, Discord voice, sleep/wake and an update between two published versions require manual testing. Hosted-runner HTTPS success does not establish censorship bypass on a user's ISP.
 
 ## Release maintenance
 

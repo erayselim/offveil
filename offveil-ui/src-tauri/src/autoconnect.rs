@@ -1,4 +1,4 @@
-//! Auto-connect: start protection when the UI process launches (default on).
+//! Auto-connect: Windows defaults on; macOS requires an explicit opt-in.
 //!
 //! The core service is demand-start. After a reboot it is stopped, so we
 //! start it (Windows `StartService` / Darwin passwordless `sudo -n … start`)
@@ -15,9 +15,17 @@ use crate::service::{self, BootstrapState};
 use crate::QUITTING;
 
 static CONNECTING: AtomicBool = AtomicBool::new(false);
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+
+pub fn cancel_pending() {
+    CANCELLED.store(true, Ordering::SeqCst);
+}
 
 fn disabled_marker(app: &AppHandle) -> PathBuf {
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| fallback_config_dir());
+    let dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| fallback_config_dir());
     dir.join("autoconnect-disabled")
 }
 
@@ -38,11 +46,29 @@ fn fallback_config_dir() -> PathBuf {
 }
 
 pub fn pref_enabled(app: &AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    return disabled_marker(app)
+        .with_file_name("autoconnect-enabled")
+        .is_file()
+        && !disabled_marker(app).is_file();
+    #[cfg(not(target_os = "macos"))]
     !disabled_marker(app).is_file()
 }
 
 fn write_pref(app: &AppHandle, enabled: bool) -> Result<(), String> {
     let path = disabled_marker(app);
+    #[cfg(target_os = "macos")]
+    {
+        let opted_in = path.with_file_name("autoconnect-enabled");
+        if enabled {
+            if let Some(parent) = opted_in.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(opted_in, b"1").map_err(|e| e.to_string())?;
+        } else if opted_in.exists() {
+            std::fs::remove_file(opted_in).map_err(|e| e.to_string())?;
+        }
+    }
     if enabled {
         if path.is_file() {
             std::fs::remove_file(&path).map_err(|e| format!("autoconnect pref: {e}"))?;
@@ -58,6 +84,7 @@ fn write_pref(app: &AppHandle, enabled: bool) -> Result<(), String> {
 pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
     write_pref(app, enabled)?;
     if enabled {
+        CANCELLED.store(false, Ordering::SeqCst);
         spawn(app);
     }
     Ok(enabled)
@@ -65,7 +92,7 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
 
 /// Best-effort: bring the service up and turn protection on. Never prompts admin.
 pub fn spawn(app: &AppHandle) {
-    if !pref_enabled(app) {
+    if !pref_enabled(app) || CANCELLED.load(Ordering::SeqCst) {
         return;
     }
     // Missing service / start grant cannot recover without admin — don't retry.
@@ -90,7 +117,7 @@ fn is_permanent_err(err: &str) -> bool {
 
 fn try_connect_loop(disabled: &PathBuf) -> bool {
     for attempt in 0..16 {
-        if QUITTING.load(Ordering::SeqCst) {
+        if QUITTING.load(Ordering::SeqCst) || CANCELLED.load(Ordering::SeqCst) {
             return false;
         }
         if disabled.is_file() {
@@ -112,17 +139,17 @@ fn try_connect_loop(disabled: &PathBuf) -> bool {
 }
 
 fn try_connect_once() -> Result<(), String> {
-    if QUITTING.load(Ordering::SeqCst) {
+    if QUITTING.load(Ordering::SeqCst) || CANCELLED.load(Ordering::SeqCst) {
         return Err("quitting".into());
     }
     if let Ok(s) = core_ipc::status() {
-        if s.protection {
+        if s.protection || s.state == "starting" {
             return Ok(());
         }
     }
     service::start_installed()?;
     if let Ok(s) = core_ipc::status() {
-        if s.protection {
+        if s.protection || s.state == "starting" {
             return Ok(());
         }
     }

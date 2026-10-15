@@ -40,20 +40,13 @@ func SocketPath() string {
 }
 
 // DialPath is where the UI and `offveil-core client` connect.
-// A non-root client prefers the LaunchDaemon socket when it exists.
+// Production clients always use the privileged daemon. Interactive development
+// must opt into a socket with OFFVEIL_IPC_SOCK; never attach to a stray user core.
 func DialPath() string {
 	if p := strings.TrimSpace(os.Getenv("OFFVEIL_IPC_SOCK")); p != "" {
 		return p
 	}
-	if isSocket(DefaultRootSocket) {
-		return DefaultRootSocket
-	}
-	return SocketPath()
-}
-
-func isSocket(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && st.Mode()&os.ModeSocket != 0
+	return DefaultRootSocket
 }
 
 // OwnerPath is the username that may own the root socket (no re-login wait).

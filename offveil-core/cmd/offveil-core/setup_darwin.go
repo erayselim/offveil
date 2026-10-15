@@ -19,6 +19,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
+	"github.com/erayselim/offveil/offveil-core/internal/repair"
 	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
 )
 
@@ -48,6 +49,23 @@ func elevateIfNeeded(action string) error {
 func prepareServiceInstall() error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("install requires root")
+	}
+	// Verify the complete new payload before disturbing the installed service.
+	source, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"offveil-core", sidecar.ByeDPI, sidecar.SingBox} {
+		binary, err := sidecar.LocateInDir(filepath.Dir(source), name)
+		if err != nil {
+			return err
+		}
+		if err := sidecar.VerifySignature(binary); err != nil {
+			return err
+		}
+	}
+	if err := stopService(nil); err != nil {
+		return fmt.Errorf("prepare previous service: %w", err)
 	}
 	if err := os.MkdirAll(appdir.Root(), 0o755); err != nil {
 		return err
@@ -99,7 +117,20 @@ func stopService(svc service.Service) error {
 	if os.Geteuid() != 0 {
 		return sudoCanonical("stop")
 	}
-	return svc.Stop()
+	if err := appservice.StopLaunchDaemon(); err != nil {
+		return err
+	}
+	if err := ipc.RemoveIdleSocket(ipc.DefaultRootSocket); err != nil {
+		return err
+	}
+	// Restore only offveil's recorded DNS/routes after sidecars have exited.
+	result := repair.LeftoverNetwork()
+	for _, step := range result.Steps {
+		if !step.OK {
+			return fmt.Errorf("network restore %s: %s", step.Name, step.Detail)
+		}
+	}
+	return nil
 }
 
 func sudoCanonical(action string) error {
@@ -118,26 +149,7 @@ func sudoCanonical(action string) error {
 }
 
 func launchdLoadAndStart() error {
-	plist := appservice.LaunchDaemonPlist
-	out, err := exec.Command("launchctl", "load", plist).CombinedOutput()
-	if err != nil && !alreadyLoaded(string(out), err) {
-		return fmt.Errorf("launchctl load: %s (%w)", bytesTrim(out), err)
-	}
-	out, err = exec.Command("launchctl", "start", appservice.Name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("launchctl start: %s (%w)", bytesTrim(out), err)
-	}
-	return nil
-}
-
-func alreadyLoaded(out string, err error) bool {
-	s := strings.ToLower(out)
-	if err != nil {
-		s += " " + strings.ToLower(err.Error())
-	}
-	return strings.Contains(s, "already loaded") ||
-		strings.Contains(s, "already bootstrapped") ||
-		strings.Contains(s, "service is already loaded")
+	return appservice.StartLaunchDaemon()
 }
 
 func bytesTrim(b []byte) string {

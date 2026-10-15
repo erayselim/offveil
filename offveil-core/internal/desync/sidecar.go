@@ -53,9 +53,10 @@ func Start(cfg Config) (Session, error) {
 	cfg.BinaryPath = bin
 
 	args := BuildArgsBind(cfg.ListenIP, cfg.ListenPort, cfg.Strategy, cfg.ConnIP)
+	stderr := &proc.TailBuffer{}
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = stderr
 	proc.PrepareCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("desync: start ciadpi: %w", err)
@@ -63,7 +64,7 @@ func Start(cfg Config) (Session, error) {
 	if cfg.AssignJob != nil && cmd.Process != nil {
 		if err := cfg.AssignJob(cmd.Process); err != nil {
 			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
+			_ = cmd.Wait()
 			return nil, fmt.Errorf("desync: assign job: %w", err)
 		}
 	}
@@ -79,7 +80,7 @@ func Start(cfg Config) (Session, error) {
 
 	if err := waitSOCKS(s.socks, 5*time.Second); err != nil {
 		_ = s.Close()
-		return nil, fmt.Errorf("desync: socks not ready: %w", err)
+		return nil, fmt.Errorf("desync: socks not ready: %w; stderr: %s", err, stderr.String())
 	}
 	s.up.Store(true)
 	slog.Info("desync: byeDPI up",
@@ -136,7 +137,7 @@ func (s *session) Close() error {
 		return nil
 	}
 	_ = s.cmd.Process.Kill()
-	_, _ = s.cmd.Process.Wait()
+	_ = s.cmd.Wait()
 	s.cmd = nil
 	slog.Info("desync: byeDPI stopped", "socks", s.socks)
 	return nil

@@ -42,6 +42,7 @@ export function SettingsPage({
   onDiagnostics,
   testNote,
   diagNote,
+  diagBusy,
   error,
   diagPath,
   onOpenDiagFolder,
@@ -65,6 +66,7 @@ export function SettingsPage({
   onDiagnostics: () => void;
   testNote: string | null;
   diagNote: string | null;
+  diagBusy: boolean;
   error: string | null;
   diagPath: string | null;
   onOpenDiagFolder: () => void;
@@ -190,12 +192,12 @@ export function SettingsPage({
             variant="secondary"
             size="lg"
             className="w-full"
-            disabled={busy}
+            disabled={diagBusy}
             onClick={() => onDiagnostics()}
           >
-            {m.diagnostics}
+            {diagBusy ? m.diagnosticsSaving : m.diagnostics}
           </Button>
-          {diagNote && <p className="tool-status">{diagNote}</p>}
+          {diagNote && <p className="tool-status" role="status">{diagNote}</p>}
           {typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent) && (
             <p className="pref-hint">{m.privateRelayHint}</p>
           )}

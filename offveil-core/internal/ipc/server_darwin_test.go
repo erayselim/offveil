@@ -82,6 +82,10 @@ func TestSocketPathEnvOverride(t *testing.T) {
 }
 
 func TestDefaultRootSocket(t *testing.T) {
+	t.Setenv("OFFVEIL_IPC_SOCK", "")
+	if got := DialPath(); got != DefaultRootSocket {
+		t.Fatalf("production dial path must not fall back to a user daemon: %s", got)
+	}
 	if DefaultRootSocket != "/var/run/offveil/core.sock" {
 		t.Fatalf("DefaultRootSocket=%s", DefaultRootSocket)
 	}

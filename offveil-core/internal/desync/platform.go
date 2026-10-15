@@ -1,6 +1,9 @@
 package desync
 
-import "runtime"
+import (
+	"runtime"
+	"strings"
+)
 
 // NativeSafeStrategy is the OS default used at runtime.
 // DefaultSafeStrategy() stays the Windows bat (tests lock fake/ttl).
@@ -30,10 +33,29 @@ func ContainsFakeOrTTL(args []string) bool {
 	return false
 }
 
-// UsableOnOS is false for a cached Windows fake/ttl strategy on Darwin.
+// ContainsDarwinUnsupported also rejects cached disorder/disoob strategies:
+// both call setttl() internally in ByeDPI v0.17.3.
+func ContainsDarwinUnsupported(args []string) bool {
+	for _, arg := range args {
+		name, _, _ := strings.Cut(arg, "=")
+		switch name {
+		case "--fake", "--ttl", "--disorder", "--disoob":
+			return true
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 {
+			switch arg[1] {
+			case 'f', 't', 'd', 'q':
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// UsableOnOS rejects cached strategies that use BSD-incompatible operations.
 func UsableOnOS(s Strategy) bool {
 	if runtime.GOOS != "darwin" {
 		return true
 	}
-	return !ContainsFakeOrTTL(s.Args)
+	return !ContainsDarwinUnsupported(s.Args)
 }

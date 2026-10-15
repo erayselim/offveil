@@ -18,15 +18,15 @@ func TestDefaultSafeStrategyDarwinOmitsFakeTTL(t *testing.T) {
 		"--no-domain",
 		"--timeout", "3",
 		"--split", "1",
-		"--disorder", "3+s",
+		"--tlsrec", "1+s",
 		"--mod-http", "h,d",
 		"--auto", "torst",
-		"--tlsrec", "1+s",
+		"--oob", "1+s",
 	}
 	if !reflect.DeepEqual(s.Args, want) {
 		t.Fatalf("args=%v want %v", s.Args, want)
 	}
-	for _, forbid := range []string{"--fake", "--ttl"} {
+	for _, forbid := range []string{"--fake", "--ttl", "--disorder", "--disoob"} {
 		if containsArg(s.Args, forbid) {
 			t.Fatalf("darwin strategy must not contain %s: %s", forbid, strings.Join(s.Args, " "))
 		}
@@ -47,8 +47,8 @@ func TestScanCandidatesDarwinOmitsFakeTTL(t *testing.T) {
 	}
 	hasOOB := false
 	for _, s := range cands {
-		if containsArg(s.Args, "--fake") || containsArg(s.Args, "--ttl") {
-			t.Fatalf("%s has fake/ttl: %v", s.ID, s.Args)
+		if desync.ContainsDarwinUnsupported(s.Args) {
+			t.Fatalf("%s uses a TTL operation: %v", s.ID, s.Args)
 		}
 		if containsArg(s.Args, "--oob") {
 			hasOOB = true
@@ -66,6 +66,19 @@ func TestScanCandidatesDarwinOmitsFakeTTL(t *testing.T) {
 	}
 	if !winHasFake {
 		t.Fatal("windows ScanCandidates lost fake candidates")
+	}
+}
+
+func TestDarwinRejectsImplicitTTLFromCachedStrategies(t *testing.T) {
+	for _, arg := range []string{"--disorder", "--disorder=3+s", "-d1", "--disoob", "-q1", "--ttl=8", "-t8", "-f-1"} {
+		if !desync.ContainsDarwinUnsupported([]string{arg}) {
+			t.Errorf("Darwin accepted %q", arg)
+		}
+	}
+	for _, s := range desync.ScanCandidatesDarwin() {
+		if desync.ContainsDarwinUnsupported(s.Args) {
+			t.Errorf("invalid Darwin candidate: %+v", s)
+		}
 	}
 }
 

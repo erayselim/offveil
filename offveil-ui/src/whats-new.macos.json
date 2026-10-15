@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-mac.3",
+  "version": "1.0.0-mac.4",
   "notes": {
-    "tr": "Koruma başlatılırken Mac bağlantısının erken zaman aşımına uğraması ve DNS sorgularının motor kilidini beklemesi düzeltildi. Motor meşgulken durum ve destek dosyası alınabilir; destek dosyası son başlatma aşamasını içerir. iCloud Özel Aktarma tanı bilgileri daha doğru raporlanır.",
-    "en": "Fixed premature Mac IPC timeouts and DNS queries waiting on the engine lock during protection startup. Status and support files remain available while the engine is busy, with the last startup stage included. Improved the accuracy of iCloud Private Relay diagnostic hints."
+    "tr": "Mac motorunun TTL değiştiren ByeDPI işlemleri kaldırıldı. Kurulum ve güncelleme, yanıt vermeyen eski servisi de durdurup ağı geri yükler. Destek dosyası için konum seçilebilir; servis olmadan da ZIP alınır. Mac otomatik bağlantısı artık açıkça etkinleştirilir.",
+    "en": "Removed TTL-changing ByeDPI operations from the Mac engine. Installation and updates stop unresponsive old services and restore networking. Support export now asks where to save and produces a ZIP without a working daemon. Mac auto-connect now requires explicit opt-in."
   }
 }

@@ -85,7 +85,7 @@ Error:
 | `restart` | | `Status` | Stop then start (UI "Yenile"; no `already_running`) |
 | `status` | | `Status` | Snapshot (includes `health`) |
 | `test` | `{ "targets"?: string[] }` | `TestReport` | Connection test |
-| `diagnostics` | | `DiagnosticsBundle` | PII-safe zip path (`path`, `sha256`, `created_at`); while busy, exports the last published snapshot with stage/time notes |
+| `diagnostics` | | `DiagnosticsBundle` | PII-safe zip under the machine data dir; while busy, exports the last published snapshot with stage/time notes. The UI uses an independent `support` collector and a native save dialog, so export also works without this IPC method. |
 | `repair` | | `{ "status": Status, "steps": [...] }` | UI "Revert changes": stop protection, restore leftover DNS/NRPT/adapter, flush DNS cache, clear learned DPI policy. Best-effort; does not reset Winsock or other apps. |
 | `shutdown` | | `{ "ok": true }` | Stop protection and the demand-start service (UI exit; Windows SCM / Darwin launchd unload, no admin prompt) |
 

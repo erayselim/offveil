@@ -176,8 +176,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	}
 
 	cmd := exec.Command(bin, "run", "-c", cfgPath)
+	stderr := &proc.TailBuffer{}
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = stderr
 	proc.PrepareCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, false, FailDial, fmt.Errorf("sing-box start: %w", err)
@@ -185,7 +186,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	if cfg.AssignJob != nil && cmd.Process != nil {
 		if err := cfg.AssignJob(cmd.Process); err != nil {
 			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
+			_ = cmd.Wait()
 			return nil, false, FailDial, fmt.Errorf("assign job: %w", err)
 		}
 	}
@@ -193,7 +194,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 
 	if err := waitSOCKS(s.socks, 8*time.Second); err != nil {
 		_ = s.Close()
-		return nil, false, FailDial, fmt.Errorf("socks not ready: %w", err)
+		return nil, false, FailDial, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
 	}
 	s.up.Store(true)
 	slog.Info("tunnel: selective outbound up",
@@ -313,7 +314,7 @@ func (s *session) Close() error {
 		return nil
 	}
 	_ = s.cmd.Process.Kill()
-	_, _ = s.cmd.Process.Wait()
+	_ = s.cmd.Wait()
 	s.cmd = nil
 	slog.Info("tunnel: stopped", "socks", s.socks)
 	return nil

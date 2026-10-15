@@ -255,6 +255,8 @@ export default function App() {
   const [autostartOn, setAutostartOn] = useState(true);
   const [autoconnectOn, setAutoconnectOn] = useState(true);
   const [diagPath, setDiagPath] = useState<string | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagError, setDiagError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>("home");
   const [quitOpen, setQuitOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -555,18 +557,19 @@ export default function App() {
   }
 
   async function onDiagnostics() {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
+    if (diagBusy) return;
+    setDiagBusy(true);
+    setDiagError(null);
     try {
-      const bundle = await invoke<DiagnosticsBundle>("export_diagnostics");
+      const bundle = await invoke<DiagnosticsBundle | null>("export_diagnostics");
+      if (!bundle) return;
       setDiagPath(bundle.path);
       const line = formatDiagLine(locale, bundle.path);
       setDiagNote(line);
     } catch (e) {
-      fail(e);
+      setDiagError(String(e));
     } finally {
-      setBusy(false);
+      setDiagBusy(false);
     }
   }
 
@@ -806,7 +809,8 @@ export default function App() {
                   onDiagnostics={() => void onDiagnostics()}
                   testNote={testNote}
                   diagNote={diagNote}
-                  error={error}
+                  diagBusy={diagBusy}
+                  error={diagError ?? error}
                   diagPath={diagPath}
                   onOpenDiagFolder={() => void onOpenDiagFolder()}
                   onShareIssue={() => void onShareIssue()}

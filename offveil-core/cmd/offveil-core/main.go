@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
+	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
+	"github.com/erayselim/offveil/offveil-core/internal/support"
 	"github.com/erayselim/offveil/offveil-core/internal/version"
 )
 
@@ -25,6 +28,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	if len(os.Args) < 2 {
+		if runtime.GOOS == "darwin" && os.Geteuid() != 0 {
+			fmt.Fprintln(os.Stderr, "The system daemon must be started by launchd after setup. To save a support ZIP without installation, run: offveil-core support")
+			os.Exit(1)
+		}
 		if err := runService(); err != nil {
 			slog.Error("service run failed", "err", err)
 			os.Exit(1)
@@ -58,9 +65,37 @@ func main() {
 	case "client":
 		clientFlags := flag.NewFlagSet("client", flag.ExitOnError)
 		method := clientFlags.String("method", "ping", "RPC method")
+		timeout := clientFlags.Duration("timeout", 25*time.Second, "RPC deadline")
 		_ = clientFlags.Parse(os.Args[2:])
-		if err := runClient(*method); err != nil {
+		if *timeout <= 0 || *timeout > 3*time.Minute {
+			fmt.Fprintln(os.Stderr, "client: timeout must be between 0 and 3 minutes")
+			os.Exit(1)
+		}
+		if err := runClientWithTimeout(*method, *timeout); err != nil {
 			fmt.Fprintf(os.Stderr, "client: %v\n", err)
+			os.Exit(1)
+		}
+	case "support":
+		supportFlags := flag.NewFlagSet("support", flag.ExitOnError)
+		output := supportFlags.String("output", "", "ZIP destination (default: Downloads)")
+		uiError := supportFlags.String("ui-error", "", "last UI operation error")
+		_ = supportFlags.Parse(os.Args[2:])
+		fmt.Fprintln(os.Stderr, "Collecting support information; a stopped or unreachable daemon is supported.")
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		in := support.Collect(ctx, requestRPC)
+		if *uiError != "" {
+			if len(*uiError) > 4096 {
+				*uiError = (*uiError)[:4096]
+			}
+			in.System["last_ui_error"] = diag.Scrub(*uiError)
+		}
+		cancel()
+		meta, err := support.Write(in, *output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "support: %v\n", err)
+			os.Exit(1)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(meta); err != nil {
 			os.Exit(1)
 		}
 	case "version", "-version", "--version":
@@ -87,6 +122,7 @@ Usage:
   offveil-core start|stop      Control installed service
   offveil-core status          Query service status
   offveil-core client -method ping|status|start|stop|restart|health|test|repair
+  offveil-core support [-output /path/to/support.zip]  Save a ZIP without requiring the daemon
   offveil-core version
 
 IPC: %s
@@ -253,17 +289,38 @@ func printServiceStatus() {
 }
 
 func runClient(method string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+	return runClientWithTimeout(method, 25*time.Second)
+}
 
-	conn, err := dialPipe(ctx)
+func runClientWithTimeout(method string, timeout time.Duration) error {
+	if method == "diagnostics" {
+		fmt.Fprintln(os.Stderr, "Requesting diagnostics; waiting for the daemon response...")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	result, err := requestRPC(ctx, method)
 	if err != nil {
 		return err
+	}
+	out, err := json.MarshalIndent(ipc.Response{ID: "1", OK: true, Result: result}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
+func requestRPC(ctx context.Context, method string) (json.RawMessage, error) {
+	conn, err := dialPipe(ctx)
+	if err != nil {
+		return nil, err
 	}
 	defer conn.Close()
 
 	// Bound the whole RPC so a hung start cannot stall forever.
-	_ = conn.SetDeadline(time.Now().Add(25 * time.Second))
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
 
 	req := ipc.Request{ID: "1", Method: method, Params: map[string]any{}}
 	if method == "start" {
@@ -272,19 +329,28 @@ func runClient(method string) error {
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)
 	if err := enc.Encode(req); err != nil {
-		return err
+		return nil, err
 	}
-	var resp ipc.Response
+	var resp struct {
+		ID     string          `json:"id"`
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+		Error  *ipc.RPCError   `json:"error"`
+	}
 	if err := dec.Decode(&resp); err != nil {
 		if err == io.EOF {
-			return fmt.Errorf("empty response")
+			return nil, fmt.Errorf("empty response")
 		}
-		return err
+		return nil, err
 	}
-	out, _ := json.MarshalIndent(resp, "", "  ")
-	fmt.Println(string(out))
+	if resp.ID != req.ID {
+		return nil, fmt.Errorf("IPC response ID mismatch")
+	}
 	if !resp.OK {
-		return fmt.Errorf("rpc error: %s", resp.Error.Code)
+		if resp.Error == nil {
+			return nil, fmt.Errorf("RPC failed without an error description")
+		}
+		return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
 	}
-	return nil
+	return resp.Result, nil
 }

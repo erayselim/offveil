@@ -220,11 +220,11 @@ pub fn start_installed() -> Result<(), String> {
             "{NEEDS_INSTALL} Yeni core sürümü için yönetici onayı gerekiyor"
         ));
     }
-    if core_ipc::is_reachable() {
-        return Ok(());
-    }
     if !service_installed() {
         return Err(format!("{NEEDS_INSTALL} offveil-core servisi kurulu değil"));
+    }
+    if core_ipc::is_reachable() {
+        return Ok(());
     }
     start_scm()?;
     if wait_for_pipe(PIPE_WAIT) {
@@ -301,7 +301,7 @@ pub fn probe() -> BootstrapInfo {
             pipe_ok,
         };
     }
-    if pipe_ok {
+    if pipe_ok && installed {
         return BootstrapInfo {
             state: BootstrapState::Ready,
             message: "Servis hazır".into(),
@@ -351,10 +351,8 @@ pub fn ensure_service() -> Result<BootstrapInfo, String> {
             .to_string()
     })?;
 
-    #[cfg(target_os = "macos")]
-    if updating {
-        stop_for_update()?;
-    }
+    // The elevated installer quiesces the previous launchd job and restores
+    // network state before replacing the payload, even if old IPC is stuck.
     elevate_setup(&core)?;
     #[cfg(target_os = "macos")]
     {
@@ -417,23 +415,12 @@ fn core_update_required() -> bool {
 /// Finish network cleanup and wait for the old daemon before replacing code.
 #[cfg(target_os = "macos")]
 pub fn stop_for_update() -> Result<(), String> {
-    if !core_ipc::is_reachable() {
+    // Protection can be off while an earlier start still owns the engine lock.
+    // Ask launchd to stop the installed service; never depend on engine RPC here.
+    if !service_installed() {
         return Ok(());
     }
-    match core_ipc::stop() {
-        Ok(_) => {}
-        Err(e) if e.contains("not_running") => {}
-        Err(e) => return Err(format!("Güncelleme öncesi koruma durdurulamadı: {e}")),
-    }
-    core_ipc::shutdown()?;
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        if !core_ipc::is_reachable() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    Err("Güncelleme öncesi eski core kapanmadı; güncelleme durduruldu".into())
+    darwin::stop_launchd()
 }
 
 fn elevate_setup(core: &Path) -> Result<(), String> {
@@ -558,10 +545,10 @@ mod darwin {
                 super::NEEDS_INSTALL
             ));
         }
-        let output = Command::new("/usr/bin/sudo")
-            .args(["-n", CANONICAL_CORE, "start"])
-            .output()
-            .map_err(|e| format!("sudo start: {e}"))?;
+        let output = crate::command::run(
+            Command::new("/usr/bin/sudo").args(["-n", CANONICAL_CORE, "start"]),
+            std::time::Duration::from_secs(30),
+        )?;
         if output.status.success() {
             return Ok(());
         }
@@ -573,58 +560,48 @@ mod darwin {
     }
 
     #[cfg(target_os = "macos")]
+    pub fn stop_launchd() -> Result<(), String> {
+        use std::process::Command;
+        let output = crate::command::run(
+            Command::new("/usr/bin/sudo").args(["-n", CANONICAL_CORE, "stop"]),
+            std::time::Duration::from_secs(75),
+        )?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "Güncelleme öncesi sistem servisi durdurulamadı: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn elevate_setup(core: &std::path::Path) -> Result<(), String> {
-        use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
+        use std::process::Command;
+        use std::time::Duration;
 
         if !core.is_file() {
             return Err("offveil-core bulunamadı".into());
         }
         let user = std::env::var("USER").unwrap_or_default();
         let script = elevate_script(core, &user, "setup");
-        let mut child = Command::new("/usr/bin/osascript")
-            .args(["-e", &script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("osascript: {e}"))?;
-        let mut stderr_pipe = child.stderr.take();
-
-        let deadline = Instant::now() + Duration::from_secs(90);
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let mut stderr = String::new();
-                    if let Some(ref mut s) = stderr_pipe {
-                        use std::io::Read;
-                        let _ = s.read_to_string(&mut stderr);
-                    }
-                    if status.success() {
-                        return Ok(());
-                    }
-                    let low = stderr.to_ascii_lowercase();
-                    if low.contains("canceled") || low.contains("cancelled") || low.contains("-128")
-                    {
-                        return Err(
-                            "Kurulum iptal edildi veya başarısız (yönetici onayı reddedilmiş olabilir)"
-                                .into(),
-                        );
-                    }
-                    return Err(format!(
-                        "offveil-core setup çıkış kodu {}: {}",
-                        status.code().unwrap_or(1),
-                        stderr.trim()
-                    ));
-                }
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    return Err("Servis kurulumu zaman aşımına uğradı".into());
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(e) => return Err(format!("osascript wait: {e}")),
-            }
+        let output = crate::command::run(
+            Command::new("/usr/bin/osascript").args(["-e", &script]),
+            Duration::from_secs(120),
+        )?;
+        if output.status.success() {
+            return Ok(());
         }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let low = stderr.to_ascii_lowercase();
+        if low.contains("canceled") || low.contains("cancelled") || low.contains("-128") {
+            return Err("Kurulum iptal edildi (yönetici onayı reddedildi)".into());
+        }
+        Err(format!(
+            "offveil-core setup çıkış kodu {}: {}",
+            output.status.code().unwrap_or(1),
+            stderr.trim()
+        ))
     }
 }
 

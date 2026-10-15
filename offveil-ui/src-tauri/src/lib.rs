@@ -1,7 +1,9 @@
 mod app_updates;
 mod autoconnect;
 mod autostart;
+mod command;
 mod core_ipc;
+mod diagnostics;
 #[cfg(any(target_os = "macos", test))]
 mod payload;
 mod service;
@@ -24,6 +26,7 @@ pub(crate) static QUITTING: AtomicBool = AtomicBool::new(false);
 static BLUR_HIDE: AtomicBool = AtomicBool::new(false);
 /// Blur-to-tray only after the window has been focused once (avoids hiding on launch).
 static EVER_FOCUSED: AtomicBool = AtomicBool::new(false);
+pub(crate) static NATIVE_DIALOG_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Started with --tray / --minimized; do not auto-show after first paint.
 static START_HIDDEN: AtomicBool = AtomicBool::new(false);
 /// WebView has finished its first document load (safe to uncloak).
@@ -72,7 +75,11 @@ async fn probe_bootstrap() -> BootstrapInfo {
 
 #[tauri::command]
 async fn ensure_service() -> Result<BootstrapInfo, String> {
-    run_blocking(service::ensure_service).await
+    let result = run_blocking(service::ensure_service).await;
+    if let Err(ref error) = result {
+        diagnostics::record_error("setup", error);
+    }
+    result
 }
 
 #[tauri::command]
@@ -92,17 +99,32 @@ async fn get_status() -> Result<Status, String> {
 
 #[tauri::command]
 async fn set_protection(enabled: bool) -> Result<Status, String> {
-    run_blocking(move || {
+    let result = run_blocking(move || {
         if enabled {
             service::start_installed()?;
             core_ipc::start()
-        } else if !core_ipc::is_reachable() {
-            Ok(core_ipc::Status::stopped())
         } else {
-            core_ipc::stop()
+            autoconnect::cancel_pending();
+            #[cfg(target_os = "macos")]
+            {
+                service::stop_for_update()?;
+                Ok(core_ipc::Status::stopped())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if !core_ipc::is_reachable() {
+                    Ok(core_ipc::Status::stopped())
+                } else {
+                    core_ipc::stop()
+                }
+            }
         }
     })
-    .await
+    .await;
+    if let Err(ref error) = result {
+        diagnostics::record_error("protection", error);
+    }
+    result
 }
 
 #[tauri::command]
@@ -167,19 +189,18 @@ async fn run_connection_test() -> Result<TestReport, String> {
 }
 
 #[tauri::command]
-async fn export_diagnostics() -> Result<DiagnosticsBundle, String> {
-    run_blocking(|| {
-        if !core_ipc::is_reachable() {
-            return Err("not_connected: Core servisine bağlanılamadı".into());
-        }
-        core_ipc::diagnostics()
-    })
-    .await
+async fn export_diagnostics(app: AppHandle) -> Result<Option<DiagnosticsBundle>, String> {
+    run_blocking(move || diagnostics::export(app)).await
 }
 
 #[tauri::command]
 fn open_diag_folder(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
+    if let Ok(file) = p.canonicalize() {
+        if diagnostics::is_exported(&file) {
+            return open_folder(file.parent().ok_or("geçersiz destek dosyası yolu")?);
+        }
+    }
     let target = if p.is_file() {
         p.parent()
             .map(|x| x.to_path_buf())
@@ -284,7 +305,7 @@ async fn core_path() -> Option<String> {
 async fn prepare_update() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     QUITTING.store(true, Ordering::SeqCst);
-    run_blocking(|| {
+    let result = run_blocking(|| {
         #[cfg(target_os = "macos")]
         return service::stop_for_update();
         #[cfg(not(target_os = "macos"))]
@@ -296,7 +317,11 @@ async fn prepare_update() -> Result<(), String> {
             Ok(())
         }
     })
-    .await
+    .await;
+    if let Err(ref error) = result {
+        diagnostics::record_error("prepare_update", error);
+    }
+    result
 }
 
 #[tauri::command]
@@ -767,6 +792,12 @@ fn quit_with_core(app: &AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
+        autoconnect::cancel_pending();
+        #[cfg(target_os = "macos")]
+        if let Err(error) = service::stop_for_update() {
+            eprintln!("offveil quit: {error}");
+        }
+        #[cfg(not(target_os = "macos"))]
         if core_ipc::is_reachable() {
             let _ = core_ipc::shutdown();
             // Brief wait for the service manager to release the transport.
@@ -784,6 +815,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             probe_bootstrap,
@@ -888,7 +920,10 @@ pub fn run() {
                 if let Some(win) = window.app_handle().get_webview_window(window.label()) {
                     apply_native_chrome(&win);
                 }
-                if EVER_FOCUSED.load(Ordering::SeqCst) && !QUITTING.load(Ordering::SeqCst) {
+                if EVER_FOCUSED.load(Ordering::SeqCst)
+                    && !QUITTING.load(Ordering::SeqCst)
+                    && !NATIVE_DIALOG_ACTIVE.load(Ordering::SeqCst)
+                {
                     schedule_blur_hide(window.app_handle().clone());
                 }
             }

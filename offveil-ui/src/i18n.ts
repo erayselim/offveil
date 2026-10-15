@@ -16,6 +16,7 @@ export type Messages = {
   refreshing: string;
   connectionTest: string;
   diagnostics: string;
+  diagnosticsSaving: string;
   autostart: string;
   autoconnect: string;
   toggleOn: string;
@@ -99,6 +100,7 @@ const tr: Messages = {
   refreshing: "Yenileniyor…",
   connectionTest: "Bağlantıyı kontrol et",
   diagnostics: "Destek dosyası al",
+  diagnosticsSaving: "Destek dosyası hazırlanıyor…",
   autostart: "Başlangıçta çalıştır",
   autoconnect: "Otomatik bağlan",
   toggleOn: "Korumayı kapat",
@@ -182,6 +184,7 @@ const en: Messages = {
   refreshing: "Refreshing…",
   connectionTest: "Check connection",
   diagnostics: "Save a support file",
+  diagnosticsSaving: "Preparing support file…",
   autostart: "Start on startup",
   autoconnect: "Auto-connect",
   toggleOn: "Turn protection off",

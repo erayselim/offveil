@@ -279,30 +279,7 @@ pub fn dial_path() -> std::path::PathBuf {
             return std::path::PathBuf::from(p);
         }
     }
-    let root = std::path::PathBuf::from(DARWIN_ROOT_SOCKET);
-    if is_unix_socket(&root) {
-        return root;
-    }
-    std::env::temp_dir()
-        .join(format!("offveil-{}", current_uid()))
-        .join("core.sock")
-}
-
-#[cfg(unix)]
-fn is_unix_socket(path: &std::path::Path) -> bool {
-    use std::os::unix::fs::FileTypeExt;
-    std::fs::metadata(path)
-        .map(|m| m.file_type().is_socket())
-        .unwrap_or(false)
-}
-
-#[cfg(unix)]
-fn current_uid() -> u32 {
-    #[link(name = "c")]
-    extern "C" {
-        fn getuid() -> u32;
-    }
-    unsafe { getuid() }
+    std::path::PathBuf::from(DARWIN_ROOT_SOCKET)
 }
 
 /// True when core is down / unreachable (not a business-logic RPC error).
@@ -354,7 +331,7 @@ pub fn start() -> Result<Status, String> {
         "start",
         Some(params),
         CallOpts {
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(if cfg!(unix) { 90 } else { 30 }),
             busy_retries: 20,
         },
     )?;
@@ -379,7 +356,7 @@ pub fn restart() -> Result<Status, String> {
         "restart",
         None,
         CallOpts {
-            timeout: Duration::from_secs(45),
+            timeout: Duration::from_secs(if cfg!(unix) { 120 } else { 45 }),
             busy_retries: 20,
         },
     )?;
@@ -468,19 +445,6 @@ pub fn shutdown() -> Result<(), String> {
     );
     // Transport may close before a full JSON response - treat unreachable as success.
     Ok(())
-}
-
-/// IPC `diagnostics` - PII-safe zip under the machine data dir (`diagnostics/`).
-pub fn diagnostics() -> Result<DiagnosticsBundle, String> {
-    let v = call_with(
-        "diagnostics",
-        None,
-        CallOpts {
-            timeout: Duration::from_secs(15),
-            busy_retries: 20,
-        },
-    )?;
-    serde_json::from_value(v).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

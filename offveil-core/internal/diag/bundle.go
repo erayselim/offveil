@@ -30,6 +30,7 @@ type Input struct {
 	Sidecars  map[string]any `json:"sidecars,omitempty"`
 	Ruleset   map[string]any `json:"ruleset,omitempty"`
 	Heal      map[string]any `json:"heal,omitempty"`
+	System    map[string]any `json:"system,omitempty"`
 	Notes     []string       `json:"notes,omitempty"`
 }
 
@@ -98,6 +99,12 @@ func WriteZip(in Input) (*BundleMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+	return WriteZipIn(in, dir)
+}
+
+// WriteZipIn is used by the unprivileged support collector. The privileged IPC
+// method continues to write only under Dir(), never to a caller-supplied path.
+func WriteZipIn(in Input, dir string) (*BundleMeta, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -110,6 +117,9 @@ func WriteZip(in Input) (*BundleMeta, error) {
 		if m, ok := scrubbed.(map[string]any); ok {
 			in.Sidecars = m
 		}
+	}
+	if system, ok := ScrubTree(in.System).(map[string]any); ok {
+		in.System = system
 	}
 	in.Notes = append([]string{
 		"PII policy: no public IP, SSID, MAC, username, credentials, or subscription URLs.",
@@ -127,6 +137,7 @@ func WriteZip(in Input) (*BundleMeta, error) {
 		"sidecars":          in.Sidecars,
 		"ruleset":           in.Ruleset,
 		"heal":              in.Heal,
+		"system":            in.System,
 		"notes":             in.Notes,
 	}
 

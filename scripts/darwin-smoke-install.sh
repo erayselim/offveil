@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # First-run service installation on a disposable GitHub-hosted runner only.
-# Never starts protection: no TUN or DNS override is requested.
+# Includes a real TUN/DNS protection cycle on this disposable runner.
 set -euo pipefail
 if [[ "$(uname -s)" != Darwin || "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
   echo "Requires a disposable GitHub-hosted macOS runner" >&2
@@ -11,10 +11,20 @@ CORE="$APP/Contents/MacOS/offveil-core"
 INSTALLED="/Library/Application Support/offveil/offveil-core"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/offveil-upgrade.XXXXXX")"
 cleanup() {
+  sudo "$CORE" stop || true
   sudo "$CORE" uninstall || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+
+# Support collection must work before a daemon has ever been installed.
+"$CORE" support --output "$WORK/offline-support.zip" > "$WORK/offline-support.json"
+[[ -s "$WORK/offline-support.zip" ]]
+# A user accidentally executing just the binary must not create a stray daemon.
+if "$CORE" > "$WORK/no-arguments.txt" 2>&1; then
+  echo "Unprivileged no-argument core unexpectedly started" >&2
+  exit 1
+fi
 
 sudo "$CORE" setup
 # Hosted runners already allow broad passwordless sudo. Check our own policy
@@ -53,6 +63,39 @@ if (zip.length < 4 || zip.readUInt32LE(0) !== 0x04034b50) {
 }
 console.log('Diagnostics ZIP is readable by the desktop user.');
 NODE
+
+dns_snapshot() {
+  local service
+  /usr/sbin/networksetup -listallnetworkservices | tail -n +2 | while IFS= read -r service; do
+    [[ -n "$service" && "$service" != \** ]] || continue
+    printf '%s\n' "$service"
+    /usr/sbin/networksetup -getdnsservers "$service"
+  done
+}
+dns_snapshot > "$WORK/dns-before.txt"
+/usr/bin/curl -4 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
+if ! "$INSTALLED" client -method start -timeout 120s > "$WORK/protection-start.json"; then
+  sudo tail -n 100 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
+  exit 1
+fi
+node - "$WORK/protection-start.json" <<'NODE'
+const fs = require('node:fs');
+const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const s = reply.result;
+if (!reply.ok || !s?.protection || s.state !== 'active' ||
+    !s.tunnel?.up || !s.desync?.up || !s.dns?.stub_up) {
+  throw new Error(`Real protection failed: ${JSON.stringify(reply)}`);
+}
+NODE
+/sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
+grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"
+/usr/bin/curl -4 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
+/usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --max-time 20 https://example.com -o /dev/null
+"$INSTALLED" client -method stop -timeout 45s
+dns_snapshot > "$WORK/dns-after.txt"
+cmp "$WORK/dns-before.txt" "$WORK/dns-after.txt"
+echo "Real TUN startup, routed HTTPS, ByeDPI SOCKS HTTPS and DNS restoration passed."
+
 "$INSTALLED" client -method shutdown
 for i in {1..50}; do
   [[ -S /var/run/offveil/core.sock ]] || break
@@ -65,6 +108,24 @@ fi
 # Exercise the UI's demand-start route after the initial admin installation.
 /usr/bin/sudo -n "$INSTALLED" start
 ping_until_ready
+
+# A stopped UI indicator must not prevent updating a hung daemon. Suspend the
+# real job so IPC cannot answer, then exercise the passwordless launchd stop.
+DAEMON_PID="$(sudo /bin/launchctl print system/offveil-core | awk '/^[[:space:]]*pid = / { print $3; exit }')"
+[[ "$DAEMON_PID" =~ ^[0-9]+$ ]]
+sudo /bin/kill -STOP "$DAEMON_PID"
+/usr/bin/sudo -n "$INSTALLED" stop
+for i in {1..50}; do
+  [[ -S /var/run/offveil/core.sock ]] || break
+  sleep 0.1
+done
+if "$INSTALLED" client -method ping -timeout 1s; then
+  echo "Suspended daemon remained reachable after managed stop" >&2
+  exit 1
+fi
+/usr/bin/sudo -n "$INSTALLED" start
+ping_until_ready
+echo "Managed stop and restart of an unresponsive daemon passed."
 
 # Exercise refresh of an existing installation with a valid, different payload.
 # Re-sign only a temporary sidecar to model an older build without corrupting it.

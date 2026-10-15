@@ -3,8 +3,10 @@
 package dns
 
 import (
+	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type netsetupCtl struct{}
@@ -44,12 +46,16 @@ func (netsetupCtl) Flush() error {
 }
 
 var runNetsetup = func(args ...string) (string, error) {
-	cmd := exec.Command(networksetupBin, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, networksetupBin, args...)
 	b, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(b)), err
 }
 
 var runKillallHUP = func() error {
-	cmd := exec.Command(killallBin, flushResolverArgs()...)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, killallBin, flushResolverArgs()...)
 	return cmd.Run()
 }
