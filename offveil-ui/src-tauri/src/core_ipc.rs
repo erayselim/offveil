@@ -10,6 +10,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
+#[path = "pipe_windows.rs"]
+mod pipe_windows;
+
+#[cfg(windows)]
 pub const PIPE_PATH: &str = r"\\.\pipe\offveil-core";
 /// LaunchDaemon socket when the UI is a normal user (docs/contracts.md §2).
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -188,17 +192,12 @@ fn rpc_roundtrip<S: Read + Write>(mut stream: S, body: &[u8]) -> Result<Value, S
 }
 
 #[cfg(windows)]
-fn connect(_deadline: Instant) -> Result<std::fs::File, String> {
-    use std::fs::OpenOptions;
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(PIPE_PATH)
-        .map_err(|e| match e.raw_os_error() {
-            Some(ERROR_PIPE_BUSY) => "pipe busy".into(),
-            Some(ERROR_FILE_NOT_FOUND) => "pipe not found".into(),
-            _ => format!("pipe open: {e}"),
-        })
+fn connect(deadline: Instant) -> Result<pipe_windows::DeadlinePipe, String> {
+    pipe_windows::DeadlinePipe::open(PIPE_PATH, deadline).map_err(|e| match e.raw_os_error() {
+        Some(ERROR_PIPE_BUSY) => "pipe busy".into(),
+        Some(ERROR_FILE_NOT_FOUND) => "pipe not found".into(),
+        _ => format!("pipe open: {e}"),
+    })
 }
 
 #[cfg(unix)]
