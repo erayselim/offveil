@@ -70,6 +70,9 @@ func (e *Engine) SelfHeal(reason string) {
 		e.mu.Unlock()
 		return
 	}
+	if reason == "network_change" || reason == "power_resume" {
+		e.resetDNSCacheLocked()
+	}
 	if !e.lastHealAt.IsZero() && time.Since(e.lastHealAt) < healMinInterval {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (debounce)", "reason", reason)
@@ -141,6 +144,17 @@ func (e *Engine) healInfoLocked() *HealInfo {
 		LastAt:     e.healAt,
 		Count:      e.healCount,
 		Watching:   e.healWatching,
+	}
+}
+
+func (e *Engine) resetDNSCacheLocked() {
+	if e.doh != nil {
+		e.doh.ResetCache()
+	}
+	if e.dns != nil {
+		if client := e.dns.Client(); client != nil && client != e.doh {
+			client.ResetCache()
+		}
 	}
 }
 

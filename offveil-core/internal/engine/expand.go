@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/erayselim/offveil/offveil-core/internal/capture"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 )
@@ -105,6 +106,10 @@ func (e *Engine) expandCandidate(host string) bool {
 		e.mu.Unlock()
 		return false
 	}
+	if _, seen := e.expandSeen[host]; seen {
+		e.mu.Unlock()
+		return false
+	}
 	doc := e.rulesetSnap.Doc
 	e.mu.Unlock()
 	pkg, ok := doc.MatchPackage(host)
@@ -154,15 +159,13 @@ func (e *Engine) handleExpandQuery(host string) {
 	}
 	capSess := e.cap
 	doh := e.doh
+	// Reserve before resolving so repeated A/AAAA queries cannot start the
+	// same expansion concurrently. Observations remain useful on split-default.
+	e.expandSeen[host] = struct{}{}
 	e.mu.Unlock()
 
 	suggestions := doc.ExpandForHost(host, already)
 	if len(suggestions) == 0 {
-		e.mu.Lock()
-		if e.expandSeen != nil {
-			e.expandSeen[host] = struct{}{}
-		}
-		e.mu.Unlock()
 		return
 	}
 
@@ -179,7 +182,7 @@ func (e *Engine) handleExpandQuery(host string) {
 	ctx, cancel := context.WithTimeout(context.Background(), expandResolveTO)
 	defer cancel()
 	var prefixes []netip.Prefix
-	if doh != nil {
+	if doh != nil && capture.NeedsPrefixExpansion(capSess) {
 		for _, h := range hosts {
 			addrs, err := doh.LookupAWithFallback(ctx, h)
 			if err != nil {
@@ -205,7 +208,7 @@ func (e *Engine) handleExpandQuery(host string) {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.protection {
+	if !e.protection || e.cap != capSess {
 		return
 	}
 	if e.expandSeen == nil {

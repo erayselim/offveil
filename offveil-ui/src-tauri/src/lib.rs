@@ -7,14 +7,15 @@ mod diagnostics;
 #[cfg(any(target_os = "macos", test))]
 mod payload;
 mod service;
+mod tray_icon;
 
 use core_ipc::{DiagnosticsBundle, Status, TestReport};
 use service::BootstrapInfo;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
+#[cfg(not(target_os = "macos"))]
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{
-    image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
     AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, Theme, WindowEvent,
@@ -40,11 +41,6 @@ static TRAY_LOCALE_EN: AtomicBool = AtomicBool::new(false);
 
 const TRAY_ID: &str = "main";
 const REVEAL_MS: u64 = 160;
-
-/// Embedded tray PNGs (compile-time). 32×32 keeps the binary small.
-const ICON_DEFAULT: &[u8] = include_bytes!("../icons/32x32.png");
-const ICON_LIGHT: &[u8] = include_bytes!("../icons/tray-light.png");
-const ICON_DARK: &[u8] = include_bytes!("../icons/tray-dark.png");
 
 /// Fully transparent native fill so CSS `clip-path` can anti-alias the corners.
 /// `SetWindowRgn` is a 1-bit mask and looks pixelated; do not bring it back.
@@ -660,6 +656,7 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn toggle_main(app: &AppHandle) {
     cancel_blur_hide();
     if let Some(win) = app.get_webview_window("main") {
@@ -672,6 +669,7 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn tray_labels(english: bool) -> (&'static str, &'static str) {
     if english {
         ("Show", "Quit")
@@ -680,6 +678,7 @@ fn tray_labels(english: bool) -> (&'static str, &'static str) {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn build_tray_menu(app: &AppHandle, english: bool) -> tauri::Result<Menu<tauri::Wry>> {
     let (show, quit) = tray_labels(english);
     let show_i = MenuItem::with_id(app, "tray-show", show, true, None::<&str>)?;
@@ -688,6 +687,7 @@ fn build_tray_menu(app: &AppHandle, english: bool) -> tauri::Result<Menu<tauri::
     Menu::with_items(app, &[&show_i, &sep, &quit_i])
 }
 
+#[cfg(not(target_os = "macos"))]
 fn apply_tray_locale(app: &AppHandle, english: bool) {
     TRAY_LOCALE_EN.store(english, Ordering::SeqCst);
     let Ok(menu) = build_tray_menu(app, english) else {
@@ -734,30 +734,19 @@ fn set_native_theme(app: AppHandle, dark: bool) {
 }
 
 #[tauri::command]
-fn set_tray_locale(app: AppHandle, locale: String) {
+fn set_tray_locale(_app: AppHandle, locale: String) {
     let english = locale.eq_ignore_ascii_case("en");
     if TRAY_LOCALE_EN.load(Ordering::SeqCst) == english {
         return;
     }
-    apply_tray_locale(&app, english);
+    #[cfg(not(target_os = "macos"))]
+    apply_tray_locale(&_app, english);
 }
 
-/// Change the system tray icon. `"default"` | `"light"` | `"dark"`.
+/// Change the tray appearance: `"system"` or `"default"` (the green brand icon).
 #[tauri::command]
 fn set_app_icon(app: AppHandle, variant: String) -> Result<(), String> {
-    let icon_bytes: &[u8] = match variant.as_str() {
-        "light" => ICON_LIGHT,
-        "dark" => ICON_DARK,
-        _ => ICON_DEFAULT,
-    };
-    let image =
-        Image::from_bytes(icon_bytes).map_err(|e| format!("Failed to decode icon image: {e}"))?;
-    let tray = app
-        .tray_by_id(TRAY_ID)
-        .ok_or_else(|| "Tray icon not found".to_string())?;
-    tray.set_icon(Some(image))
-        .map_err(|e| format!("Failed to set tray icon: {e}"))?;
-    Ok(())
+    tray_icon::set_preference(&app, &variant)
 }
 
 #[tauri::command]
@@ -843,17 +832,11 @@ pub fn run() {
             autoconnect_set
         ])
         .setup(move |app| {
-            let english = TRAY_LOCALE_EN.load(Ordering::SeqCst);
-            let menu = build_tray_menu(app.handle(), english)?;
-            let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+            let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .tooltip("offveil")
-                .menu(&menu)
+                .icon(tray_icon::image()?)
+                .icon_as_template(tray_icon::is_template())
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "tray-show" => show_main(app),
-                    "tray-quit" => quit_with_core(app),
-                    _ => {}
-                })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -861,15 +844,29 @@ pub fn run() {
                         ..
                     } = event
                     {
+                        #[cfg(target_os = "macos")]
+                        show_main(tray.app_handle());
+                        #[cfg(not(target_os = "macos"))]
                         toggle_main(tray.app_handle());
                     }
                 });
 
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
+            // macOS has no tray menu: a click opens the application directly.
+            // Do not attach one later when the frontend changes language either.
+            #[cfg(not(target_os = "macos"))]
+            let tray = tray
+                .menu(&build_tray_menu(
+                    app.handle(),
+                    TRAY_LOCALE_EN.load(Ordering::SeqCst),
+                )?)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "tray-show" => show_main(app),
+                    "tray-quit" => quit_with_core(app),
+                    _ => {}
+                });
 
             let _ = tray.build(app)?;
+            tray_icon::watch_system_theme(app.handle());
 
             #[cfg(target_os = "macos")]
             {

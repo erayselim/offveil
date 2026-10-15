@@ -1,9 +1,9 @@
 <img src="https://cdn.gtaup.com/_-GYV5he.svg" alt="offveil" width="360" />
 
-<b>Windows client for services ISPs in Turkiye interfere with.</b><br>
+<b>Windows and macOS client for services ISPs in Türkiye interfere with.</b><br>
 One switch. Local DoH, DPI desync, and a selective tunnel when that is not enough.
 
-<a href="https://github.com/erayselim/offveil/releases"><img src="https://img.shields.io/github/v/release/erayselim/offveil?style=flat-square&color=2CC295" alt="Release" /></a>
+<a href="https://github.com/erayselim/offveil/releases"><img src="https://img.shields.io/github/v/release/erayselim/offveil?include_prereleases&style=flat-square&color=2CC295" alt="Release" /></a>
 <a href="LICENSE"><img src="https://img.shields.io/github/license/erayselim/offveil?style=flat-square&color=2CC295" alt="License" /></a>
 <a href="https://github.com/erayselim/offveil/releases"><img src="https://img.shields.io/github/downloads/erayselim/offveil/total?style=flat-square&color=2CC295" alt="Downloads" /></a>
 
@@ -15,7 +15,11 @@ One switch. Local DoH, DPI desync, and a selective tunnel when that is not enoug
 
 ## Download
 
-Only from [GitHub Releases](https://github.com/erayselim/offveil/releases). Check `offveil_*_x64-setup.exe` against `SHA256SUMS.txt` on the same release:
+**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.0-rc.1/offveil_1.0.0-rc.1_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.0-rc.1/offveil_1.0.0-rc.1_aarch64.dmg)**
+
+The shared **1.0.0-rc.1** release is a release candidate for Windows and M1-or-later Macs. Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.0-rc.1).
+
+Existing users can use **Check for Updates**. Verify downloads against `SHA256SUMS.txt` on the same release:
 
 ```powershell
 Get-FileHash -Algorithm SHA256 .\offveil_*_x64-setup.exe
@@ -29,11 +33,11 @@ gh attestation verify .\offveil_*_x64-setup.exe --owner erayselim
 
 SmartScreen will show "Windows protected your PC". Use **More info**, then **Run anyway**. Smart App Control blocks unsigned binaries with no bypass. We do not tell you to turn SAC off. See [docs/antivirus.md](docs/antivirus.md).
 
-Apple Silicon is a **prerelease** (`offveil_*_aarch64.dmg` on a `v*-mac*` tag, not Latest). Drag the app into Applications, try opening it, then use System Settings → Privacy & Security → Open Anyway. This free build is ad-hoc signed, without Apple notarization. See [Mac installation and troubleshooting](docs/beta-mac.md).
+On Mac, drag the app into Applications, try opening it, then use System Settings → Privacy & Security → Open Anyway. This free build is ad-hoc signed, without Apple notarization. See [Mac installation and troubleshooting](docs/beta-mac.md).
 
 The NSIS installer is per-machine (`C:\Program Files\offveil`, one UAC). It registers `offveil-core` as a manual-start service. The switch in the UI starts and stops protection.
 
-If something breaks, export a diagnostics zip from the app. There are no ISP presets to pick. Beta reports: [issue form](.github/ISSUE_TEMPLATE/beta.yml).
+If something breaks, export a support file from Settings and use the [issue form](.github/ISSUE_TEMPLATE/beta.yml).
 
 ## Layout
 

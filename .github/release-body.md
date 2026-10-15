@@ -1,22 +1,13 @@
-# offveil for Windows
+Windows ve Mac artık aynı sürümde. Bu, 1.0 öncesindeki ilk ortak sürüm adayı.
 
-**Installer:** `offveil_*_x64-setup.exe`  
-**Checksums:** `SHA256SUMS.txt` on this release.
+**İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — M1 ve sonrası]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
 
-```powershell
-Get-FileHash -Algorithm SHA256 .\offveil_*_x64-setup.exe
-```
+- Daha az tekrarlanan DNS ve arka plan işlemi.
+- Mac'te daha güvenilir bağlantı, kurulum ve servis kurtarma.
+- Sistem görünümüne uyum sağlayan tepsi / menü çubuğu ikonu.
 
-## This release
+Mevcut kullanıcılar **Güncellemeleri kontrol et** ile geçebilir. Mac güncellemesi yönetici onayı isteyebilir; mac.3'te eski servis kapanmıyorsa DMG ile elle kurun.
 
-On crisis-day throttle, social suffixes take the selective tunnel. Same switch. HTTPS desync and game UDP stay as they were. A slow home network does not promote the canary (the control host must be healthy).
+Windows'ta SmartScreen, Mac'te geliştirici doğrulama uyarısı çıkabilir. [Windows](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac kurulumu](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
 
-## SmartScreen
-
-Unsigned installer. **Windows protected your PC** → **More info** → **Run anyway**.
-
-Smart App Control has no bypass. We do not tell you to turn it off.
-
-## Support
-
-If protection fails: **Settings → Save a support file** and attach it to your report.
+Sorun yaşarsanız **Ayarlar → Destek dosyası kaydet** üzerinden rapor paylaşabilirsiniz. İndirmelerin doğrulama bilgileri `SHA256SUMS.txt` içinde.

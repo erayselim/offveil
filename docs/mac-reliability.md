@@ -24,6 +24,18 @@ The Darwin build applies the checked-in `byedpi-darwin-bind-interface.patch` aft
 
 Darwin uses sing-box's `gvisor` TUN stack. On the macOS 26 runner, both ByeDPI and sing-box SOCKS HTTPS worked with the `system` stack while ordinary routed utun TCP connections timed out. The same real traffic test passes with `gvisor`. Windows retains `system`. Keep both SOCKS tests and the ordinary HTTPS test: a listening proxy port or a successful SOCKS request does not establish that the TUN TCP path works.
 
+## Energy and repeated work
+
+The TUN stack, split-default capture, desynchronization rules, QUIC policy and selective tunnel fallback stay unchanged. Darwin capture does not resolve seed addresses for unused per-host routes. Its session opts out of prefix expansion; the engine still records observed CDN hosts and suggestions. Backends that install per-host routes retain their existing resolution path. Expansion reserves an observed host before starting asynchronous work and does not publish results into a later capture session.
+
+Bootstrap and the live DNS stub share a DoH client and connection pool. Identical in-flight wire questions are combined without combining different DNS flags or EDNS options. Each waiter retains its own response ID, private response copy and cancellation. Once no waiters remain, upstream work is cancelled. The bounded positive-answer cache holds at most 256 entries of at most 4096 bytes for the shortest record TTL, capped at 60 seconds. Cache hits age record TTLs; HTTP Age is also deducted. Empty, negative, truncated, failed and known poisoned answers are not cached. Network-change and resume handling clear cached answers and resolver preference, and old in-flight responses cannot refill the new network's cache. Shutdown closes idle HTTPS connections.
+
+Cold DoH queries race all providers. Once a provider succeeds, it gets a 150 ms head start; failure starts the fallback race immediately, and a slow response also triggers the race. The overall two-second DoH budget, poison checks, circuit breaker and plain-DNS fallback remain in place.
+
+The UI polls every 2.5 seconds while visible and every 30 seconds while hidden. Revealing the window refreshes immediately. Requests never overlap, timers resume only after completion, and cleanup removes native listeners even when their registration completes late. The daemon keeps protection independent of the window. Network and power watchers retain their existing behavior in this optimization pass.
+
+Validation: run `go test ./...` and `go test -race ./internal/dns ./internal/engine ./internal/capture` from offveil-core; `node --test scripts/status-polling.test.cjs` from the repository root; and the UI production build. Cross-compiling the core and test binaries for Darwin arm64 checks build compatibility; battery savings, fan behavior and real TUN/Discord/IMVU traffic still require a physical Mac test.
+
 ## Support export
 
 Support export is a local operation independent of daemon setup. A native save dialog selects the destination. The bundled core's `support` command tries diagnostics with a short deadline, then records sanitized installation facts if the daemon is absent or stuck. Only a completed ZIP produces a success response. User paths in errors are redacted. Credentials, raw network configuration, subscription data and general daemon logs are not included.

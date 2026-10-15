@@ -28,10 +28,10 @@ test("manifest carries the final archive's signature and immutable tag URL", (t)
   assert.throws(() => manifest({ tag: "v1.0.0-mac.10", repo: "erayselim/offveil", tar }));
 });
 
-test("Mac notes are versioned independently of the Windows release", () => {
+test("Windows and Mac notes use the same release version", () => {
   const mac = JSON.parse(fs.readFileSync(path.join(__dirname, "../offveil-ui/src/whats-new.macos.json"), "utf8"));
   assert.deepEqual(releaseNotes(`v${mac.version}`), mac.notes);
   assert.equal(releaseNotes("v99.0.0"), null);
   const windows = JSON.parse(fs.readFileSync(path.join(__dirname, "../offveil-ui/src/whats-new.json"), "utf8"));
-  assert.notEqual(windows.version, mac.version);
+  assert.equal(windows.version, mac.version);
 });

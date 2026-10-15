@@ -64,6 +64,7 @@ import {
 import { UpdateFlowDialog } from "./update-dialog";
 import { isUpdateActionPhase, isUpdateBusyPhase } from "./updates";
 import { useAppUpdates } from "./use-app-updates";
+import { useStatusPolling } from "./use-status-polling";
 import {
   applyTheme,
   detectThemePref,
@@ -261,7 +262,7 @@ export default function App() {
   const [quitOpen, setQuitOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetHint, setResetHint] = useState(false);
-  const pollRef = useRef<number | null>(null);
+  const statusRequestRef = useRef<Promise<Status | null> | null>(null);
   const resetHintTimer = useRef<number | null>(null);
   const paletteIconRef = useRef<PaletteIconHandle>(null);
   const settingsIconRef = useRef<SettingsIconHandle>(null);
@@ -368,26 +369,33 @@ export default function App() {
     };
   }, []);
 
-  const refreshStatus = useCallback(async () => {
-    try {
-      const s = await invoke<Status>("get_status");
-      setStatus(s);
-      setError(null);
-      setPhase("ready");
-      return s;
-    } catch (e) {
-      const msg = String(e);
-      if (msg.includes("not_connected")) {
-        const b = await invoke<BootstrapInfo>("probe_bootstrap");
-        setBootstrap(b);
-        setStatus(null);
-        setPhase(requiresAdminSetup(b) ? "setup" : "ready");
-      } else {
-        setError(msg);
-        setPhase("error");
+  const refreshStatus = useCallback(() => {
+    if (statusRequestRef.current) return statusRequestRef.current;
+    const request = (async () => {
+      try {
+        const s = await invoke<Status>("get_status");
+        setStatus(s);
+        setError(null);
+        setPhase("ready");
+        return s;
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("not_connected")) {
+          const b = await invoke<BootstrapInfo>("probe_bootstrap");
+          setBootstrap(b);
+          setStatus(null);
+          setPhase(requiresAdminSetup(b) ? "setup" : "ready");
+        } else {
+          setError(msg);
+          setPhase("error");
+        }
+        return null;
       }
-      return null;
-    }
+    })();
+    statusRequestRef.current = request;
+    const clear = () => { statusRequestRef.current = null; };
+    void request.then(clear, clear);
+    return request;
   }, []);
 
   useEffect(() => {
@@ -426,21 +434,7 @@ export default function App() {
     };
   }, [refreshStatus]);
 
-  useEffect(() => {
-    if (phase !== "ready" || busy) {
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      return;
-    }
-    pollRef.current = window.setInterval(() => {
-      void refreshStatus();
-    }, 2500);
-    return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-    };
-  }, [phase, busy, refreshStatus]);
+  useStatusPolling(phase === "ready" && !busy, refreshStatus);
 
   useEffect(() => {
     return () => {

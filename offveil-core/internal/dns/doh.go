@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,6 +42,12 @@ type DoHClient struct {
 	failStreak int
 	skipUntil  time.Time
 	mode       string // doh | plain_skip | recovering
+	preferred  string // last successful endpoint; fallbacks remain available
+
+	queriesMu  sync.Mutex
+	cache      map[string]dohCacheEntry
+	flights    map[string]*dohFlight
+	generation uint64
 }
 
 // NewDoHClient builds a bootstrap DoH client.
@@ -134,17 +141,13 @@ func (c *DoHClient) shouldSkip() bool {
 	return false
 }
 
-// Exchange races DoH endpoints in parallel; first success wins.
-// After consecutive failures, skips DoH briefly (Firefox TRR Confirmation pattern).
-func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, string, error) {
+// exchange queries a healthy endpoint first, racing the rest if it stalls.
+// Cold starts still race all endpoints; the total budget and circuit are unchanged.
+func (c *DoHClient) exchange(ctx context.Context, packed []byte) (*mdns.Msg, string, error) {
 	if c.shouldSkip() {
 		return nil, "", fmt.Errorf("DoH skipped (circuit open)")
 	}
 
-	packed, err := msg.Pack()
-	if err != nil {
-		return nil, "", fmt.Errorf("pack: %w", err)
-	}
 	if len(c.endpoints) == 0 {
 		return nil, "", fmt.Errorf("no DoH endpoints configured")
 	}
@@ -153,38 +156,70 @@ func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, str
 	defer cancel()
 
 	ch := make(chan dohResult, len(c.endpoints))
-	for _, ep := range c.endpoints {
+	start := func(ep string) {
 		go func(ep string) {
 			resp, err := c.exchangeOne(ctx, ep, packed)
 			ch <- dohResult{resp: resp, ep: ep, err: err}
 		}(ep)
 	}
+	c.mu.Lock()
+	preferred := c.preferred
+	c.mu.Unlock()
+	var fallbacks []string
+	for _, ep := range c.endpoints {
+		if ep == preferred {
+			start(ep)
+		} else {
+			fallbacks = append(fallbacks, ep)
+		}
+	}
+	launchFallbacks := func() {
+		for _, ep := range fallbacks {
+			start(ep)
+		}
+		fallbacks = nil
+	}
+	if len(fallbacks) == len(c.endpoints) {
+		launchFallbacks()
+	}
+	timer := time.NewTimer(150 * time.Millisecond)
+	defer timer.Stop()
 
 	var lastErr error
 	remaining := len(c.endpoints)
 	for remaining > 0 {
 		select {
+		case <-timer.C:
+			launchFallbacks()
 		case <-ctx.Done():
 			if lastErr == nil {
 				lastErr = ctx.Err()
 			}
-			c.noteFailure()
+			if ctx.Err() != context.Canceled {
+				c.noteFailure()
+			}
 			return nil, "", fmt.Errorf("DoH timeout: %w", lastErr)
 		case r := <-ch:
 			remaining--
 			if r.err != nil {
 				lastErr = r.err
+				launchFallbacks()
 				continue
 			}
 			cancel() // stop siblings
 			c.noteSuccess()
+			c.mu.Lock()
+			c.preferred = r.ep
+			c.mu.Unlock()
 			return r.resp, r.ep, nil
 		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("all DoH endpoints failed")
 	}
-	c.noteFailure()
+	if ctx.Err() != context.Canceled {
+		c.noteFailure()
+	}
 	return nil, "", lastErr
 }
 
@@ -212,6 +247,9 @@ func (c *DoHClient) exchangeOne(ctx context.Context, endpoint string, packed []b
 	out := new(mdns.Msg)
 	if err := out.Unpack(body); err != nil {
 		return nil, fmt.Errorf("%s unpack: %w", endpoint, err)
+	}
+	if age, err := strconv.ParseUint(res.Header.Get("Age"), 10, 32); err == nil {
+		ageDNSResponse(out, uint32(age))
 	}
 	return out, nil
 }

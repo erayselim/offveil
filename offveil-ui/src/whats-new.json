@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-b5",
+  "version": "1.0.0-rc.1",
   "notes": {
-    "tr": "Kriz günü yavaşlayan sosyal siteler sessizce tünele alınır. Ana ekran aynı; Discord ayrı kalır.",
-    "en": "On crisis-day throttle, social suffixes silently take the selective tunnel. Same one switch; Discord stays its own path."
+    "tr": "Windows ve Mac artık aynı sürümde. DNS ve arka plan işlemleri hafifletildi. Tepsi ikonu sistem görünümüne uyum sağlıyor; Mac'te bağlantı ve servis kurtarma iyileştirildi.",
+    "en": "Windows and Mac now share one release. Less repeated DNS and background work, a tray icon that follows your system, and more reliable Mac connections and service recovery."
   }
 }

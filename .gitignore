@@ -48,6 +48,8 @@ offveil-ui/src-tauri/bundle-bin/ciadpi
 
 # Local diagnostics dumps
 offveil-diag/
+* test diagnostics/
+exa-results/
 *.exe
 *.dll
 *.pdb

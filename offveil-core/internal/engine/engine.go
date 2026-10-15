@@ -262,6 +262,12 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	// DoH for allowlist resolve; falls back to poison-filtered plain UDP.
 	doh := offdns.NewDoHClient(offdns.DefaultPoisonSet())
+	keepDoH := false
+	defer func() {
+		if !keepDoH {
+			doh.Close()
+		}
+	}()
 	capCfg := capture.DefaultConfig()
 	capCfg.SkipAdapter = true
 	capCfg.ApplyRoutes = false
@@ -313,6 +319,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 
 	dnsCfg := offdns.DefaultConfig()
+	dnsCfg.Client = doh
 	dnsCfg.ApplyLeakGuard = false
 	// Catch-all NRPT (Windows) / networksetup (Darwin): system resolver hits
 	// the stub. Leak-guard stays off (no NIC rewrite). TUN uses split-default
@@ -621,6 +628,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 		return sess.Close()
 	})
 	e.cleanup.Register("dns", func() error {
+		defer doh.Close()
 		sess := e.dns
 		e.dns = nil
 		e.dnsInfo = nil
@@ -634,6 +642,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.since = &now
 	e.state = StateActive
 	e.protection = true
+	keepDoH = true
 	if e.tun != nil && e.tunnelInfo != nil && e.tunnelInfo.Up {
 		e.summary = "Açık"
 		e.state = StateActive
@@ -900,6 +909,9 @@ func (e *Engine) silentReprobe() {
 	inv := false
 	if e.policy != nil {
 		inv = e.policy.ObserveNetwork(ni)
+	}
+	if inv {
+		e.resetDNSCacheLocked()
 	}
 	e.mu.Unlock()
 	if inv {

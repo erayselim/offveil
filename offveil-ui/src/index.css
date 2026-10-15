@@ -723,7 +723,7 @@
 
 .icon-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -773,13 +773,16 @@
   overflow: hidden;
 }
 
-.icon-option-preview[data-variant="default"],
-.icon-option-preview[data-variant="light"] {
+.icon-option-preview[data-variant="default"] {
   background: #1a1a1c;
 }
 
-.icon-option-preview[data-variant="dark"] {
-  background: #f0f0f2;
+.icon-option-preview[data-variant="system"] img {
+  filter: brightness(0) invert(1);
+}
+
+.light .icon-option-preview[data-variant="system"] img {
+  filter: brightness(0);
 }
 
 .icon-option-preview img {

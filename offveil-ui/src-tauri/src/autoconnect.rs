@@ -95,16 +95,18 @@ pub fn spawn(app: &AppHandle) {
     if !pref_enabled(app) || CANCELLED.load(Ordering::SeqCst) {
         return;
     }
-    // Missing service / start grant cannot recover without admin — don't retry.
-    if matches!(service::probe().state, BootstrapState::NeedsInstall) {
-        return;
-    }
     if CONNECTING.swap(true, Ordering::SeqCst) {
         return;
     }
     let marker = disabled_marker(app);
     thread::spawn(move || {
-        let _ok = try_connect_loop(&marker);
+        // spawn() is called during setup and from a synchronous UI command.
+        // Probe IPC and compare Mac payloads here, so neither can stall tray
+        // clicks or window presentation on the main event loop.
+        // Missing service / start grant cannot recover without admin — don't retry.
+        if !matches!(service::probe().state, BootstrapState::NeedsInstall) {
+            let _ok = try_connect_loop(&marker);
+        }
         CONNECTING.store(false, Ordering::SeqCst);
     });
 }

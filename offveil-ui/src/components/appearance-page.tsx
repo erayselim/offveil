@@ -2,7 +2,6 @@ import { Check, Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import { useRef, type KeyboardEvent } from "react";
 
 import iconDefault from "@/assets/brand/offveil-icon-default.svg";
-import iconDark from "@/assets/brand/offveil-icon-dark.svg";
 import iconLight from "@/assets/brand/offveil-icon-light.svg";
 import { AppPage } from "@/components/app-page";
 import { APP_ICON_VARIANTS, type AppIconVariant } from "@/app-icon";
@@ -19,8 +18,7 @@ const ICONS: Record<ThemePref, LucideIcon> = {
 
 const ICON_SRC: Record<AppIconVariant, string> = {
   default: iconDefault,
-  light: iconLight,
-  dark: iconDark,
+  system: iconLight,
 };
 
 export function AppearancePage({
@@ -53,8 +51,7 @@ export function AppearancePage({
 
   const iconCopy: Record<AppIconVariant, string> = {
     default: m.appIconDefault,
-    light: m.appIconLight,
-    dark: m.appIconDark,
+    system: m.appIconSystem,
   };
 
   const selectTheme = (value: ThemePref, moveFocus = false) => {

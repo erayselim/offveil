@@ -1,11 +1,11 @@
-# macOS preview
+# macOS installation
 
 offveil for Apple Silicon (M1 and later), macOS 12 or later. Intel Macs are not supported.
 
 ## Install
 
 1. Download `offveil_*_aarch64.dmg` from [GitHub Releases](https://github.com/erayselim/offveil/releases).
-2. Compare its SHA-256 with `SHA256SUMS.txt` on the same Mac release. Shared Windows/Mac releases use `SHA256SUMS-mac.txt` for Mac files.
+2. Compare its SHA-256 with `SHA256SUMS.txt` on the same release. The shared Windows/Mac release uses one checksum file for both systems.
 
    ```bash
    shasum -a 256 ~/Downloads/offveil_*_aarch64.dmg
@@ -19,11 +19,13 @@ The app is ad-hoc signed, without Developer ID or Apple notarization. An unident
 
 ## Updates
 
-Install this preview manually once if upgrading from an older Mac build. After that, **Check for Updates** discovers newer published releases and prereleases that contain a complete Mac update package. Windows-only releases and drafts are skipped.
+**Check for Updates** discovers newer published releases and release candidates that contain a complete Mac update package. Windows-only releases and drafts are skipped. The shared `1.0.0-rc.1` release upgrades both `1.0.0-mac.3` and `1.0.0-mac.4`.
+
+If mac.3 cannot stop its old service before updating, quit the app and install the new DMG manually. The new app can recover that service during administrator-approved setup; the old updater cannot gain this behavior before it is upgraded.
 
 Downloads are verified with the Tauri updater signature before installation. The app stops protection, shuts down the old daemon, installs the update and restarts. If the bundled core or sidecars changed, the setup screen requests administrator approval to refresh them. Protection cannot start with an outdated payload.
 
-Versions follow SemVer. `1.0.0-mac.9 → 1.0.0-mac.10 → 1.0.0` is an upgrade sequence. After `1.0.0`, use a higher version such as `1.0.1-mac.1` for another preview. An unchanged or lower version is not offered.
+Versions follow SemVer. `1.0.0-mac.4 → 1.0.0-rc.1 → 1.0.0` is an upgrade sequence. An unchanged or lower version is not offered.
 
 ## Troubleshooting
 
@@ -99,9 +101,9 @@ Browser-download approval, physical-device connectivity on a filtered network, D
 
 `release-darwin` derives the app and core version from the tag. It seals the final bundle, creates and signs the updater archive, then generates `latest-mac.json`. Keep the manifest, archive and archive signature together on the same release.
 
-Update `offveil-ui/src/whats-new.macos.json` for each Mac release. Matching notes are included in both the app and update manifest; Windows notes remain independent.
+Update both localized whats-new files for each shared release, using the same version. Matching platform notes are included in the app and update manifest.
 
-Mac-only `v*-mac*` tags stage draft prereleases without changing GitHub Latest. Verify the artifacts and publish the draft as a prerelease to make it available to the updater. Shared `v*` tags attach Mac assets to the existing Windows release. Windows `latest.json`, checksums and release status are preserved.
+Shared tags build both platforms before publishing one complete release. It contains one `SHA256SUMS.txt`, the Windows/Mac installers, signed updater packages and signed ruleset. The installation guide stays inside the DMG. See [release maintenance](releases.md) for the legacy Windows update bridge. Mac-only tags remain a separate legacy preview path.
 
 Discovery inspects up to 300 recent GitHub releases. API or rate-limit failures are reported as check failures. Update verification uses the existing `TAURI_SIGNING_PRIVATE_KEY`; it does not require an Apple Developer account.
 

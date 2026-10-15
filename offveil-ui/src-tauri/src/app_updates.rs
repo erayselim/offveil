@@ -213,6 +213,24 @@ mod tests {
         );
         assert!(newest_manifest(&releases, &semver::Version::parse("1.0.0").unwrap()).is_none());
     }
+
+    #[test]
+    fn shared_rc_upgrades_both_previous_mac_releases() {
+        let releases = vec![release("v1.0.0-rc.1", false, true)];
+        for version in ["1.0.0-mac.3", "1.0.0-mac.4"] {
+            let selected =
+                newest_manifest(&releases, &semver::Version::parse(version).unwrap()).unwrap();
+            assert_eq!(selected.0.to_string(), "1.0.0-rc.1");
+        }
+    }
+
+    #[test]
+    fn rc_is_newer_than_the_previous_windows_versions() {
+        let rc = semver::Version::parse("1.0.0-rc.1").unwrap();
+        for prior in ["1.0.0-b4", "1.0.0-b5"] {
+            assert!(rc > semver::Version::parse(prior).unwrap());
+        }
+    }
     #[test]
     fn rejects_manifest_outside_this_release() {
         let mut release = release("v1.0.1", false, true);

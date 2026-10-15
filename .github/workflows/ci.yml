@@ -40,3 +40,4 @@ jobs:
         run: |
           npm ci
           npm run typecheck
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs

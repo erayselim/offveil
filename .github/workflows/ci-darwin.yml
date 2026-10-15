@@ -158,7 +158,7 @@ jobs:
         run: |
           npm ci
           npm run typecheck
-          node --test ../scripts/mac-release.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
       - name: Stage real Darwin sidecars
         run: bash ./scripts/stage-bundle-darwin.sh
       - name: Cargo test (unix socket, launchd, LaunchAgent)

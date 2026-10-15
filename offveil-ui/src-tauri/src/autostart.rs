@@ -25,7 +25,10 @@ const STARTUP_APPROVED_ENABLED: [u8; 12] = [
 ];
 
 fn disabled_marker(app: &AppHandle) -> PathBuf {
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| fallback_config_dir());
+    let dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| fallback_config_dir());
     dir.join("autostart-disabled")
 }
 
@@ -323,7 +326,9 @@ mod tests {
 
     #[test]
     fn launch_agent_plist_is_login_not_keepalive() {
-        let xml = launch_agent_plist(Path::new("/Applications/offveil.app/Contents/MacOS/offveil"));
+        let xml = launch_agent_plist(Path::new(
+            "/Applications/offveil.app/Contents/MacOS/offveil",
+        ));
         assert!(xml.contains("<string>com.offveil.app</string>"));
         assert!(xml.contains("--tray"));
         assert!(xml.contains("<key>RunAtLoad</key>"));

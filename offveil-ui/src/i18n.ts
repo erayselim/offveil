@@ -39,8 +39,7 @@ export type Messages = {
   appIcon: string;
   appIconHint: string;
   appIconDefault: string;
-  appIconLight: string;
-  appIconDark: string;
+  appIconSystem: string;
   autostartHint: string;
   autoconnectHint: string;
   connectionTestOff: string;
@@ -121,10 +120,9 @@ const tr: Messages = {
   themeLight: "Açık",
   themeLightHint: "Açık görünümü kullan",
   appIcon: "Uygulama ikonu",
-  appIconHint: "Sistem tepsisinde / menü çubuğunda görünür.",
-  appIconDefault: "Varsayılan",
-  appIconLight: "Açık",
-  appIconDark: "Koyu",
+  appIconHint: "Sistem, ikonu sistem tepsisi / menü çubuğu görünümüne uyarlar.",
+  appIconDefault: "Yeşil",
+  appIconSystem: "Sistem",
   autostartHint: "Uygulama açılışta otomatik başlar.",
   autoconnectHint: "Uygulama açılınca koruma da başlar.",
   connectionTestOff: "Önce korumayı aç.",
@@ -205,10 +203,9 @@ const en: Messages = {
   themeLight: "Light",
   themeLightHint: "Use light appearance",
   appIcon: "App icon",
-  appIconHint: "Shown in the tray / menu bar.",
-  appIconDefault: "Default",
-  appIconLight: "Light",
-  appIconDark: "Dark",
+  appIconHint: "System adapts the icon to the tray / menu bar appearance.",
+  appIconDefault: "Green",
+  appIconSystem: "System",
   autostartHint: "Start automatically with your device.",
   autoconnectHint: "Turn protection on when the app starts.",
   connectionTestOff: "Turn protection on first.",

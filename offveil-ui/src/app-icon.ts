@@ -1,21 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AppIconVariant = "default" | "light" | "dark";
+export type AppIconVariant = "system" | "default";
 
-export const APP_ICON_VARIANTS: AppIconVariant[] = ["default", "light", "dark"];
+export const APP_ICON_VARIANTS: AppIconVariant[] = ["system", "default"];
 
 const STORAGE_KEY = "offveil.app-icon";
 
 export function detectAppIcon(): AppIconVariant {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === "default" || saved === "light" || saved === "dark") {
+    if (saved === "system" || saved === "default") {
       return saved;
     }
   } catch {
     /* ignore */
   }
-  return "default";
+  // Retired light/dark preferences follow the system, as do new installs.
+  return "system";
 }
 
 export function persistAppIcon(variant: AppIconVariant) {

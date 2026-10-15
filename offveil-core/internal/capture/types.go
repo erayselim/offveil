@@ -107,6 +107,15 @@ type Session interface {
 	AttachAdapter(name string) error
 }
 
+// NeedsPrefixExpansion defaults to true for sessions that install per-host
+// routes. Split-default backends can opt out without disabling DNS observation.
+func NeedsPrefixExpansion(s Session) bool {
+	if capability, ok := s.(interface{ NeedsPrefixExpansion() bool }); ok {
+		return capability.NeedsPrefixExpansion()
+	}
+	return true
+}
+
 // ResolveHostsToPrefixes looks up A records and returns /32 prefixes (IPv4).
 // If resolve is nil, falls back to net.LookupIP (system DNS - avoid in production).
 // Lookups run in parallel; overall budget is 12s so a hung resolver cannot stall engine start.

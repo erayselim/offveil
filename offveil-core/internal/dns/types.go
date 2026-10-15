@@ -25,6 +25,9 @@ type QueryObserver func(host string)
 
 // Config controls the DNS protection stack.
 type Config struct {
+	// Client shares bootstrap DNS answers/connections with the live stub.
+	// The session owns it and closes it during shutdown. Nil creates a client.
+	Client *DoHClient
 	// ListenAddr is the stub bind address (default 127.0.0.1:53).
 	ListenAddr string
 	// ApplyLeakGuard rewrites TUN (+ egress) DNS to the stub and restores on Close.

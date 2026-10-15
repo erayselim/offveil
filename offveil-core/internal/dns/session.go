@@ -30,7 +30,10 @@ func Start(cfg Config) (Session, error) {
 		cfg.ListenAddr = "127.0.0.1:53"
 	}
 	poison := DefaultPoisonSet()
-	client := NewDoHClient(poison)
+	client := cfg.Client
+	if client == nil {
+		client = NewDoHClient(poison)
+	}
 	stub := NewStub(client, poison)
 	if cfg.OnQuery != nil {
 		stub.SetQueryObserver(cfg.OnQuery)
@@ -133,6 +136,7 @@ func (s *session) Info() Info {
 }
 
 func (s *session) Close() error {
+	defer s.client.Close()
 	s.mu.Lock()
 	guard := s.guard
 	s.guard = nil

@@ -1,52 +1,50 @@
-name: Beta report
-description: Toggle sonrası Discord 2 dk - ISS / Windows / SAC / tanılama
-title: "[beta] "
-labels: ["beta"]
+name: Sorun bildir
+description: Windows veya Mac'te kurulum, bağlantı ve güncelleme sorunları.
+title: "[Bug] "
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Preset sormayın. Çalışmazsa tanılama zip ekleyin.
-        SAC açıksa bu beta sizi kapsamaz (`docs/antivirus.md`).
+        Ne yaşadığınızı ve hangi adımda olduğunu kısaca anlatın.
+        Varsa Ayarlar → Destek dosyası kaydet üzerinden aldığınız ZIP'i ekleyin.
   - type: dropdown
-    id: discord_2min
+    id: platform
     attributes:
-      label: Toggle sonrası Discord 2 dakika içinde açıldı mı?
+      label: Platform
       options:
-        - "Evet"
-        - "Hayır"
-        - "Kurulum olmadı (SmartScreen / SAC / Defender)"
+        - "Windows 64-bit"
+        - "Mac — Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: offveil sürümü
+      placeholder: "1.0.0-rc.1 — Ayarlar'da görebilirsiniz"
+    validations:
+      required: true
+  - type: input
+    id: system_version
+    attributes:
+      label: İşletim sistemi ve cihaz
+      placeholder: "Windows 11 24H2 x64 / macOS 27.0.1, MacBook Pro M1"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Ne oldu?
+      description: Hangi adımları izlediniz, ne bekliyordunuz ve ne oldu?
     validations:
       required: true
   - type: input
     id: isp
     attributes:
-      label: ISS adı
-      placeholder: TT / Superonline / Turksat / Turkcell / Vodafone / diğer
-    validations:
-      required: true
-  - type: input
-    id: windows
-    attributes:
-      label: Windows sürümü
-      placeholder: "Windows 11 24H2 (build 26100) x64"
-    validations:
-      required: true
-  - type: dropdown
-    id: sac
-    attributes:
-      label: Smart App Control
-      options:
-        - "Kapalı"
-        - "Açık"
-        - "Bilmiyorum"
-    validations:
-      required: true
+      label: İnternet sağlayıcısı (bağlantı sorunuysa)
+      placeholder: "Türk Telekom / Superonline / diğer"
   - type: textarea
-    id: av
+    id: support
     attributes:
-      label: SmartScreen / Defender notu
-      placeholder: Run anyway yaptım / quarantine threat adı / exclusion
-  - type: markdown
-    attributes:
-      value: Tanılama paketini (`offveil` → Tanılama paketi) bu issue’ya ekleyin.
+      label: Hata mesajı ve destek dosyası
+      description: Tam hata mesajını yazın; destek ZIP'ini veya ekran görüntüsünü buraya sürükleyebilirsiniz.

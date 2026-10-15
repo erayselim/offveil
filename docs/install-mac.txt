@@ -1,13 +1,13 @@
-offveil — Apple Silicon preview
+offveil — Apple Silicon release candidate
 
 INSTALLATION
 
 1. Download only from https://github.com/erayselim/offveil/releases.
    Compare the DMG's SHA-256 with the checksum file on the same release:
      shasum -a 256 ~/Downloads/offveil_*_aarch64.dmg
-   Mac releases use SHA256SUMS.txt; shared releases use SHA256SUMS-mac.txt.
+   Shared releases use SHA256SUMS.txt for both Windows and Mac files.
 2. Drag offveil into Applications. Launch the copy in Applications.
-3. This preview is ad-hoc signed, without Apple notarization. If the developer
+3. This release candidate is ad-hoc signed, without Apple notarization. If the developer
    cannot be verified, open System Settings → Privacy & Security → Open Anyway,
    then confirm Open.
 4. Approve the administrator prompt for the core service. Turn off iCloud

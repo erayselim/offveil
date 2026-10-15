@@ -54,11 +54,9 @@ func Start(cfg Config) (Session, error) {
 		"adapters", len(snap.Adapters),
 	)
 
-	slog.Info("capture: resolving allowlist", "hosts", len(cfg.ResolveHosts), "skip_adapter", true)
-	allow, err := BuildAllowlist(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("allowlist: %w", err)
-	}
+	// sing-box installs split-default routes, so seed /32s are not consumed.
+	// Keep explicit metadata without resolving every seed during startup.
+	allow := FilterAllowlist(cfg.Allowlist, DefaultExcludePrefixes())
 
 	mtu := cfg.MTU
 	if mtu <= 0 {
@@ -109,6 +107,8 @@ func (s *session) AddPrefixes([]netip.Prefix) (int, error) {
 	// Split-default auto_route already captures public IPv4. No extra /32s.
 	return 0, nil
 }
+
+func (s *session) NeedsPrefixExpansion() bool { return false }
 
 func (s *session) AttachAdapter(string) error {
 	return nil
