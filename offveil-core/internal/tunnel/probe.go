@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"syscall"
@@ -75,17 +74,22 @@ func tlsViaSOCKS(ctx context.Context, socksAddr, dialHost, serverName string) er
 	}
 	defer raw.Close()
 
-	_ = raw.SetDeadline(time.Now().Add(8 * time.Second))
-	tlsConn := tls.Client(raw, &tls.Config{
+	return tlsHandshake(ctx, raw, &tls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: false,
 		MinVersion:         tls.VersionTLS12,
 	})
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return err
+}
+
+func tlsHandshake(ctx context.Context, raw net.Conn, cfg *tls.Config) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := raw.SetDeadline(deadline); err != nil {
+			return err
+		}
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(tlsConn, 1))
-	return nil
+	// HTTPS servers wait for a request after TLS; unsolicited application data
+	// is not a liveness signal. Certificate-verified TLS is the probe boundary.
+	return tls.Client(raw, cfg).HandshakeContext(ctx)
 }
 
 func classifyDialErr(err error) FailClass {

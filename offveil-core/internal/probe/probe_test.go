@@ -17,8 +17,26 @@ func fixedResolve(_ context.Context, _ string) ([]netip.Addr, error) {
 	return []netip.Addr{netip.MustParseAddr("1.2.3.4")}, nil
 }
 
-func noSystemPoison(string, *offdns.PoisonSet) ([]netip.Addr, string, error) {
+func noSystemPoison(context.Context, string, *offdns.PoisonSet) ([]netip.Addr, string, error) {
 	return nil, "", nil
+}
+
+func TestSystemLookupSharesProbeDeadline(t *testing.T) {
+	start := time.Now()
+	result := probe.Target(context.Background(), "audit.invalid", probe.Options{
+		Timeout: 30 * time.Millisecond,
+		LookupSystem: func(ctx context.Context, _ string, _ *offdns.PoisonSet) ([]netip.Addr, string, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("system lookup received no deadline")
+			}
+			<-ctx.Done()
+			return nil, "", ctx.Err()
+		},
+		Resolve: func(ctx context.Context, _ string) ([]netip.Addr, error) { return nil, ctx.Err() },
+	})
+	if result.Class != probe.ClassTimeout || time.Since(start) > time.Second {
+		t.Fatalf("probe outlived its budget: %+v", result)
+	}
 }
 
 func TestPathFor(t *testing.T) {
@@ -81,7 +99,7 @@ func TestTargetIPDropOnDialTimeout(t *testing.T) {
 func TestTargetSystemPoisonThenOpen(t *testing.T) {
 	res := probe.Target(context.Background(), "discord.com", probe.Options{
 		Resolve: fixedResolve,
-		LookupSystem: func(string, *offdns.PoisonSet) ([]netip.Addr, string, error) {
+		LookupSystem: func(context.Context, string, *offdns.PoisonSet) ([]netip.Addr, string, error) {
 			return []netip.Addr{netip.MustParseAddr("195.175.254.2")}, "ooni.tr_6", nil
 		},
 		DialTLS: func(context.Context, string, string) error { return nil },

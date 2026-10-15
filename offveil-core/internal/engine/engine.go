@@ -64,6 +64,8 @@ type Engine struct {
 	mu sync.Mutex
 	// Immutable snapshots remain readable while any operation owns mu.
 	operation atomic.Pointer[operationSnapshot]
+	// Public lifecycle requests invalidate work from an older session.
+	lifecycleGeneration uint64
 
 	state       string
 	protection  bool
@@ -199,7 +201,11 @@ func (e *Engine) WithRepair(fn RepairFunc) *Engine {
 func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lifecycleGeneration++
+	return e.startLocked(mode)
+}
 
+func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	if mode != "" && mode != "auto" {
 		return nil, &ipc.RPCError{Code: ipc.CodeBadRequest, Message: "only mode=auto is supported"}
 	}
@@ -311,7 +317,10 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	if len(probeHosts) > 0 {
 		poisonHost = probeHosts[0]
 	}
-	if _, poisonID, perr := offdns.ProbeSystemDNS(poisonHost, offdns.DefaultPoisonSet()); perr == nil && poisonID != "" {
+	systemCtx, systemCancel := context.WithTimeout(context.Background(), probe.DefaultTimeout)
+	_, poisonID, perr := offdns.ProbeSystemDNS(systemCtx, poisonHost, offdns.DefaultPoisonSet())
+	systemCancel()
+	if perr == nil && poisonID != "" {
 		if len(targets) > 0 {
 			targets[0].Outcome = "dns_poison"
 		}
@@ -665,7 +674,11 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lifecycleGeneration++
+	return e.stopLocked()
+}
 
+func (e *Engine) stopLocked() (*ipc.Status, *ipc.RPCError) {
 	if e.state == StateStopped {
 		return e.statusLocked(), &ipc.RPCError{Code: ipc.CodeNotRunning, Message: "Core protection is stopped"}
 	}
@@ -704,6 +717,9 @@ func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 // Repair stops protection if needed, restores leftover DNS/NRPT/adapter
 // state, flushes the resolver cache, and clears learned DPI policy.
 func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
+	e.mu.Lock()
+	e.lifecycleGeneration++
+	e.mu.Unlock()
 	st := e.Status()
 	if st.Protection || st.State != StateStopped {
 		if _, err := e.Stop(); err != nil && err.Code != ipc.CodeNotRunning {
@@ -735,6 +751,7 @@ func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
 func (e *Engine) CrashCleanup(reason string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lifecycleGeneration++
 	slog.Warn("engine: crash cleanup", "reason", reason, "state", e.state)
 	e.stopReliabilityLocked()
 	e.stopReprobeLocked()

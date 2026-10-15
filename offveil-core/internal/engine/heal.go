@@ -58,6 +58,9 @@ func (e *Engine) requestHeal(reason string) {
 // Debounced; no-op when protection is off. Matches UI “Yenile” (stop+start)
 // so TUN routes / sidecars rebind after Windows rebuilds the route table.
 func (e *Engine) SelfHeal(reason string) {
+	e.mu.Lock()
+	generation := e.lifecycleGeneration
+	e.mu.Unlock()
 	e.healMu.Lock()
 	defer e.healMu.Unlock()
 
@@ -66,7 +69,7 @@ func (e *Engine) SelfHeal(reason string) {
 	}
 
 	e.mu.Lock()
-	if !e.protection || e.state == StateStopped || e.state == StateStopping || e.state == StateStarting {
+	if generation != e.lifecycleGeneration || !e.protection || e.state == StateStopped || e.state == StateStopping || e.state == StateStarting {
 		e.mu.Unlock()
 		return
 	}
@@ -84,7 +87,7 @@ func (e *Engine) SelfHeal(reason string) {
 	time.Sleep(healSettleDelay)
 
 	e.mu.Lock()
-	if !e.protection || e.state == StateStopped || e.state == StateStopping {
+	if generation != e.lifecycleGeneration || !e.protection || e.state == StateStopped || e.state == StateStopping {
 		e.mu.Unlock()
 		return
 	}
@@ -99,6 +102,10 @@ func (e *Engine) SelfHeal(reason string) {
 	ncancel()
 
 	e.mu.Lock()
+	if generation != e.lifecycleGeneration || !e.protection {
+		e.mu.Unlock()
+		return
+	}
 	invalidated := false
 	if e.policy != nil {
 		invalidated = e.policy.ObserveNetwork(ni)
@@ -109,22 +116,26 @@ func (e *Engine) SelfHeal(reason string) {
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)
 		return
 	}
-	e.mu.Unlock()
-
 	slog.Info("engine: self-heal begin", "reason", reason, "asn", ni.ASN, "fp", ni.Fingerprint)
 
-	if _, err := e.Stop(); err != nil {
+	if _, err := e.stopLocked(); err != nil {
+		e.mu.Unlock()
 		slog.Warn("engine: self-heal stop", "err", err.Message)
+		return
 	}
+	e.mu.Unlock()
 	time.Sleep(400 * time.Millisecond)
-	st, err := e.Start("auto")
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	if generation != e.lifecycleGeneration || e.state != StateStopped {
+		return
+	}
+	st, err := e.startLocked("auto")
 	e.lastHealAt = time.Now().UTC()
 	e.healCount++
 	e.healReason = reason
 	at := e.lastHealAt.Format(time.RFC3339)
 	e.healAt = at
-	e.mu.Unlock()
 
 	if err != nil {
 		slog.Warn("engine: self-heal start failed", "reason", reason, "err", err.Message)

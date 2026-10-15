@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -81,16 +82,16 @@ type Session interface {
 
 // ProbeSystemDNS resolves host via the OS resolver and checks poison fingerprints.
 // Used for diagnostics / probe class dns_poison (contracts.md §4).
-func ProbeSystemDNS(host string, poison *PoisonSet) (addrs []netip.Addr, poisonID string, err error) {
+func ProbeSystemDNS(ctx context.Context, host string, poison *PoisonSet) (addrs []netip.Addr, poisonID string, err error) {
 	if poison == nil {
 		poison = DefaultPoisonSet()
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil, "", err
 	}
 	for _, ip := range ips {
-		ip4 := ip.To4()
+		ip4 := ip.IP.To4()
 		if ip4 == nil {
 			continue
 		}

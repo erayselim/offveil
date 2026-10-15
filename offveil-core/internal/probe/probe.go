@@ -54,7 +54,7 @@ type Options struct {
 	// DialTLS overrides the direct TLS dial (tests).
 	DialTLS func(ctx context.Context, addr, serverName string) error
 	// LookupSystem optionally probes system DNS for poison (tests inject).
-	LookupSystem func(host string, poison *offdns.PoisonSet) (addrs []netip.Addr, poisonID string, err error)
+	LookupSystem func(ctx context.Context, host string, poison *offdns.PoisonSet) (addrs []netip.Addr, poisonID string, err error)
 	// ControlHost for differential classify (empty = DefaultControlHost; "-" disables).
 	ControlHost string
 	// SkipControl disables differential probing.
@@ -99,7 +99,7 @@ func Target(ctx context.Context, host string, opt Options) Result {
 	if sysLookup == nil {
 		sysLookup = offdns.ProbeSystemDNS
 	}
-	if _, poisonID, err := sysLookup(host, poison); err == nil && poisonID != "" {
+	if _, poisonID, err := sysLookup(pctx, host, poison); err == nil && poisonID != "" {
 		res.Class = ClassDNSPoison
 		res.Detail = "system dns poison: " + poisonID
 		res.Confidence = 0.85
