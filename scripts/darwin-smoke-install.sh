@@ -36,6 +36,23 @@ ping_until_ready() {
   return 1
 }
 ping_until_ready
+# The daemon creates this archive as root. Verify that the desktop user can
+# read the completed ZIP, rather than just receiving a successful IPC response.
+"$INSTALLED" client -method diagnostics > "$WORK/diagnostics-response.json"
+node - "$WORK/diagnostics-response.json" <<'NODE'
+const fs = require('node:fs');
+const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const path = reply.result?.path;
+if (!reply.ok || typeof path !== 'string' ||
+    !path.startsWith('/Library/Application Support/offveil/diagnostics/')) {
+  throw new Error('Invalid diagnostics response');
+}
+const zip = fs.readFileSync(path);
+if (zip.length < 4 || zip.readUInt32LE(0) !== 0x04034b50) {
+  throw new Error('Diagnostics archive is not a readable ZIP');
+}
+console.log('Diagnostics ZIP is readable by the desktop user.');
+NODE
 "$INSTALLED" client -method shutdown
 for i in {1..50}; do
   [[ -S /var/run/offveil/core.sock ]] || break

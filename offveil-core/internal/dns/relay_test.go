@@ -30,11 +30,11 @@ resolver #8
 
 func TestRelayDiagNoteNoDisable(t *testing.T) {
 	on := RelayDiagNote(true)
-	if !strings.Contains(on, "icloud_private_relay: on") || !strings.Contains(on, "does not disable") {
+	if !strings.Contains(on, "icloud_private_relay: possible") || !strings.Contains(on, "does not disable") {
 		t.Fatalf("note=%q", on)
 	}
-	if RelayDiagNote(false) != "icloud_private_relay: off" {
-		t.Fatalf("off=%q", RelayDiagNote(false))
+	if !strings.Contains(RelayDiagNote(false), "icloud_private_relay: unknown") {
+		t.Fatalf("missing resolver hints must not claim Private Relay is off: %q", RelayDiagNote(false))
 	}
 	if PrivateRelayHintTR != "iCloud Özel Aktarma kapalı olsun." {
 		t.Fatalf("tr=%q", PrivateRelayHintTR)

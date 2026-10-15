@@ -138,25 +138,27 @@ func WriteZip(in Input) (*BundleMeta, error) {
 	sha := hex.EncodeToString(sum[:])
 
 	stamp := time.Now().UTC().Format("20060102-150405")
-	name := fmt.Sprintf("offveil-diag-%s.zip", stamp)
-	path := filepath.Join(dir, name)
-
-	f, err := os.Create(path)
+	f, err := os.CreateTemp(dir, fmt.Sprintf("offveil-diag-%s-*.zip", stamp))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	path := f.Name()
+	complete := false
+	defer func() {
+		_ = f.Close()
+		if !complete {
+			_ = os.Remove(path)
+		}
+	}()
 
 	zw := zip.NewWriter(f)
 	if err := writeZipFile(zw, "diagnostics.json", raw); err != nil {
 		_ = zw.Close()
-		_ = os.Remove(path)
 		return nil, err
 	}
 	summary := buildSummary(in, sha)
 	if err := writeZipFile(zw, "summary.md", []byte(summary)); err != nil {
 		_ = zw.Close()
-		_ = os.Remove(path)
 		return nil, err
 	}
 	manifest, _ := json.MarshalIndent(map[string]any{
@@ -168,13 +170,20 @@ func WriteZip(in Input) (*BundleMeta, error) {
 	}, "", "  ")
 	if err := writeZipFile(zw, "manifest.json", manifest); err != nil {
 		_ = zw.Close()
-		_ = os.Remove(path)
 		return nil, err
 	}
 	if err := zw.Close(); err != nil {
-		_ = os.Remove(path)
 		return nil, err
 	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	// The privileged daemon writes the bundle; the desktop user must be able
+	// to read the sanitized archive when sharing it with support.
+	if err := os.Chmod(path, 0o644); err != nil {
+		return nil, err
+	}
+	complete = true
 
 	return &BundleMeta{
 		Path:      path,

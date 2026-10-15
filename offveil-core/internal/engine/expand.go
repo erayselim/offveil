@@ -95,7 +95,12 @@ func (e *Engine) expandCandidate(host string) bool {
 	if !ok {
 		return false
 	}
-	e.mu.Lock()
+	// DNS answers must not wait for Start/Stop/Test, which may themselves
+	// resolve hosts or wait for the DNS server to shut down. Expansion can skip
+	// a query while busy; a later lookup will retry it.
+	if !e.mu.TryLock() {
+		return false
+	}
 	if !e.protection || e.rulesetSnap == nil {
 		e.mu.Unlock()
 		return false

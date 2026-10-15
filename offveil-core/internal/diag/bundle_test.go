@@ -6,10 +6,50 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
 )
+
+func TestConcurrentBundlesAreDistinctAndReadable(t *testing.T) {
+	t.Setenv("OFFVEIL_DIAG_DIR", t.TempDir())
+	paths := make(chan string, 8)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			meta, err := diag.WriteZip(diag.Input{})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			paths <- meta.Path
+		}()
+	}
+	wg.Wait()
+	close(paths)
+	seen := map[string]bool{}
+	for path := range paths {
+		if seen[path] {
+			t.Errorf("bundle overwritten: %s", path)
+		}
+		seen[path] = true
+		zr, err := zip.OpenReader(path)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		if len(zr.File) != 3 {
+			t.Errorf("incomplete bundle: %s", path)
+		}
+		_ = zr.Close()
+	}
+	if len(seen) != 8 {
+		t.Fatalf("got %d bundles", len(seen))
+	}
+}
 
 func TestWriteZipOmitsPublicIPAndScrubs(t *testing.T) {
 	dir := t.TempDir()

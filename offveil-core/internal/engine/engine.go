@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/capture"
@@ -61,6 +62,8 @@ type RepairFunc func() repair.Result
 // Engine is the protection orchestrator.
 type Engine struct {
 	mu sync.Mutex
+	// Immutable snapshots remain readable while any operation owns mu.
+	operation atomic.Pointer[operationSnapshot]
 
 	state       string
 	protection  bool
@@ -121,7 +124,7 @@ type Engine struct {
 }
 
 func New(reg *cleanup.Registry) *Engine {
-	return &Engine{
+	e := &Engine{
 		state:        StateStopped,
 		summary:      "Kapalı",
 		cleanup:      reg,
@@ -134,6 +137,8 @@ func New(reg *cleanup.Registry) *Engine {
 			{ID: "discord", Label: "Discord", Outcome: "unknown", Path: "none"},
 		},
 	}
+	e.publishOperationLocked("")
+	return e
 }
 
 // WithCaptureStart overrides TUN bring-up (unit tests / dry-run without admin).
@@ -211,6 +216,8 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.dnsInfo = nil
 	e.desyncInfo = nil
 	e.tunnelInfo = nil
+	e.publishOperationLocked("ruleset")
+	defer e.publishOperationLocked("")
 	slog.Info("engine: start", "mode", "auto")
 
 	job, err := proc.NewKillOnCloseJob()
@@ -273,6 +280,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 
 	startFn := e.startCapture
+	e.publishOperationLocked("capture")
 	if startFn == nil {
 		startFn = capture.Start
 	}
@@ -318,6 +326,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 
 	dnsStart := e.startDNS
+	e.publishOperationLocked("dns")
 	if dnsStart == nil {
 		dnsStart = offdns.Start
 	}
@@ -348,6 +357,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	// ISS/ASN + local fingerprint → invalidate policy cache on change.
 	netFn := e.lookupNet
+	e.publishOperationLocked("network")
 	if netFn == nil {
 		netFn = netinfo.Lookup
 	}
@@ -360,6 +370,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 
 	// Session-start curated probe → domain → path cache.
 	probeFn := e.runProbe
+	e.publishOperationLocked("probe")
 	if probeFn == nil {
 		probeFn = defaultProbe
 	}
@@ -445,6 +456,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	desCfg.ConnIP = egressIPv4(e.captureInfo)
 
 	desStart := e.startDesync
+	e.publishOperationLocked("desync")
 	if desStart == nil {
 		desStart = desync.Start
 	}
@@ -518,6 +530,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 
 	tunStart := e.startTunnel
+	e.publishOperationLocked("tunnel")
 	if tunStart == nil {
 		tunStart = tunnel.Start
 	}
@@ -646,6 +659,8 @@ func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 	}
 
 	e.state = StateStopping
+	e.publishOperationLocked("cleanup")
+	defer e.publishOperationLocked("")
 	slog.Info("engine: stop")
 	e.stopReliabilityLocked()
 	e.stopReprobeLocked()
@@ -741,7 +756,12 @@ func (e *Engine) CrashCleanup(reason string) {
 
 // Status returns the current snapshot.
 func (e *Engine) Status() *ipc.Status {
-	e.mu.Lock()
+	if !e.mu.TryLock() {
+		if snapshot := e.operation.Load(); snapshot != nil {
+			return snapshot.statusCopy()
+		}
+		e.mu.Lock()
+	}
 	defer e.mu.Unlock()
 	return e.statusLocked()
 }

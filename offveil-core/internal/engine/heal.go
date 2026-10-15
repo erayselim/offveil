@@ -146,9 +146,18 @@ func (e *Engine) healInfoLocked() *HealInfo {
 
 // Diagnostics builds a PII-safe zip under ProgramData/offveil/diagnostics.
 func (e *Engine) Diagnostics() (*diag.BundleMeta, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	if !e.mu.TryLock() {
+		if snapshot := e.operation.Load(); snapshot != nil {
+			return snapshot.writeDiagnostics()
+		}
+		e.mu.Lock()
+	}
+	in := e.diagnosticsInputLocked()
+	e.mu.Unlock()
+	return writeDiagnostics(in)
+}
 
+func (e *Engine) diagnosticsInputLocked() diag.Input {
 	if e.protection {
 		e.freezeSupportLocked()
 	}
@@ -170,9 +179,15 @@ func (e *Engine) Diagnostics() (*diag.BundleMeta, error) {
 				in.Network.Fingerprint = fp
 			}
 		}
-		return diag.WriteZip(in)
+		return in
 	}
-	return diag.WriteZip(e.buildDiagInputLocked())
+	return e.buildDiagInputLocked()
+}
+
+func writeDiagnostics(in diag.Input) (*diag.BundleMeta, error) {
+	// OS inspection and ZIP I/O must not hold the engine lifecycle lock.
+	in.Notes = append(in.Notes, offdns.RelayDiagNotes()...)
+	return diag.WriteZip(in)
 }
 
 func (e *Engine) freezeSupportLocked() {
@@ -241,9 +256,6 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 			"count":       h.Count,
 			"watching":    h.Watching,
 		}
-	}
-	if notes := offdns.RelayDiagNotes(); len(notes) > 0 {
-		in.Notes = append(in.Notes, notes...)
 	}
 	return in
 }

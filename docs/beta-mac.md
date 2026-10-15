@@ -54,6 +54,18 @@ This does not provide Apple verification. It changes only offveil's quarantine a
 
 For a protection failure, use **Settings → Save a support file**. Include the release tag, macOS version, exact error, and whether failure happened during installation, startup, protection, or update.
 
+If `1.0.0-mac.2` reports `pipe read: Resource temporarily unavailable (os error 35)` after pressing **On**, the UI's local socket read timed out. That build uses an eight-second socket timeout even for the longer startup operation. Startup also holds the engine lock, so status and diagnostics can time out behind it. This message alone does not establish whether Private Relay is enabled or why the connection failed.
+
+As a fallback for that build, the installed CLI waits up to 25 seconds for a diagnostics response:
+
+```bash
+"/Library/Application Support/offveil/offveil-core" client -method diagnostics
+```
+
+If successful, the response includes the ZIP's `path`. If it also times out, report that error; the ZIP has not been confirmed saved. New builds use the requested RPC deadline, keep DNS query observation independent of the startup lock, and export the last published startup snapshot while the engine is busy. The ZIP notes include `startup_stage` and the snapshot time.
+
+For the next connection test, turn off **System Settings → Apple Account → iCloud → Private Relay**, and **Network → Wi-Fi → Details → Limit IP Address Tracking** for the connected network (or the corresponding Ethernet settings). Record whether this changes the result. The DNS inspection in diagnostics provides resolver hints; it cannot prove either setting is disabled.
+
 ## Validation
 
 Automated macOS checks cover:
@@ -61,6 +73,7 @@ Automated macOS checks cover:
 - Core and UI tests, arm64 binaries and nested code signatures.
 - Payload startup from the app, updater archive and mounted DMG.
 - First service installation, non-root IPC, shutdown and demand-start.
+- A diagnostics ZIP created by the root daemon and read by the desktop user.
 - Replacing an existing installation while preserving binary signatures.
 
 Browser-download approval, physical-device connectivity, DNS restoration, Discord voice, sleep/wake and an update between two published versions require manual testing. Automated packaging checks do not establish these results.

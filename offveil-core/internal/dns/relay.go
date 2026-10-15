@@ -17,7 +17,8 @@ var privateRelayTokens = []string{
 	"doh.dns.apple.com",
 }
 
-// PrivateRelayFromScutil is true when scutil --dns shows Apple Private Relay.
+// PrivateRelayFromScutil detects Apple relay resolver hints in scutil --dns.
+// Their absence does not prove that Private Relay / Limit IP tracking is off.
 func PrivateRelayFromScutil(out string) bool {
 	s := strings.ToLower(out)
 	for _, tok := range privateRelayTokens {
@@ -31,7 +32,7 @@ func PrivateRelayFromScutil(out string) bool {
 // RelayDiagNote is the PII-safe diagnostics line for a known probe result.
 func RelayDiagNote(on bool) string {
 	if on {
-		return "icloud_private_relay: on — networksetup DNS is ignored; keep iCloud Private Relay and Limit IP tracking off. Core does not disable them."
+		return "icloud_private_relay: possible — Apple relay resolver hints detected. Verify Private Relay and Limit IP Address Tracking in System Settings. Core does not disable them."
 	}
-	return "icloud_private_relay: off"
+	return "icloud_private_relay: unknown — no Apple relay resolver hints detected; verify Private Relay and Limit IP Address Tracking in System Settings."
 }

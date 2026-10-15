@@ -133,7 +133,7 @@ pub fn call_with(method: &str, params: Option<Value>, opts: CallOpts) -> Result<
         if Instant::now() >= deadline {
             return Err(last_err);
         }
-        match try_once(&body) {
+        match try_once(&body, deadline) {
             Ok(v) => return Ok(v),
             Err(e) => {
                 let busy = e == "pipe busy";
@@ -150,8 +150,8 @@ pub fn call_with(method: &str, params: Option<Value>, opts: CallOpts) -> Result<
     }
 }
 
-fn try_once(body: &[u8]) -> Result<Value, String> {
-    let stream = connect()?;
+fn try_once(body: &[u8], deadline: Instant) -> Result<Value, String> {
+    let stream = connect(deadline)?;
     rpc_roundtrip(stream, body)
 }
 
@@ -166,9 +166,12 @@ fn rpc_roundtrip<S: Read + Write>(mut stream: S, body: &[u8]) -> Result<Value, S
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("pipe read: {e}"))?;
+    reader.read_line(&mut line).map_err(|e| match e.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+            "core response timed out; save diagnostics to inspect startup progress".to_string()
+        }
+        _ => format!("pipe read: {e}"),
+    })?;
     if line.is_empty() {
         return Err("empty response".into());
     }
@@ -185,7 +188,7 @@ fn rpc_roundtrip<S: Read + Write>(mut stream: S, body: &[u8]) -> Result<Value, S
 }
 
 #[cfg(windows)]
-fn connect() -> Result<std::fs::File, String> {
+fn connect(_deadline: Instant) -> Result<std::fs::File, String> {
     use std::fs::OpenOptions;
     OpenOptions::new()
         .read(true)
@@ -199,17 +202,13 @@ fn connect() -> Result<std::fs::File, String> {
 }
 
 #[cfg(unix)]
-fn connect() -> Result<std::os::unix::net::UnixStream, String> {
+fn connect(deadline: Instant) -> Result<DeadlineStream, String> {
     use std::io::ErrorKind;
     use std::os::unix::net::UnixStream;
 
     let path = dial_path();
     match UnixStream::connect(&path) {
-        Ok(stream) => {
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
-            let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
-            Ok(stream)
-        }
+        Ok(stream) => Ok(DeadlineStream { stream, deadline }),
         Err(e) => {
             let busy = matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
                 || e.raw_os_error() == Some(35); // EAGAIN on Darwin
@@ -227,8 +226,48 @@ fn connect() -> Result<std::os::unix::net::UnixStream, String> {
 }
 
 #[cfg(not(any(windows, unix)))]
-fn connect() -> Result<std::fs::File, String> {
+fn connect(_deadline: Instant) -> Result<std::fs::File, String> {
     Err("named pipe IPC is Windows-only".into())
+}
+
+/// Each socket operation uses the remaining RPC budget, including partial reads.
+/// Retrying a timed-out RPC could execute start/stop twice, so never replay it.
+#[cfg(unix)]
+struct DeadlineStream {
+    stream: std::os::unix::net::UnixStream,
+    deadline: Instant,
+}
+
+#[cfg(unix)]
+impl DeadlineStream {
+    fn remaining(&self) -> std::io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "RPC deadline elapsed")
+            })
+    }
+}
+
+#[cfg(unix)]
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(buf)
+    }
+}
+
+#[cfg(unix)]
+impl Write for DeadlineStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
 }
 
 /// Path the UI dials. Matches core `ipc.DialPath` (env, then root socket, then temp).
@@ -447,6 +486,93 @@ pub fn diagnostics() -> Result<DiagnosticsBundle, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_timeout_is_actionable() {
+        struct Stalled;
+        impl Write for Stalled {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl Read for Stalled {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+            }
+        }
+        let err = rpc_roundtrip(Stalled, b"{}").unwrap_err();
+        assert!(err.contains("timed out"));
+        assert!(err.contains("diagnostics"));
+        assert!(!is_unreachable(&err)); // A slow engine must not trigger reinstallation.
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_start_waits_longer_than_old_eight_second_limit() {
+        use std::os::unix::net::UnixStream;
+        let (client, server) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            let mut reader = BufReader::new(server);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            thread::sleep(Duration::from_millis(8500));
+            reader
+                .get_mut()
+                .write_all(b"{\"id\":\"test\",\"ok\":true,\"result\":{\"state\":\"active\"}}\n")
+                .unwrap();
+        });
+        let stream = DeadlineStream {
+            stream: client,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        let result = rpc_roundtrip(stream, b"{\"method\":\"start\"}");
+        worker.join().unwrap();
+        assert_eq!(result.unwrap()["state"], "active");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_probe_honors_short_budget() {
+        use std::os::unix::net::UnixStream;
+        let (client, _server) = UnixStream::pair().unwrap();
+        let began = Instant::now();
+        let stream = DeadlineStream {
+            stream: client,
+            deadline: began + Duration::from_millis(80),
+        };
+        assert!(rpc_roundtrip(stream, b"{}")
+            .unwrap_err()
+            .contains("timed out"));
+        assert!(began.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_partial_response_cannot_extend_deadline() {
+        use std::os::unix::net::UnixStream;
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            for _ in 0..30 {
+                thread::sleep(Duration::from_millis(20));
+                if server.write_all(b" ").is_err() {
+                    break;
+                }
+            }
+        });
+        let began = Instant::now();
+        let stream = DeadlineStream {
+            stream: client,
+            deadline: began + Duration::from_millis(100),
+        };
+        assert!(rpc_roundtrip(stream, b"{}")
+            .unwrap_err()
+            .contains("timed out"));
+        assert!(began.elapsed() < Duration::from_millis(500));
+        worker.join().unwrap();
+    }
 
     #[test]
     fn unreachable_matches_pipe_and_socket() {
