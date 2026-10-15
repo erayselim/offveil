@@ -18,7 +18,6 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/appservice"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
-	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
 	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
@@ -89,7 +88,7 @@ func main() {
 			if len(*uiError) > 4096 {
 				*uiError = (*uiError)[:4096]
 			}
-			in.System["last_ui_error"] = diag.Scrub(*uiError)
+			in.System["last_ui_error"] = support.RedactLocalError(*uiError)
 		}
 		cancel()
 		meta, err := support.Write(in, *output)

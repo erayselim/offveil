@@ -31,6 +31,8 @@ impl Capture {
             .map_err(|e| e.to_string())?;
         let mut result = Vec::new();
         self.file
+            .by_ref()
+            .take(256 * 1024)
             .read_to_end(&mut result)
             .map_err(|e| e.to_string())?;
         Ok(result)

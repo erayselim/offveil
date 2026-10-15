@@ -129,6 +129,8 @@ ping_until_ready
 
 # A stopped UI indicator must not prevent updating a hung daemon. Suspend the
 # real job so IPC cannot answer, then exercise the passwordless launchd stop.
+dns_snapshot > "$WORK/dns-before-managed-stop.txt"
+"$INSTALLED" client -method start -timeout 120s > "$WORK/managed-start.json"
 DAEMON_PID="$(sudo /bin/launchctl print system/offveil-core | awk '/^[[:space:]]*pid = / { print $3; exit }')"
 [[ "$DAEMON_PID" =~ ^[0-9]+$ ]]
 sudo /bin/kill -STOP "$DAEMON_PID"
@@ -141,6 +143,13 @@ if "$INSTALLED" client -method ping -timeout 1s; then
   echo "Suspended daemon remained reachable after managed stop" >&2
   exit 1
 fi
+dns_snapshot > "$WORK/dns-after-managed-stop.txt"
+cmp "$WORK/dns-before-managed-stop.txt" "$WORK/dns-after-managed-stop.txt"
+if /sbin/route -n get 104.18.26.120 | grep -Eq 'interface: utun[0-9]+'; then
+  echo "An offveil TUN route survived managed stop" >&2
+  exit 1
+fi
+/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
 /usr/bin/sudo -n "$INSTALLED" start
 ping_until_ready
 echo "Managed stop and restart of an unresponsive daemon passed."
