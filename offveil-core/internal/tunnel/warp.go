@@ -2,7 +2,9 @@ package tunnel
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,33 +24,33 @@ const (
 
 // WARPAccount is persisted device registration.
 type WARPAccount struct {
-	DeviceID   string `json:"device_id"`
+	DeviceID    string `json:"device_id"`
 	AccessToken string `json:"access_token"`
-	PrivateKey string `json:"private_key"`
-	License    string `json:"license,omitempty"`
-	CreatedAt  string `json:"created_at"`
+	PrivateKey  string `json:"private_key"`
+	License     string `json:"license,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // WARPProfile is enough to build a selective WireGuard endpoint.
 type WARPProfile struct {
-	PrivateKey     string
-	AddressIPv4    string
-	AddressIPv6    string
-	PeerPublicKey  string
-	EndpointHost   string // host:port or host
-	EndpointIPv4   string
-	ClientID       string
-	Reserved       [3]byte
+	PrivateKey    string
+	AddressIPv4   string
+	AddressIPv6   string
+	PeerPublicKey string
+	EndpointHost  string // host:port or host
+	EndpointIPv4  string
+	ClientID      string
+	Reserved      [3]byte
 }
 
 type warpRegResponse struct {
-	ID    string `json:"id"`
-	Token string `json:"token"`
+	ID      string `json:"id"`
+	Token   string `json:"token"`
 	Account struct {
 		License string `json:"license"`
 	} `json:"account"`
-	Config warpConfigBody `json:"config"`
-	WarpEnabled bool `json:"warp_enabled"`
+	Config      warpConfigBody `json:"config"`
+	WarpEnabled bool           `json:"warp_enabled"`
 }
 
 type warpConfigBody struct {
@@ -94,9 +96,14 @@ func (e *warpEndpoint) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-
 // LoadOrRegisterWARP loads cached credentials or registers a new free WARP device.
 func LoadOrRegisterWARP(dataDir string, client *http.Client) (*WARPAccount, *WARPProfile, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return loadOrRegisterWARP(ctx, dataDir, client)
+}
+
+func loadOrRegisterWARP(ctx context.Context, dataDir string, client *http.Client) (*WARPAccount, *WARPProfile, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
@@ -106,14 +113,19 @@ func LoadOrRegisterWARP(dataDir string, client *http.Client) (*WARPAccount, *WAR
 	path := filepath.Join(dataDir, "warp-account.json")
 
 	if acc, err := loadWARPAccount(path); err == nil && acc.DeviceID != "" && acc.PrivateKey != "" {
-		prof, err := fetchWARPProfile(client, acc)
+		prof, err := fetchWARPProfile(ctx, client, acc)
 		if err == nil {
 			return acc, prof, nil
 		}
-		// Stale token → re-register below.
+		var status *warpHTTPError
+		if !errors.As(err, &status) || (status.code != http.StatusUnauthorized && status.code != http.StatusNotFound) {
+			return acc, nil, err
+		}
+		// Only a rejected token or missing device warrants another registration.
+		// Network errors, rate limits and server failures preserve the account.
 	}
 
-	acc, prof, err := registerWARP(client)
+	acc, prof, err := registerWARP(ctx, client)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,7 +155,7 @@ func saveWARPAccount(path string, acc *WARPAccount) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-func registerWARP(client *http.Client) (*WARPAccount, *WARPProfile, error) {
+func registerWARP(ctx context.Context, client *http.Client) (*WARPAccount, *WARPProfile, error) {
 	kp, err := GenerateKeyPair()
 	if err != nil {
 		return nil, nil, err
@@ -162,7 +174,7 @@ func registerWARP(client *http.Client) (*WARPAccount, *WARPProfile, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, warpAPIBase+"/reg", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, warpAPIBase+"/reg", bytes.NewReader(raw))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -196,12 +208,12 @@ func registerWARP(client *http.Client) (*WARPAccount, *WARPProfile, error) {
 	}
 
 	// Enable WARP on the device (best-effort; some API versions already enable).
-	_ = enableWARP(client, acc)
+	_ = enableWARP(ctx, client, acc)
 
 	prof, err := profileFromConfig(acc.PrivateKey, reg.Config)
 	if err != nil {
 		// Fetch fresh config.
-		prof, err = fetchWARPProfile(client, acc)
+		prof, err = fetchWARPProfile(ctx, client, acc)
 		if err != nil {
 			return acc, nil, err
 		}
@@ -209,9 +221,9 @@ func registerWARP(client *http.Client) (*WARPAccount, *WARPProfile, error) {
 	return acc, prof, nil
 }
 
-func enableWARP(client *http.Client, acc *WARPAccount) error {
+func enableWARP(ctx context.Context, client *http.Client, acc *WARPAccount) error {
 	raw, _ := json.Marshal(map[string]any{"warp_enabled": true})
-	req, err := http.NewRequest(http.MethodPatch, warpAPIBase+"/reg/"+acc.DeviceID, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, warpAPIBase+"/reg/"+acc.DeviceID, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
@@ -227,8 +239,14 @@ func enableWARP(client *http.Client, acc *WARPAccount) error {
 	return nil
 }
 
-func fetchWARPProfile(client *http.Client, acc *WARPAccount) (*WARPProfile, error) {
-	req, err := http.NewRequest(http.MethodGet, warpAPIBase+"/reg/"+acc.DeviceID, nil)
+type warpHTTPError struct {
+	code int
+}
+
+func (e *warpHTTPError) Error() string { return fmt.Sprintf("warp config HTTP %d", e.code) }
+
+func fetchWARPProfile(ctx context.Context, client *http.Client, acc *WARPAccount) (*WARPProfile, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, warpAPIBase+"/reg/"+acc.DeviceID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +259,7 @@ func fetchWARPProfile(client *http.Client, acc *WARPAccount) (*WARPProfile, erro
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("warp config HTTP %d: %s", resp.StatusCode, truncate(string(payload), 200))
+		return nil, &warpHTTPError{code: resp.StatusCode}
 	}
 	var reg warpRegResponse
 	if err := json.Unmarshal(payload, &reg); err != nil {
