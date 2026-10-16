@@ -100,7 +100,7 @@ jobs:
           echo "socket not ready: $OFFVEIL_IPC_SOCK" >&2
           exit 1
       - name: Upload darwin/arm64 binary
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: offveil-core-darwin-arm64
           path: |
@@ -125,7 +125,7 @@ jobs:
           bash scripts/darwin-smoke-install.sh "$APP"
       - name: Upload payload failure support
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: offveil-mac-payload-support
           path: dist-mac-ci/failure-support.zip
@@ -183,7 +183,7 @@ jobs:
           shasum -a 256 offveil_ci_aarch64.dmg offveil_ci_aarch64.app.tar.gz > SHA256SUMS.txt
       - name: Upload tested Mac package
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: offveil-mac-install-test
           path: dist-mac-ci/
