@@ -30,7 +30,8 @@ type session struct {
 	drainDone chan struct{}
 	// skipAdapter: sing-box owns Wintun; we only snapshot/resolve and optionally
 	// attach later so AddPrefixes can install extra /32s.
-	skipAdapter bool
+	skipAdapter  bool
+	splitDefault bool
 }
 
 // Start brings up Wintun, configures address, snapshots NICs, installs selected routes.
@@ -68,12 +69,13 @@ func Start(cfg Config) (Session, error) {
 
 	if cfg.SkipAdapter {
 		s := &session{
-			tunPrefix:   netip.MustParsePrefix(TunIPv4),
-			mtu:         cfg.MTU,
-			snapshot:    snap,
-			allowlist:   allow,
-			drainDone:   make(chan struct{}),
-			skipAdapter: true,
+			tunPrefix:    netip.MustParsePrefix(TunIPv4),
+			mtu:          cfg.MTU,
+			snapshot:     snap,
+			allowlist:    allow,
+			drainDone:    make(chan struct{}),
+			skipAdapter:  true,
+			splitDefault: cfg.SplitDefault,
 		}
 		if s.mtu <= 0 {
 			s.mtu = DefaultMTU
@@ -160,6 +162,9 @@ func (s *session) AddPrefixes(prefixes []netip.Prefix) (int, error) {
 	if s.closing.Load() {
 		return 0, fmt.Errorf("capture: session closed")
 	}
+	if s.splitDefault {
+		return 0, nil
+	}
 	if s.luid == 0 {
 		if s.skipAdapter {
 			luid, err := FindAdapterLUIDByName(AdapterName)
@@ -224,6 +229,8 @@ func (s *session) AttachAdapter(name string) error {
 	slog.Info("capture: attached to dataplane adapter", "name", name, "luid", luid)
 	return nil
 }
+
+func (s *session) NeedsPrefixExpansion() bool { return !s.splitDefault }
 
 func (s *session) Info() Info {
 	s.mu.Lock()

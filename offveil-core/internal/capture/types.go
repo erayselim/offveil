@@ -32,7 +32,10 @@ type Config struct {
 	// SkipAdapter leaves the TUN to sing-box (contracts.md §6.1). Snapshot + resolve only.
 	// Darwin always behaves as SkipAdapter (no Wintun).
 	SkipAdapter bool
-	MTU         int
+	// SplitDefault means the external dataplane already captures public IPv4;
+	// seed /32 routes and later prefix expansion are unnecessary.
+	SplitDefault bool
+	MTU          int
 }
 
 // DefaultConfig returns capture defaults. Engine fills resolve hosts from the ruleset.
@@ -192,7 +195,7 @@ func systemLookupA(host string) ([]netip.Addr, error) {
 // BuildAllowlist merges static + resolved hosts and applies exclude filter.
 func BuildAllowlist(cfg Config) ([]netip.Prefix, error) {
 	merged := append([]netip.Prefix{}, cfg.Allowlist...)
-	if len(cfg.ResolveHosts) > 0 {
+	if len(cfg.ResolveHosts) > 0 && !(cfg.SkipAdapter && cfg.SplitDefault) {
 		resolved, err := ResolveHostsToPrefixes(cfg.ResolveHosts, cfg.Resolve)
 		if err != nil && len(merged) == 0 {
 			return nil, err

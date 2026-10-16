@@ -64,7 +64,10 @@ func LocalFingerprint() string {
 }
 
 func discoverLocalIPs() []net.IP {
-	probes := []string{"192.0.2.1:9", "[2001:db8::1]:9"}
+	// The IPv4 target is excluded from offveil's split-default TUN routes.
+	// UDP connect sends no packet, but selects the physical source address;
+	// a captured target would identify our own TUN and hide network changes.
+	probes := []string{"1.1.1.1:53", "[2001:db8::1]:9"}
 	seen := map[string]struct{}{}
 	var out []net.IP
 	for _, addr := range probes {

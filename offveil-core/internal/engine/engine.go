@@ -66,6 +66,11 @@ type Engine struct {
 	operation atomic.Pointer[operationSnapshot]
 	// Public lifecycle requests invalidate work from an older session.
 	lifecycleGeneration uint64
+	// Background work belongs to one accepted protection session, including
+	// internal self-heal restarts. Public no-op requests do not replace it.
+	sessionGeneration uint64
+	sessionCtx        context.Context
+	sessionCancel     context.CancelFunc
 
 	state       string
 	protection  bool
@@ -217,6 +222,12 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 
 	e.state = StateStarting
+	e.beginSessionLocked()
+	defer func() {
+		if !e.protection {
+			e.cancelSessionLocked()
+		}
+	}()
 	e.lastError = nil
 	e.captureInfo = nil
 	e.dnsInfo = nil
@@ -277,6 +288,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	capCfg := capture.DefaultConfig()
 	capCfg.SkipAdapter = true
 	capCfg.ApplyRoutes = false
+	capCfg.SplitDefault = true
 	if len(resolveHosts) > 0 {
 		capCfg.ResolveHosts = resolveHosts
 	}
@@ -664,7 +676,8 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.startReliabilityLocked()
 	e.freezeSupportLocked()
 	if os.Getenv("OFFVEIL_CANARY_BG") != "0" {
-		go e.probeCanary()
+		generation := e.sessionGeneration
+		go e.probeCanarySession(generation)
 	}
 
 	return e.statusLocked(), nil
@@ -684,6 +697,7 @@ func (e *Engine) stopLocked() (*ipc.Status, *ipc.RPCError) {
 	}
 
 	e.state = StateStopping
+	e.cancelSessionLocked()
 	e.publishOperationLocked("cleanup")
 	defer e.publishOperationLocked("")
 	slog.Info("engine: stop")
@@ -718,14 +732,15 @@ func (e *Engine) stopLocked() (*ipc.Status, *ipc.RPCError) {
 // state, flushes the resolver cache, and clears learned DPI policy.
 func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.lifecycleGeneration++
-	e.mu.Unlock()
-	st := e.Status()
-	if st.Protection || st.State != StateStopped {
-		if _, err := e.Stop(); err != nil && err.Code != ipc.CodeNotRunning {
-			return &ipc.RepairResult{Status: e.Status()}, err
+	if e.protection || e.state != StateStopped {
+		if _, err := e.stopLocked(); err != nil && err.Code != ipc.CodeNotRunning {
+			return &ipc.RepairResult{Status: e.statusLocked()}, err
 		}
 	}
+	e.publishOperationLocked("repair")
+	defer e.publishOperationLocked("")
 
 	fn := e.runRepair
 	if fn == nil {
@@ -733,12 +748,10 @@ func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
 	}
 	net := fn()
 
-	e.mu.Lock()
 	e.policy = policy.NewStore()
 	e.strategyStore = nil
 	e.asnPathStore = nil
 	status := e.statusLocked()
-	e.mu.Unlock()
 
 	steps := make([]ipc.RepairStep, 0, len(net.Steps))
 	for _, s := range net.Steps {
@@ -752,6 +765,7 @@ func (e *Engine) CrashCleanup(reason string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.cancelSessionLocked()
 	slog.Warn("engine: crash cleanup", "reason", reason, "state", e.state)
 	e.stopReliabilityLocked()
 	e.stopReprobeLocked()
@@ -799,10 +813,7 @@ func (e *Engine) Status() *ipc.Status {
 func (e *Engine) Health() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state == StateDegraded {
-		return "degraded"
-	}
-	return "ok"
+	return e.statusLocked().Health
 }
 
 // Test runs a short curated (or explicit) probe and refreshes the policy cache
@@ -873,9 +884,9 @@ func defaultProbe(ctx context.Context, doh *offdns.DoHClient, hosts []string) pr
 // startReprobeLoop silently refreshes expired per-domain cache entries (contracts §3.3).
 func (e *Engine) startReprobeLoop() {
 	e.stopReprobeLocked()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(e.sessionContextLocked())
 	e.reprobeCancel = cancel
-	go e.reprobeLoop(ctx)
+	go e.reprobeLoop(ctx, e.sessionGeneration)
 }
 
 func (e *Engine) stopReprobeLocked() {
@@ -885,7 +896,7 @@ func (e *Engine) stopReprobeLocked() {
 	}
 }
 
-func (e *Engine) reprobeLoop(ctx context.Context) {
+func (e *Engine) reprobeLoop(ctx context.Context, generation uint64) {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -893,15 +904,22 @@ func (e *Engine) reprobeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.silentReprobe()
-			e.maybeCanary()
+			e.silentReprobeSession(generation)
+			e.maybeCanarySession(generation)
 		}
 	}
 }
 
 func (e *Engine) silentReprobe() {
 	e.mu.Lock()
-	if !e.protection || e.state == StateStopped || e.state == StateStopping {
+	generation := e.sessionGeneration
+	e.mu.Unlock()
+	e.silentReprobeSession(generation)
+}
+
+func (e *Engine) silentReprobeSession(generation uint64) {
+	e.mu.Lock()
+	if !e.currentSessionLocked(generation) {
 		e.mu.Unlock()
 		return
 	}
@@ -916,24 +934,31 @@ func (e *Engine) silentReprobe() {
 		probeFn = defaultProbe
 	}
 	hosts := expired
+	ctx := e.sessionContextLocked()
 	e.mu.Unlock()
 
 	// Backup to netwatch: ASN / fingerprint drift → self-heal.
-	nctx, ncancel := context.WithTimeout(context.Background(), 4*time.Second)
+	nctx, ncancel := context.WithTimeout(ctx, 4*time.Second)
 	ni := netFn(nctx)
 	ncancel()
 	e.mu.Lock()
+	if !e.currentSessionLocked(generation) {
+		e.mu.Unlock()
+		return
+	}
 	inv := false
 	if e.policy != nil {
 		inv = e.policy.ObserveNetwork(ni)
 	}
 	if inv {
 		e.resetDNSCacheLocked()
+		// The change was already adopted above; do not require a second
+		// ObserveNetwork call to rediscover it inside self-heal.
+		e.requestHealLocked("network_change", true)
 	}
 	e.mu.Unlock()
 	if inv {
 		slog.Info("engine: network identity changed during TTL loop")
-		e.requestHeal("network_change")
 		return
 	}
 
@@ -941,13 +966,13 @@ func (e *Engine) silentReprobe() {
 		return
 	}
 
-	pctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	rep := probeFn(pctx, doh, hosts)
 	cancel()
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.protection {
+	if !e.currentSessionLocked(generation) {
 		return
 	}
 	for _, r := range rep.Results {
@@ -980,6 +1005,21 @@ func (e *Engine) statusLocked() *ipc.Status {
 	if e.tun != nil {
 		ti := e.tun.Info()
 		e.tunnelInfo = &ti
+	}
+	if e.protection && e.state == StateActive {
+		failed := ""
+		switch {
+		case e.dnsInfo != nil && !e.dnsInfo.StubUp:
+			failed = "dns: local resolver stopped"
+		case e.desyncInfo != nil && !e.desyncInfo.Up:
+			failed = "desync: sidecar exited"
+		case e.tunnelInfo != nil && !e.tunnelInfo.Up:
+			failed = "tunnel: sidecar exited"
+		}
+		if failed != "" {
+			e.state, e.summary = StateDegraded, "Bozuldu"
+			e.lastError = &failed
+		}
 	}
 
 	hint := ""

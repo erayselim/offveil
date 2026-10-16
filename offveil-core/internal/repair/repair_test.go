@@ -32,7 +32,7 @@ func TestClearLearnedState(t *testing.T) {
 }
 
 func TestLeftoverNetworkSkipsPolicy(t *testing.T) {
-	res := LeftoverNetwork()
+	res := runWith(func(r *Result) { r.add("dns", nil, "fake restore") }, false)
 	for _, s := range res.Steps {
 		if s.Name == "policy" {
 			t.Fatal("LeftoverNetwork must not clear learned DPI policy")

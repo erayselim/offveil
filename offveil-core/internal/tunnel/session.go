@@ -21,7 +21,7 @@ type session struct {
 	mu sync.Mutex
 
 	cfg        Config
-	cmd        *exec.Cmd
+	child      *proc.Child
 	socks      string
 	provider   ProviderID
 	configPath string
@@ -190,9 +190,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 			return nil, false, FailDial, fmt.Errorf("assign job: %w", err)
 		}
 	}
-	s.cmd = cmd
+	s.child = proc.WatchChild(cmd)
 
-	if err := waitSOCKS(s.socks, 8*time.Second); err != nil {
+	if err := proc.WaitTCP(s.socks, 8*time.Second, s.child); err != nil {
 		_ = s.Close()
 		return nil, false, FailDial, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
 	}
@@ -280,7 +280,7 @@ func (s *session) Info() Info {
 		ProviderID:     s.provider,
 		BinaryPath:     s.binPath,
 		ConfigPath:     s.configPath,
-		Up:             s.up.Load(),
+		Up:             s.isUp(),
 		Selective:      true,
 		RetryHint:      s.retryHint.Load(),
 		TunnelHosts:    s.cfg.TunnelDomains,
@@ -288,8 +288,8 @@ func (s *session) Info() Info {
 		FailoverFrom:   s.failoverFrom,
 		ProvidersTried: append([]ProviderID(nil), s.providersTried...),
 	}
-	if s.cmd != nil && s.cmd.Process != nil {
-		info.PID = s.cmd.Process.Pid
+	if s.child != nil {
+		info.PID = s.child.PID()
 	}
 	if v, ok := s.lastProbe.Load().(FailClass); ok {
 		info.LastProbe = v
@@ -310,12 +310,10 @@ func (s *session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.up.Store(false)
-	if s.cmd == nil || s.cmd.Process == nil {
+	if s.child == nil {
 		return nil
 	}
-	_ = s.cmd.Process.Kill()
-	_ = s.cmd.Wait()
-	s.cmd = nil
+	s.child.Close()
 	slog.Info("tunnel: stopped", "socks", s.socks)
 	return nil
 }
@@ -327,6 +325,10 @@ func (s *session) recordProbe(sig FailSignal) {
 		s.retryHint.Store(true)
 		s.failDetail.Store(sig.Detail)
 	}
+}
+
+func (s *session) isUp() bool {
+	return s.up.Load() && (s.child == nil || s.child.Running())
 }
 
 func startDesyncDataplane(cfg Config) (Session, error) {
@@ -396,21 +398,7 @@ func splitDesyncSOCKS(addr string) (string, int) {
 }
 
 func waitSOCKS(addr string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var last error
-	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
-			return nil
-		}
-		last = err
-		time.Sleep(50 * time.Millisecond)
-	}
-	if last == nil {
-		last = fmt.Errorf("timeout")
-	}
-	return last
+	return proc.WaitTCP(addr, timeout, nil)
 }
 
 func resolveDataDir(explicit string) (string, error) {

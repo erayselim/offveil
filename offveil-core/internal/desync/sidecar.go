@@ -20,7 +20,7 @@ type session struct {
 	mu sync.Mutex
 
 	cfg      Config
-	cmd      *exec.Cmd
+	child    *proc.Child
 	socks    string
 	strategy Strategy
 
@@ -75,14 +75,14 @@ func Start(cfg Config) (Session, error) {
 
 	s := &session{
 		cfg:      cfg,
-		cmd:      cmd,
+		child:    proc.WatchChild(cmd),
 		socks:    net.JoinHostPort(cfg.ListenIP, strconv.Itoa(cfg.ListenPort)),
 		strategy: cfg.Strategy,
 	}
 	s.lastProbe.Store(FailClass(""))
 	s.lastProbeAt.Store("")
 
-	if err := waitSOCKS(s.socks, 5*time.Second); err != nil {
+	if err := proc.WaitTCP(s.socks, 5*time.Second, s.child); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("desync: socks not ready: %w; stderr: %s", err, stderr.String())
 	}
@@ -114,14 +114,12 @@ func (s *session) Info() Info {
 		StrategyID:    s.strategy.ID,
 		BindInterface: s.cfg.BindInterface,
 		BinaryPath:    s.cfg.BinaryPath,
-		Up:            s.up.Load(),
+		Up:            s.up.Load() && s.child.Running(),
 		FailTimeouts:  int(s.failTimeouts.Load()),
 		FailSSLErrs:   int(s.failSSL.Load()),
 		FailResets:    int(s.failReset.Load()),
 	}
-	if s.cmd != nil && s.cmd.Process != nil {
-		info.PID = s.cmd.Process.Pid
-	}
+	info.PID = s.child.PID()
 	if v, ok := s.lastProbe.Load().(FailClass); ok {
 		info.LastProbe = v
 	}
@@ -138,12 +136,7 @@ func (s *session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.up.Store(false)
-	if s.cmd == nil || s.cmd.Process == nil {
-		return nil
-	}
-	_ = s.cmd.Process.Kill()
-	_ = s.cmd.Wait()
-	s.cmd = nil
+	s.child.Close()
 	slog.Info("desync: byeDPI stopped", "socks", s.socks)
 	return nil
 }
@@ -162,21 +155,7 @@ func (s *session) recordProbe(sig FailSignal) {
 }
 
 func waitSOCKS(addr string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var last error
-	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
-			return nil
-		}
-		last = err
-		time.Sleep(50 * time.Millisecond)
-	}
-	if last == nil {
-		last = fmt.Errorf("timeout")
-	}
-	return last
+	return proc.WaitTCP(addr, timeout, nil)
 }
 
 func resolveBinary(explicit string) (string, error) {

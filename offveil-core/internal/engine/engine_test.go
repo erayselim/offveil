@@ -187,6 +187,9 @@ func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
 			if !cfg.SkipAdapter {
 				t.Fatal("engine must leave TUN to sing-box (SkipAdapter)")
 			}
+			if !cfg.SplitDefault || cfg.ApplyRoutes {
+				t.Fatal("split-default dataplane must not prepare unused per-host routes")
+			}
 			return capture.NewFakeSession(capture.Info{
 				RoutesApplied: 1,
 				Egress:        &capture.EgressInfo{Name: "Ethernet", IPv4: "192.168.0.10"},

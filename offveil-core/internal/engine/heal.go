@@ -29,16 +29,17 @@ type HealInfo struct {
 // startReliabilityLocked starts netwatch + power-resume self-heal (caller holds e.mu).
 func (e *Engine) startReliabilityLocked() {
 	e.stopReliabilityLocked()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(e.sessionContextLocked())
 	e.reliabilityCancel = cancel
 	e.healWatching = true
+	session := e.sessionGeneration
 
 	netwatch.Start(ctx, netwatch.DefaultInterval, nil, func(prev, next string) {
 		slog.Info("engine: network change detected", "from", prev, "to", next)
-		e.requestHeal("network_change")
+		e.requestSessionHeal("network_change", session)
 	})
 	go power.Watch(ctx, func() {
-		e.requestHeal("power_resume")
+		e.requestSessionHeal("power_resume", session)
 	})
 }
 
@@ -50,8 +51,16 @@ func (e *Engine) stopReliabilityLocked() {
 	e.healWatching = false
 }
 
-func (e *Engine) requestHeal(reason string) {
-	go e.SelfHeal(reason)
+func (e *Engine) requestSessionHeal(reason string, session uint64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.currentSessionLocked(session) {
+		e.requestHealLocked(reason, reason == "network_change")
+	}
+}
+
+func (e *Engine) requestHealLocked(reason string, networkChanged bool) {
+	go e.selfHeal(reason, e.lifecycleGeneration, e.sessionGeneration, networkChanged)
 }
 
 // SelfHeal silently rebuilds the protection stack after network change or wake.
@@ -60,7 +69,12 @@ func (e *Engine) requestHeal(reason string) {
 func (e *Engine) SelfHeal(reason string) {
 	e.mu.Lock()
 	generation := e.lifecycleGeneration
+	session := e.sessionGeneration
 	e.mu.Unlock()
+	e.selfHeal(reason, generation, session, false)
+}
+
+func (e *Engine) selfHeal(reason string, generation, session uint64, networkChanged bool) {
 	e.healMu.Lock()
 	defer e.healMu.Unlock()
 
@@ -69,25 +83,35 @@ func (e *Engine) SelfHeal(reason string) {
 	}
 
 	e.mu.Lock()
-	if generation != e.lifecycleGeneration || !e.protection || e.state == StateStopped || e.state == StateStopping || e.state == StateStarting {
+	if generation != e.lifecycleGeneration || !e.currentSessionLocked(session) {
 		e.mu.Unlock()
 		return
 	}
 	if reason == "network_change" || reason == "power_resume" {
 		e.resetDNSCacheLocked()
 	}
-	if !e.lastHealAt.IsZero() && time.Since(e.lastHealAt) < healMinInterval {
-		e.mu.Unlock()
-		slog.Info("engine: self-heal skipped (debounce)", "reason", reason)
-		return
+	delay := healSettleDelay
+	if !e.lastHealAt.IsZero() {
+		// A second real network change must wait for the cooldown instead of
+		// being lost after policy already adopted that network identity.
+		if remaining := healMinInterval - time.Since(e.lastHealAt); remaining > delay {
+			delay = remaining
+		}
 	}
+	ctx := e.sessionContextLocked()
 	e.mu.Unlock()
 
 	// Settle after Wi-Fi association / DHCP.
-	time.Sleep(healSettleDelay)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
 
 	e.mu.Lock()
-	if generation != e.lifecycleGeneration || !e.protection || e.state == StateStopped || e.state == StateStopping {
+	if generation != e.lifecycleGeneration || !e.currentSessionLocked(session) {
 		e.mu.Unlock()
 		return
 	}
@@ -97,12 +121,12 @@ func (e *Engine) SelfHeal(reason string) {
 	}
 	e.mu.Unlock()
 
-	nctx, ncancel := context.WithTimeout(context.Background(), 5*time.Second)
+	nctx, ncancel := context.WithTimeout(ctx, 5*time.Second)
 	ni := netFn(nctx)
 	ncancel()
 
 	e.mu.Lock()
-	if generation != e.lifecycleGeneration || !e.protection {
+	if generation != e.lifecycleGeneration || !e.currentSessionLocked(session) {
 		e.mu.Unlock()
 		return
 	}
@@ -110,7 +134,7 @@ func (e *Engine) SelfHeal(reason string) {
 	if e.policy != nil {
 		invalidated = e.policy.ObserveNetwork(ni)
 	}
-	need := reason == "power_resume" || reason == "canary_tunnel" || invalidated
+	need := reason == "power_resume" || reason == "canary_tunnel" || networkChanged || invalidated
 	if !need {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)
@@ -123,11 +147,12 @@ func (e *Engine) SelfHeal(reason string) {
 		slog.Warn("engine: self-heal stop", "err", err.Message)
 		return
 	}
+	stoppedSession := e.sessionGeneration
 	e.mu.Unlock()
 	time.Sleep(400 * time.Millisecond)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if generation != e.lifecycleGeneration || e.state != StateStopped {
+	if generation != e.lifecycleGeneration || stoppedSession != e.sessionGeneration || e.state != StateStopped {
 		return
 	}
 	st, err := e.startLocked("auto")

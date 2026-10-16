@@ -21,7 +21,7 @@ func (s *session) ProbeTLS(host string) FailSignal {
 		ProviderID: string(s.provider),
 		At:         at,
 	}
-	if !s.up.Load() {
+	if !s.isUp() {
 		sig.Class = FailDial
 		sig.Detail = "tunnel not up"
 		s.recordProbe(sig)
