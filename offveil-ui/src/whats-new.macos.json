@@ -1,7 +1,7 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "notes": {
-    "tr": "Bu sürüm Windows'a yönelik bellek iyileştirmeleri içeriyor. macOS'ta işlev değişikliği yok.",
-    "en": "This release improves memory use on Windows. There are no functional changes on macOS."
+    "tr": "• Ağ değiştirirken ve korumayı yeniden açarken bağlantı kararlılığı iyileştirildi.\n• Windows’ta koruma açılırken yapılan gereksiz ağ işlemleri azaltıldı.\n• Uzun süreli kullanımda arka plan kontrollerinin bellek kullanımı iyileştirildi.\n• Onarım sırasında oluşabilecek işlem çakışmaları ve koruma durumunun yanlış gösterilmesi düzeltildi.\n• Oyun ve servisler için doğrudan bağlantı istisnaları düzeltildi.",
+    "en": "• Improved connection stability when changing networks or turning protection back on.\n• Reduced unnecessary network operations when starting protection on Windows.\n• Improved memory use of background checks during long sessions.\n• Fixed overlapping operations during repair and incorrect protection status reporting.\n• Fixed direct connection exceptions for games and services."
   }
 }
