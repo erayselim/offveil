@@ -36,6 +36,11 @@ test("shared RC upgrades the last two Windows and Mac versions", () => {
   assert.throws(() => compareVersions("ruleset-latest", "1.0.0"));
 });
 
+test("patch release upgrades the current stable version", () => {
+  assert.ok(compareVersions("1.0.1", "1.0.0") > 0);
+  assert.ok(compareVersions("1.0.0", "1.0.1") < 0);
+});
+
 for (const prehashed of [true, false]) {
   test(`updater signatures verify payload and trusted comment (${prehashed ? "ED" : "Ed"})`, () => {
     const bytes = Buffer.from("release installer bytes");

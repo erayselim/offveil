@@ -530,6 +530,45 @@ fn current_gen() -> u64 {
     MAIN_GEN.load(Ordering::SeqCst)
 }
 
+/// Request lower inactive WebView2 memory usage without suspending scripts or
+/// discarding the page (updates and in-flight IPC must keep running).
+fn set_webview_memory_target(win: &tauri::WebviewWindow, hidden: bool, gen: u64) {
+    #[cfg(windows)]
+    {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        };
+        use windows_core::Interface;
+
+        // COM access runs on the WebView's thread. A delayed hide callback must
+        // not lower the memory target after a newer tray click has revealed it.
+        let _ = win.with_webview(move |webview| {
+            if current_gen() != gen {
+                return;
+            }
+            // Older runtimes can lack this interface; memory tuning must never
+            // prevent showing the window or interrupt background operations.
+            unsafe {
+                let Ok(core) = webview.controller().CoreWebView2() else {
+                    return;
+                };
+                let Ok(core) = core.cast::<ICoreWebView2_19>() else {
+                    return;
+                };
+                let target = if hidden {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                } else {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                };
+                let _ = core.SetMemoryUsageTargetLevel(target);
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (win, hidden, gen);
+}
+
 /// Freeze #root opacity without a transition (safe to call while cloaked/hidden).
 fn page_set_hidden_now(win: &tauri::WebviewWindow, hidden: bool) {
     let js = if hidden {
@@ -565,9 +604,10 @@ fn finish_reveal(win: &tauri::WebviewWindow) {
 }
 
 fn reveal_webview(win: &tauri::WebviewWindow) {
-    let _ = win.app_handle().emit("window-revealing", ());
     DISMISSING.store(false, Ordering::SeqCst);
-    let _ = bump_gen();
+    let gen = bump_gen();
+    set_webview_memory_target(win, false, gen);
+    let _ = win.app_handle().emit("window-revealing", ());
     set_dwm_cloaked(win, true);
     apply_native_chrome(win);
     page_set_hidden_now(win, true);
@@ -609,6 +649,7 @@ fn dismiss_webview(window: &tauri::WebviewWindow) {
         apply_native_chrome(&window);
         let _ = window.set_skip_taskbar(true);
         DISMISSING.store(false, Ordering::SeqCst);
+        set_webview_memory_target(&window, true, gen);
     });
 }
 
@@ -905,6 +946,10 @@ pub fn run() {
                     finish_reveal(&win);
                 } else if label == "main" && !START_HIDDEN.load(Ordering::SeqCst) {
                     show_main(app);
+                } else {
+                    // --tray also starts a WebView. Apply the target after its
+                    // initial page load, even if the hide fade finished first.
+                    set_webview_memory_target(&win, true, current_gen());
                 }
             }
         })

@@ -1,11 +1,8 @@
 **İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — M1 ve sonrası]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
 
-- Daha az tekrarlanan DNS ve arka plan işlemi.
-- Mac'te daha güvenilir bağlantı, kurulum ve servis kurtarma.
-- Sistem görünümüne uyum sağlayan tepsi / menü çubuğu ikonu.
-- Mac'te otomatik bağlanma açık gelir; daha önce kapatıldıysa o tercih durur.
+Windows'ta uygulama sistem tepsisinde beklerken bellek kullanımı azaltıldı. Mevcut görünüm ve tepsiden hızlı açılış korunuyor. Bu iyileştirme Windows'a özeldir; macOS'ta işlev değişikliği yok.
 
-Mevcut kullanıcılar **Güncellemeleri kontrol et** ile geçebilir. Mac güncellemesi yönetici onayı isteyebilir; mac.3'te eski servis kapanmıyorsa DMG ile elle kurun.
+Mevcut kullanıcılar **Güncellemeleri kontrol et** ile geçebilir. Mac güncellemesi yönetici onayı isteyebilir.
 
 Windows'ta SmartScreen, Mac'te geliştirici doğrulama uyarısı çıkabilir. [Windows](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac kurulumu](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
 

@@ -196,5 +196,5 @@ jobs:
           else
             gh release edit "$TAG" --draft=false --prerelease=false --latest --notes-file "$RUNNER_TEMP/release-body.md"
           fi
-      - name: Verify published updates from the last two Windows and Mac versions
+      - name: Verify published updates from supported prior versions
         run: node scripts/release.cjs verify-published "$TAG" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/published-release"

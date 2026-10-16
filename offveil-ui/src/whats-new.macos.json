@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "notes": {
-    "tr": "DNS ve arka plan işlemleri hafifletildi. Menü çubuğu ikonu sistem görünümüne uyum sağlıyor; bağlantı ve servis kurtarma iyileştirildi.",
-    "en": "Less repeated DNS and background work, a menu bar icon that follows your system, and more reliable connections and service recovery."
+    "tr": "Bu sürüm Windows'a yönelik bellek iyileştirmeleri içeriyor. macOS'ta işlev değişikliği yok.",
+    "en": "This release improves memory use on Windows. There are no functional changes on macOS."
   }
 }
