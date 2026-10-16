@@ -14,8 +14,8 @@ import (
 
 // Stub is a local UDP/TCP DNS server that answers via DoH (plain UDP fallback).
 type Stub struct {
-	client *DoHClient
-	poison *PoisonSet
+	client  *DoHClient
+	poison  *PoisonSet
 	onQuery QueryObserver
 
 	udpServer *mdns.Server
@@ -136,7 +136,7 @@ func (s *Stub) handle(w mdns.ResponseWriter, r *mdns.Msg) {
 	if err != nil || resp == nil {
 		s.fallbacks.Add(1)
 		slog.Debug("dns stub: DoH failed, plain UDP fallback", "q", q.Name, "err", err)
-		resp, ep, err = ExchangePlain(ctx, msg, nil)
+		resp, ep, err = s.client.exchangePlain(ctx, msg)
 		via = "plain"
 		if err != nil || resp == nil {
 			m := new(mdns.Msg)

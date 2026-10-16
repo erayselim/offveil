@@ -37,6 +37,23 @@ type dohFlight struct {
 // answers. Full wire questions (including flags/EDNS) are keyed without the ID.
 // Every caller gets a private copy with its own ID and can cancel independently.
 func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, string, error) {
+	return c.exchangeShared(ctx, msg, false)
+}
+
+// Only in-flight UDP work is shared. Plain answers remain uncached so they
+// cannot delay DoH recovery or persist an upstream censorship response.
+func (c *DoHClient) exchangePlain(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, string, error) {
+	return c.exchangeShared(ctx, msg, true)
+}
+
+func (c *DoHClient) plain(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, string, error) {
+	if c.plainExchange != nil {
+		return c.plainExchange(ctx, msg)
+	}
+	return ExchangePlain(ctx, msg, nil)
+}
+
+func (c *DoHClient) exchangeShared(ctx context.Context, msg *mdns.Msg, plain bool) (*mdns.Msg, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
@@ -53,12 +70,20 @@ func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, str
 		return nil, "", fmt.Errorf("pack: %w", err)
 	}
 	if !share {
+		if plain {
+			return c.plain(ctx, query)
+		}
 		return c.exchange(ctx, packed)
 	}
-	key := string(packed)
+	key := "doh:" + string(packed)
+	budget := dohExchangeBudget
+	if plain {
+		key = "plain:" + string(packed)
+		budget = plainUDPBudget
+	}
 	now := time.Now()
 	c.queriesMu.Lock()
-	if cached, ok := c.cache[key]; ok {
+	if cached, ok := c.cache[key]; !plain && ok {
 		if now.Before(cached.expires) {
 			out := cached.response.Copy()
 			ageDNSResponse(out, uint32(now.Sub(cached.stored)/time.Second))
@@ -71,13 +96,13 @@ func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, str
 	flight := c.flights[key]
 	if flight == nil {
 		// A short-lived caller must not cancel another caller's DNS resolution.
-		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), dohExchangeBudget)
+		work, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 		flight = &dohFlight{done: make(chan struct{}), cancel: cancel, generation: c.generation}
 		if c.flights == nil {
 			c.flights = make(map[string]*dohFlight)
 		}
 		c.flights[key] = flight
-		go c.resolveFlight(work, key, packed, query, flight)
+		go c.resolveFlight(work, key, packed, query, flight, plain)
 	}
 	flight.waiters++
 	c.queriesMu.Unlock()
@@ -96,16 +121,23 @@ func (c *DoHClient) Exchange(ctx context.Context, msg *mdns.Msg) (*mdns.Msg, str
 	}
 }
 
-func (c *DoHClient) resolveFlight(ctx context.Context, key string, packed []byte, query *mdns.Msg, f *dohFlight) {
+func (c *DoHClient) resolveFlight(ctx context.Context, key string, packed []byte, query *mdns.Msg, f *dohFlight, plain bool) {
 	defer f.cancel()
-	response, endpoint, err := c.exchange(ctx, packed)
+	var response *mdns.Msg
+	var endpoint string
+	var err error
+	if plain {
+		response, endpoint, err = c.plain(ctx, query)
+	} else {
+		response, endpoint, err = c.exchange(ctx, packed)
+	}
 	c.queriesMu.Lock()
 	defer c.queriesMu.Unlock()
 	f.response, f.endpoint, f.err = response, endpoint, err
 	if c.flights[key] == f {
 		delete(c.flights, key)
 	}
-	if err == nil && ctx.Err() == nil && f.generation == c.generation {
+	if !plain && err == nil && ctx.Err() == nil && f.generation == c.generation {
 		if ttl := cacheableTTL(query, response, c.poison); ttl > 0 {
 			now := time.Now()
 			if c.cache == nil {

@@ -44,10 +44,11 @@ type DoHClient struct {
 	mode       string // doh | plain_skip | recovering
 	preferred  string // last successful endpoint; fallbacks remain available
 
-	queriesMu  sync.Mutex
-	cache      map[string]dohCacheEntry
-	flights    map[string]*dohFlight
-	generation uint64
+	queriesMu     sync.Mutex
+	cache         map[string]dohCacheEntry
+	flights       map[string]*dohFlight
+	generation    uint64
+	plainExchange func(context.Context, *mdns.Msg) (*mdns.Msg, string, error)
 }
 
 // NewDoHClient builds a bootstrap DoH client.
@@ -309,7 +310,7 @@ func (c *DoHClient) LookupAWithFallback(ctx context.Context, host string) ([]net
 	msg := new(mdns.Msg)
 	msg.SetQuestion(mdns.Fqdn(host), mdns.TypeA)
 	msg.RecursionDesired = true
-	resp, ep, plainErr := ExchangePlain(ctx, msg, nil)
+	resp, ep, plainErr := c.exchangePlain(ctx, msg)
 	if plainErr != nil {
 		return nil, fmt.Errorf("DoH failed (%v); plain DNS: %w", err, plainErr)
 	}
