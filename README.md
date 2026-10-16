@@ -49,6 +49,7 @@ docs/           IPC contract, threat model, AV notes
 ```
 
 IPC: [docs/contracts.md](docs/contracts.md).
+Engine lifecycle and recovery: [docs/engine-reliability.md](docs/engine-reliability.md).
 
 ## Build
 

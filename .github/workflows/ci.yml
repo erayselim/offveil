@@ -23,6 +23,9 @@ jobs:
       - name: Test
         working-directory: offveil-core
         run: go test ./...
+      - name: Race check engine and network lifecycle
+        working-directory: offveil-core
+        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel
 
   ui:
     runs-on: windows-latest

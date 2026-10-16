@@ -29,6 +29,11 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test ./...
+      - name: Race check engine and network lifecycle
+        working-directory: offveil-core
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel
       - name: Build darwin/arm64
         working-directory: offveil-core
         env:
