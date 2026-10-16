@@ -6,6 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import {
   formatUpdateHint,
   formatUpdatePct,
@@ -72,7 +73,10 @@ export function UpdateFlowDialog({
       <DialogContent
         showCloseButton={false}
         overlayClassName="bg-foreground/25"
-        className="max-w-72 gap-4 overflow-hidden rounded-2xl p-5"
+        className={cn(
+          "max-w-72 gap-4 overflow-hidden rounded-2xl p-5",
+          showNotes && "whats-new-dialog",
+        )}
         onPointerDownOutside={(event) => {
           if (installing) event.preventDefault();
         }}
@@ -84,7 +88,16 @@ export function UpdateFlowDialog({
           <DialogTitle className="app-page-title">{title}</DialogTitle>
           <DialogDescription className="pref-hint">{hint}</DialogDescription>
         </DialogHeader>
-        {showNotes && <p className="update-notes">{notes}</p>}
+        {showNotes && (
+          <p
+            className="update-notes whats-new-notes"
+            tabIndex={0}
+            role="region"
+            aria-label={m.updateAvailableTitle}
+          >
+            {notes}
+          </p>
+        )}
         {error && !progress && <p className="update-dialog-error">{error}</p>}
         {progress ? (
           <>
