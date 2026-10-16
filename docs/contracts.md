@@ -219,6 +219,9 @@ Split-default routes go away with the TUN.
 - Steam / Riot / Epic / Faceit store+launcher suffixes (ruleset `path_force: direct`)
 - Generic UDP (game servers are not on the domain list; protocol split is the protection)
 
+After sniffing and DNS hijack, explicit DIRECT domain/private-IP exceptions
+take precedence over QUIC rejection. Their HTTP/3 traffic stays direct.
+
 ## 4. Probe protocol
 
 Classify the block and pick an outbound. Raw socket detail does not go to
@@ -347,8 +350,9 @@ lists.
 DNS stub query watch -> `MatchPackage` / `ExpandForHost` -> capture
 `AddPrefixes` (legacy CDN half-load). Discord voice UDP follows the special
 package path (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
-tunnel). Generic UDP stays on the ISP path. Sniffed QUIC is rejected in
-sing-box so HTTPS falls back to TCP TLS; raw UDP/443 is not dropped.
+tunnel). Generic UDP stays on the ISP path. Outside explicit DIRECT
+domain/private-IP exceptions, sniffed QUIC is rejected in sing-box so HTTPS
+falls back to TCP TLS; raw UDP/443 is not dropped.
 Network change or sleep triggers silent self-heal (Windows power notifications;
 Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 
@@ -359,7 +363,7 @@ Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 - TUN inbound with split-default `route_address` (`0.0.0.0/1` + `128.0.0.0/1`, never `0.0.0.0/0`). `auto_route` on. Windows: Wintun `interface_name` `offveil`. Darwin: omit `interface_name` (sing-box picks `utunN`; `"offveil"` is a bad tun name). Go capture is snapshot-only (`SkipAdapter`).
 - DoH / DNS hijack
 - Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
-- Sniffed QUIC reject (not port 443) so HTTP/3 falls back to TCP TLS
+- After sniff and DNS hijack, explicit DIRECT domain/private-IP exceptions precede sniffed QUIC reject (not port 443). Other HTTP/3 traffic falls back to TCP TLS.
 - Selective tunnel outbound(s) for special IP-drop and canary throttle/IP-drop suffixes
 - Sidecar: `sing-box.exe` (Windows) / `sing-box` (Darwin). Same release tag; Darwin asset `sing-box-*-darwin-arm64.tar.gz`.
 

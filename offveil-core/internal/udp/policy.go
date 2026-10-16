@@ -1,7 +1,8 @@
 // Package udp covers Discord voice media UDP and QUIC (HTTP/3).
 // Voice signalling is TCP/WSS; media is a separate UDP path that needs
-// TUN or SOCKS5 UDP ASSOCIATE. Sniffed QUIC is dropped so HTTPS falls
-// back to TCP TLS. Raw game UDP on port 443 is not QUIC and stays ISS.
+// TUN or SOCKS5 UDP ASSOCIATE. Outside explicit DIRECT exceptions, sniffed
+// QUIC is dropped so HTTPS falls back to TCP TLS. Raw game UDP on port 443
+// is not QUIC and stays ISS.
 package udp
 
 import "strings"
@@ -25,7 +26,8 @@ const (
 	VoiceTunnel VoiceUDPPath = "tunnel" // sing-box SOCKS → selective WG/Reality
 )
 
-// Info is diagnostics for status.udp (UI may ignore).
+// Info is diagnostics for status.udp (UI may ignore). Quic describes the
+// default policy; explicit DIRECT route exceptions take precedence.
 type Info struct {
 	VoicePath VoiceUDPPath `json:"voice_path"`
 	Quic      QuicPolicy   `json:"quic"`
@@ -83,7 +85,8 @@ func IsVoiceHost(host string) bool {
 
 // QuicRejectRule is a sing-box route rule fragment: reject sniffed QUIC
 // (HTTP/3) so clients fall back to TCP TLS. Port 443 is not used — game
-// UDP on 443 is not QUIC and must stay DIRECT. Place after sniff.
+// UDP on 443 is not QUIC and must stay DIRECT. Place after sniff, DNS hijack
+// and explicit DIRECT domain/private-IP exceptions.
 func QuicRejectRule() map[string]any {
 	return map[string]any{
 		"protocol": "quic",

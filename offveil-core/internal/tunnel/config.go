@@ -192,8 +192,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"rules": []any{
 				map[string]any{"action": "sniff"},
 				map[string]any{"protocol": "dns", "action": "hijack-dns"},
-				// Drop sniffed QUIC so TCP HTTPS stays on desync/tunnel; game UDP/443 stays ISS.
-				udp.QuicRejectRule(),
+				// Explicit DIRECT exceptions also apply to QUIC (HTTP/3).
 				map[string]any{
 					"domain_suffix": p.DirectDomains,
 					"outbound":      "direct",
@@ -202,6 +201,8 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 					"ip_is_private": true,
 					"outbound":      "direct",
 				},
+				// Reject remaining QUIC to keep protected HTTPS on TCP.
+				udp.QuicRejectRule(),
 			},
 		},
 	}
