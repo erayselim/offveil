@@ -1,7 +1,7 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4-beta.1",
   "notes": {
-    "tr": "Güncelleme penceresindeki sürüm notları artık kaydırılabiliyor.",
-    "en": "Release notes in the update dialog can now be scrolled."
+    "tr": "BETA — test sürümü\n\nBağlantı yardımcılarından biri durursa korumanın kendini toparlaması iyileştirildi. Diğer sitelerdeki bağlantılara gereksiz müdahale azaltıldı.\n\nWindows’ta Discord’un güncellemede takıldığı durumları incelemek için isteğe bağlı ek bağlantı kontrolü eklendi. Bu sorunun çözüldüğü henüz doğrulanmadı.\n\nBir sorunla karşılaşırsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
+    "en": "BETA — test release\n\nImproved recovery when a connection helper stops. Reduced interference with connections to other sites.\n\nAdded an optional connectivity check to investigate Discord getting stuck during updates on Windows. A fix for that issue has not yet been confirmed.\n\nIf something goes wrong, share a report from Settings → Save support file."
   }
 }

@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "offveil-ui"
-version = "1.0.3"
+version = "1.0.4-beta.1"
 dependencies = [
  "reqwest",
  "rustls",

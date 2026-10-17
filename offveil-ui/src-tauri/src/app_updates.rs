@@ -239,6 +239,25 @@ mod tests {
     }
 
     #[test]
+    fn beta_updates_from_stable_and_then_to_final() {
+        let beta = vec![release("v1.0.4-beta.1", false, true)];
+        let stable = semver::Version::parse("1.0.3").unwrap();
+        assert_eq!(
+            newest_manifest(&beta, &stable).unwrap().0.to_string(),
+            "1.0.4-beta.1"
+        );
+        let releases = vec![
+            release("v1.0.4-beta.1", false, true),
+            release("v1.0.4", false, true),
+        ];
+        let current = semver::Version::parse("1.0.4-beta.1").unwrap();
+        assert_eq!(
+            newest_manifest(&releases, &current).unwrap().0.to_string(),
+            "1.0.4"
+        );
+    }
+
+    #[test]
     fn skips_releases_while_payloads_are_still_uploading() {
         let mut release = release("v1.0.1", false, true);
         release.assets[1].state = "open".into();

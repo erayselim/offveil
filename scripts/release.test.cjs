@@ -41,6 +41,13 @@ test("patch release upgrades the current stable version", () => {
   assert.ok(compareVersions("1.0.0", "1.0.1") < 0);
 });
 
+test("1.0.4 beta upgrades stable and can advance to the final release", () => {
+  assert.ok(compareVersions("1.0.4-beta.1", "1.0.3") > 0);
+  assert.ok(compareVersions("1.0.4-beta.2", "1.0.4-beta.1") > 0);
+  assert.ok(compareVersions("1.0.4", "1.0.4-beta.1") > 0);
+  assert.ok(compareVersions("1.0.4", "1.0.4-beta.2") > 0);
+});
+
 for (const prehashed of [true, false]) {
   test(`updater signatures verify payload and trusted comment (${prehashed ? "ED" : "Ed"})`, () => {
     const bytes = Buffer.from("release installer bytes");
