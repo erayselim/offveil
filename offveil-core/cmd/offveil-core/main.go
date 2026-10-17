@@ -80,6 +80,7 @@ func main() {
 		supportFlags := flag.NewFlagSet("support", flag.ExitOnError)
 		output := supportFlags.String("output", "", "ZIP destination (default: Downloads)")
 		uiError := supportFlags.String("ui-error", "", "last UI operation error")
+		checkDiscord := supportFlags.Bool("check-discord", false, "check Discord endpoints and Windows update download (adds up to 26 seconds)")
 		_ = supportFlags.Parse(os.Args[2:])
 		fmt.Fprintln(os.Stderr, "Collecting support information; a stopped or unreachable daemon is supported.")
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -91,6 +92,12 @@ func main() {
 			in.System["last_ui_error"] = support.RedactLocalError(*uiError)
 		}
 		cancel()
+		if *checkDiscord {
+			fmt.Fprintln(os.Stderr, "Checking public Discord endpoints over current OS routes (IPv4 and IPv6; no account required).")
+			checkCtx, checkCancel := context.WithTimeout(context.Background(), support.DiscordCheckBudget)
+			in.System["discord_connectivity"] = support.CheckDiscord(checkCtx)
+			checkCancel()
+		}
 		meta, err := support.Write(in, *output)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "support: %v\n", err)
@@ -134,6 +141,7 @@ Usage:
   offveil-core status          Query service status
   offveil-core client -method ping|status|start|stop|restart|health|test|repair
   offveil-core support [-output /path/to/support.zip]  Save a ZIP without requiring the daemon
+    [-check-discord]           Include public Discord and Windows updater checks
   offveil-core check-payload   Validate native strategy arguments with the bundled sidecar
   offveil-core version
 

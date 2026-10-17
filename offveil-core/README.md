@@ -47,9 +47,13 @@ offveil-core client -method start
 offveil-core client -method status
 offveil-core client -method test
 offveil-core client -method diagnostics
+offveil-core support -check-discord # opt-in Windows updater/endpoint checks in support ZIP
 offveil-core client -method repair
 offveil-core uninstall
 ```
+
+For a Windows Discord update loop where the web client works, see
+[the updater investigation and diagnostic guide](../docs/windows-discord-updater.md).
 
 ## IPC ACL
 
