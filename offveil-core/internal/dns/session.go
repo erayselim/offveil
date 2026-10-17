@@ -169,7 +169,7 @@ func (s *session) Close() error {
 type FakeSession struct {
 	info   Info
 	client *DoHClient
-	closed bool
+	closed atomic.Bool
 }
 
 // NewFakeSession returns a no-op DNS session.
@@ -181,10 +181,13 @@ func NewFakeSession(info Info) *FakeSession {
 	return &FakeSession{info: info, client: NewDoHClient(DefaultPoisonSet())}
 }
 
-func (f *FakeSession) Info() Info         { return f.info }
+func (f *FakeSession) Info() Info {
+	info := f.info
+	info.StubUp = info.StubUp && !f.closed.Load()
+	return info
+}
 func (f *FakeSession) Client() *DoHClient { return f.client }
 func (f *FakeSession) Close() error {
-	f.closed = true
-	f.info.StubUp = false
+	f.closed.Store(true)
 	return nil
 }

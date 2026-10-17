@@ -34,8 +34,12 @@ The process helper owns exactly one `exec.Cmd.Wait` call per started sidecar.
 It reaps natural exits, supports concurrent close, notices startup exits
 before the SOCKS timeout, and bounds inherited output-pipe draining with
 `WaitDelay`. Sidecar status reflects process completion; status/health reads
-mark protection degraded when a live component has stopped. Recovery uses
-an explicit restart or the existing network-change and resume handling.
+mark protection degraded when a live component has stopped. A two-second
+watcher retries only the failed component, at most twice per session with a
+five-second cooldown. ByeDPI recovery keeps a healthy TUN running. The last
+16 failure/recovery events survive daemon restarts; support includes exit
+codes and stderr classes, never raw sidecar logs. Discord and IMVU are
+validated separately before selecting their fallback paths.
 
 Go requires `Wait` after a successful `Start` and disallows concurrent `Wait`
 calls. See the [Go process contract](https://pkg.go.dev/os/exec#Cmd.Wait) and

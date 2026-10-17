@@ -13,6 +13,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	_ = os.Setenv("OFFVEIL_POLICY_CACHE", dir)
+	_ = os.Setenv("OFFVEIL_DIAG_DIR", filepath.Join(dir, "diagnostics"))
 	_ = os.Setenv("OFFVEIL_CANARY_BG", "0")
 	_ = os.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
 	_ = os.Setenv("OFFVEIL_RULESET_CACHE", filepath.Join(dir, "ruleset-cache"))

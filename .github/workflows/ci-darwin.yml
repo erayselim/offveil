@@ -47,6 +47,11 @@ jobs:
       - name: Build ByeDPI from pinned tag
         working-directory: offveil-core
         run: bash ./scripts/build-byedpi-darwin.sh dist
+      - name: ByeDPI survives file descriptor pressure
+        run: python3 scripts/byedpi-darwin-resource-test.py offveil-core/dist/ciadpi
+      - name: Validate generated sing-box routing
+        working-directory: offveil-core
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting)$'
       - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
         working-directory: offveil-core
         run: |

@@ -112,6 +112,29 @@ echo "HTTPS through ByeDPI SOCKS passed."
 echo "HTTPS through sing-box SOCKS passed."
 /usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
 echo "HTTPS through the active TUN passed."
+DESYNC_PID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).result.desync.pid' "$WORK/protection-start.json")"
+[[ "$DESYNC_PID" =~ ^[0-9]+$ ]]
+[[ "$(ps -p "$DESYNC_PID" -o comm=)" == '/Library/Application Support/offveil/ciadpi' ]]
+sudo /bin/kill -TERM "$DESYNC_PID"
+recovered=false
+for i in {1..30}; do
+  "$INSTALLED" client -method status > "$WORK/recovered-status.json"
+  if node - "$WORK/protection-start.json" "$WORK/recovered-status.json" <<'NODE'
+const fs = require('node:fs');
+const before = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).result;
+const after = JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).result;
+if (after?.state !== 'active' || !after.desync?.up || after.desync.pid === before.desync.pid) process.exit(1);
+if (!after.tunnel?.up || after.tunnel.pid !== before.tunnel.pid) throw new Error('ByeDPI recovery replaced the healthy TUN');
+NODE
+  then
+    recovered=true
+    break
+  fi
+  sleep 1
+done
+[[ "$recovered" == true ]]
+/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "ByeDPI recovery preserved the TUN and restored routed HTTPS."
 "$INSTALLED" client -method stop -timeout 45s
 dns_snapshot > "$WORK/dns-after.txt"
 cmp "$WORK/dns-before.txt" "$WORK/dns-after.txt"

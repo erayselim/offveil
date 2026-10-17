@@ -156,6 +156,23 @@ func (d Document) TunnelDomains() []string {
 	return out
 }
 
+func (d Document) ProtectedDomains() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range d.EnabledPackages() {
+		if strings.EqualFold(p.PathForce, "direct") {
+			continue
+		}
+		for _, host := range p.RouteHosts() {
+			if !seen[host] {
+				seen[host] = true
+				out = append(out, host)
+			}
+		}
+	}
+	return out
+}
+
 // DirectDomains merges path_force=direct package suffixes/domains.
 func (d Document) DirectDomains() []string {
 	seen := map[string]struct{}{}

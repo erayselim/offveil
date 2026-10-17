@@ -30,6 +30,7 @@ type Input struct {
 	Sidecars  map[string]any `json:"sidecars,omitempty"`
 	Ruleset   map[string]any `json:"ruleset,omitempty"`
 	Heal      map[string]any `json:"heal,omitempty"`
+	Failures  []Failure      `json:"failures,omitempty"`
 	System    map[string]any `json:"system,omitempty"`
 	Notes     []string       `json:"notes,omitempty"`
 }
@@ -137,6 +138,7 @@ func WriteZipIn(in Input, dir string) (*BundleMeta, error) {
 		"sidecars":          in.Sidecars,
 		"ruleset":           in.Ruleset,
 		"heal":              in.Heal,
+		"failures":          in.Failures,
 		"system":            in.System,
 		"notes":             in.Notes,
 	}
@@ -226,6 +228,10 @@ func buildSummary(in Input, sha string) string {
 	}
 	b.WriteString(fmt.Sprintf("- state: %s · protection=%v · hint=%s\n",
 		in.Cascade.State, in.Cascade.Protection, in.Cascade.OutboundHint))
+	if len(in.Failures) > 0 {
+		last := in.Failures[len(in.Failures)-1]
+		b.WriteString(fmt.Sprintf("- last component event: %s · %s · %s\n", last.Component, last.Event, last.At))
+	}
 	if in.Cascade.ErrorClass != "" {
 		b.WriteString(fmt.Sprintf("- error_class: %s\n", in.Cascade.ErrorClass))
 	}

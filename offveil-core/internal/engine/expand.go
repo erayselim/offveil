@@ -52,6 +52,14 @@ func setTarget(targets []ipc.TargetStatus, id, path, outcome string) {
 	}
 }
 
+func markTunnelRetry(targets []ipc.TargetStatus) {
+	for i := range targets {
+		if targets[i].Path == "tunnel" {
+			targets[i].Outcome = "retry"
+		}
+	}
+}
+
 func targetPath(targets []ipc.TargetStatus, id string) string {
 	for _, t := range targets {
 		if t.ID == id {

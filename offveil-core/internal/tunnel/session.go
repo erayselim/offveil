@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -175,7 +176,11 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		slog.Warn("tunnel: wintun.dll not staged beside sing-box", "err", err)
 	}
 
-	cmd := exec.Command(bin, "run", "-c", cfgPath)
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
 	stderr := &proc.TailBuffer{}
 	cmd.Stdout = nil
 	cmd.Stderr = stderr
@@ -281,6 +286,7 @@ func (s *session) Info() Info {
 		BinaryPath:     s.binPath,
 		ConfigPath:     s.configPath,
 		Up:             s.isUp(),
+		Exit:           s.child.Exit(),
 		Selective:      true,
 		RetryHint:      s.retryHint.Load(),
 		TunnelHosts:    s.cfg.TunnelDomains,
@@ -366,6 +372,7 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		TunnelDomains:     cfg.TunnelDomains,
 		SpecialDomains:    cfg.SpecialDomains,
 		DirectDomains:     cfg.DirectDomains,
+		ProtectedDomains:  cfg.ProtectedDomains,
 		EnableTUN:         cfg.EnableTUN,
 		TUNInterface:      iface,
 		TUNAddress:        addr,

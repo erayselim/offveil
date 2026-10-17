@@ -434,7 +434,7 @@ export default function App() {
     };
   }, [refreshStatus]);
 
-  useStatusPolling(phase === "ready" && !busy, refreshStatus);
+  useStatusPolling((phase === "ready" || phase === "error") && !busy, refreshStatus);
 
   useEffect(() => {
     return () => {

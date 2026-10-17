@@ -1,6 +1,7 @@
 package desync
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,6 +24,7 @@ type session struct {
 	child    *proc.Child
 	socks    string
 	strategy Strategy
+	checks   []FailSignal
 
 	up           atomic.Bool
 	failTimeouts atomic.Int64
@@ -55,7 +57,11 @@ func Start(cfg Config) (Session, error) {
 
 	args := BuildArgsBind(cfg.ListenIP, cfg.ListenPort, cfg.Strategy, cfg.ConnIP)
 	stderr := &proc.TailBuffer{}
-	cmd := exec.Command(bin, args...)
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = stderr
 	if runtime.GOOS == "darwin" && cfg.BindInterface != "" {
@@ -109,6 +115,8 @@ func Start(cfg Config) (Session, error) {
 }
 
 func (s *session) Info() Info {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	info := Info{
 		SocksAddr:     s.socks,
 		StrategyID:    s.strategy.ID,
@@ -118,6 +126,8 @@ func (s *session) Info() Info {
 		FailTimeouts:  int(s.failTimeouts.Load()),
 		FailSSLErrs:   int(s.failSSL.Load()),
 		FailResets:    int(s.failReset.Load()),
+		Exit:          s.child.Exit(),
+		Checks:        append([]FailSignal(nil), s.checks...),
 	}
 	info.PID = s.child.PID()
 	if v, ok := s.lastProbe.Load().(FailClass); ok {
@@ -142,6 +152,22 @@ func (s *session) Close() error {
 }
 
 func (s *session) recordProbe(sig FailSignal) {
+	s.mu.Lock()
+	found := false
+	for i := range s.checks {
+		if s.checks[i].Target == sig.Target {
+			s.checks[i] = sig
+			found = true
+			break
+		}
+	}
+	if !found {
+		if len(s.checks) == 8 {
+			s.checks = s.checks[1:]
+		}
+		s.checks = append(s.checks, sig)
+	}
+	s.mu.Unlock()
 	s.lastProbe.Store(sig.Class)
 	s.lastProbeAt.Store(sig.At.UTC().Format(time.RFC3339))
 	switch sig.Class {

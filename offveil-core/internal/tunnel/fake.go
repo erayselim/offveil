@@ -20,9 +20,13 @@ func NewFakeSession(info Info) *FakeSession {
 	return &FakeSession{info: info}
 }
 
-func (f *FakeSession) Info() Info               { return f.info }
-func (f *FakeSession) SocksAddr() string        { return f.info.SocksAddr }
-func (f *FakeSession) ProviderID() ProviderID   { return f.info.ProviderID }
+func (f *FakeSession) Info() Info {
+	info := f.info
+	info.Up = info.Up && !f.closed.Load()
+	return info
+}
+func (f *FakeSession) SocksAddr() string      { return f.info.SocksAddr }
+func (f *FakeSession) ProviderID() ProviderID { return f.info.ProviderID }
 
 func (f *FakeSession) ProbeTLS(host string) FailSignal {
 	return FailSignal{Target: host, Class: FailOK, ProviderID: string(f.info.ProviderID)}
@@ -30,7 +34,6 @@ func (f *FakeSession) ProbeTLS(host string) FailSignal {
 
 func (f *FakeSession) Close() error {
 	f.closed.Store(true)
-	f.info.Up = false
 	return nil
 }
 

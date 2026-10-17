@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"os"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/proc"
 )
 
 // FailClass is reported when the selective tunnel path fails.
@@ -45,6 +47,7 @@ const (
 
 // Config controls the selective tunnel outbound.
 type Config struct {
+	Context context.Context
 	// BinaryPath is sing-box (sing-box.exe on Windows). Empty → Locate next to core.
 	BinaryPath string
 	// ListenIP defaults to 127.0.0.1.
@@ -74,7 +77,8 @@ type Config struct {
 	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
 	SpecialDomains []string
 	// DirectDomains override Steam/games DIRECT list (empty → DefaultDirectDomains).
-	DirectDomains []string
+	DirectDomains    []string
+	ProtectedDomains []string
 	// SkipStart skips launching sing-box (unit tests / config-only).
 	SkipStart bool
 
@@ -112,21 +116,22 @@ func DefaultConfig() Config {
 
 // Info is runtime tunnel status for engine/status.
 type Info struct {
-	SocksAddr      string       `json:"socks_addr"`
-	ProviderID     ProviderID   `json:"provider_id"`
-	BinaryPath     string       `json:"binary_path,omitempty"`
-	ConfigPath     string       `json:"config_path,omitempty"`
-	PID            int          `json:"pid,omitempty"`
-	Up             bool         `json:"up"`
-	Selective      bool         `json:"selective"` // never full-tunnel
-	LastProbe      FailClass    `json:"last_probe,omitempty"`
-	LastProbeAt    string       `json:"last_probe_at,omitempty"`
-	RetryHint      bool         `json:"retry_hint,omitempty"` // UI: "yeniden dene" (all providers failed)
-	FailDetail     string       `json:"fail_detail,omitempty"`
-	TunnelHosts    []string     `json:"tunnel_hosts,omitempty"`
-	DirectHosts    []string     `json:"direct_hosts,omitempty"`
-	FailoverFrom   ProviderID   `json:"failover_from,omitempty"` // previous provider if auto-switched
-	ProvidersTried []ProviderID `json:"providers_tried,omitempty"`
+	SocksAddr      string         `json:"socks_addr"`
+	ProviderID     ProviderID     `json:"provider_id"`
+	BinaryPath     string         `json:"binary_path,omitempty"`
+	ConfigPath     string         `json:"config_path,omitempty"`
+	PID            int            `json:"pid,omitempty"`
+	Exit           *proc.ExitInfo `json:"exit,omitempty"`
+	Up             bool           `json:"up"`
+	Selective      bool           `json:"selective"` // never full-tunnel
+	LastProbe      FailClass      `json:"last_probe,omitempty"`
+	LastProbeAt    string         `json:"last_probe_at,omitempty"`
+	RetryHint      bool           `json:"retry_hint,omitempty"` // UI: "yeniden dene" (all providers failed)
+	FailDetail     string         `json:"fail_detail,omitempty"`
+	TunnelHosts    []string       `json:"tunnel_hosts,omitempty"`
+	DirectHosts    []string       `json:"direct_hosts,omitempty"`
+	FailoverFrom   ProviderID     `json:"failover_from,omitempty"` // previous provider if auto-switched
+	ProvidersTried []ProviderID   `json:"providers_tried,omitempty"`
 }
 
 // Session is a running selective tunnel outbound (sing-box SOCKS).

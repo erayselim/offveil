@@ -80,7 +80,7 @@ async fn ensure_service() -> Result<BootstrapInfo, String> {
 
 #[tauri::command]
 async fn get_status() -> Result<Status, String> {
-    run_blocking(|| {
+    let result = run_blocking(|| {
         // Do not pre-ping (was doubling latency / freezes). status itself fails fast if down.
         match core_ipc::status() {
             Ok(s) => Ok(s),
@@ -90,7 +90,11 @@ async fn get_status() -> Result<Status, String> {
             Err(e) => Err(e),
         }
     })
-    .await
+    .await;
+    if let Err(ref error) = result {
+        diagnostics::record_error("status", error);
+    }
+    result
 }
 
 #[tauri::command]
@@ -125,11 +129,15 @@ async fn set_protection(enabled: bool) -> Result<Status, String> {
 
 #[tauri::command]
 async fn restart_protection() -> Result<Status, String> {
-    run_blocking(|| {
+    let result = run_blocking(|| {
         service::start_installed()?;
         core_ipc::restart()
     })
-    .await
+    .await;
+    if let Err(ref error) = result {
+        diagnostics::record_error("restart", error);
+    }
+    result
 }
 
 #[tauri::command]

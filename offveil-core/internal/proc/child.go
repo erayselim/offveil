@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +16,14 @@ type Child struct {
 	done     chan struct{}
 	err      error
 	stopOnce sync.Once
+	exit     ExitInfo
+}
+
+type ExitInfo struct {
+	At          string `json:"at"`
+	Code        int    `json:"code"`
+	Error       string `json:"error,omitempty"`
+	StderrClass string `json:"stderr_class,omitempty"`
 }
 
 // WatchChild takes ownership of Wait for a successfully started command.
@@ -25,9 +34,51 @@ func WatchChild(cmd *exec.Cmd) *Child {
 	cmd.WaitDelay = 2 * time.Second
 	go func() {
 		c.err = cmd.Wait()
+		c.exit = ExitInfo{At: time.Now().UTC().Format(time.RFC3339), Code: -1}
+		if cmd.ProcessState != nil {
+			c.exit.Code = cmd.ProcessState.ExitCode()
+		}
+		if c.err != nil {
+			c.exit.Error = c.err.Error()
+		}
+		if tail, ok := cmd.Stderr.(*TailBuffer); ok {
+			c.exit.StderrClass = stderrClass(tail.String())
+		}
 		close(c.done)
 	}()
 	return c
+}
+
+// Exit publishes completed process facts without exporting arbitrary sidecar logs.
+func (c *Child) Exit() *ExitInfo {
+	if c == nil || c.Running() {
+		return nil
+	}
+	info := c.exit
+	return &info
+}
+
+func stderrClass(tail string) string {
+	tail = strings.ToLower(tail)
+	for _, match := range []struct{ text, class string }{
+		{"too many open files", "file_limit"},
+		{"cannot allocate memory", "memory_limit"},
+		{"out of memory", "memory_limit"},
+		{"address already in use", "address_in_use"},
+		{"permission denied", "permission_denied"},
+		{"operation not permitted", "permission_denied"},
+		{"panic:", "panic"},
+		{"fatal error:", "fatal"},
+		{"bind outbound interface", "interface_bind"},
+	} {
+		if strings.Contains(tail, match.text) {
+			return match.class
+		}
+	}
+	if tail != "" {
+		return "other"
+	}
+	return ""
 }
 
 func (c *Child) Running() bool {

@@ -41,6 +41,23 @@ func TestChildReapsUnexpectedExitAndStopsReadinessWait(t *testing.T) {
 	if c.Running() || c.err == nil || time.Since(began) > 5*time.Second {
 		t.Fatal("child exit was not promptly observed and reaped")
 	}
+	info := c.Exit()
+	if info == nil || info.Code != 7 || info.At == "" || info.Error == "" {
+		t.Fatalf("missing exit facts: %+v", info)
+	}
+	info.Code = 0
+	if c.Exit().Code != 7 {
+		t.Fatal("caller modified the recorded exit")
+	}
+}
+
+func TestStderrClassOmitsLogContents(t *testing.T) {
+	if got := stderrClass("accept: too many open files /Users/private token=secret"); got != "file_limit" {
+		t.Fatalf("class=%q", got)
+	}
+	if got := stderrClass("https://private.example/?token=secret"); got != "other" {
+		t.Fatalf("class=%q", got)
+	}
 }
 
 func TestChildConcurrentCloseWaitsOnce(t *testing.T) {

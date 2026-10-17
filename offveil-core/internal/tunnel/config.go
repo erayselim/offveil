@@ -53,19 +53,20 @@ type SingBoxBuild struct {
 
 // BuildParams is the full sing-box generator input (SOCKS + optional TUN dataplane).
 type BuildParams struct {
-	Provider      ProviderID
-	WARP          *WARPProfile
-	Reality       *RealityCredentials
-	ListenIP      string
-	ListenPort    int
-	TunnelDomains []string
-	DirectDomains []string
-	EnableTUN     bool
-	TUNInterface  string
-	TUNAddress    string
-	TUNMTU        int
-	RouteCIDRs    []string
-	ExcludeCIDRs  []string
+	Provider         ProviderID
+	WARP             *WARPProfile
+	Reality          *RealityCredentials
+	ListenIP         string
+	ListenPort       int
+	TunnelDomains    []string
+	DirectDomains    []string
+	ProtectedDomains []string
+	EnableTUN        bool
+	TUNInterface     string
+	TUNAddress       string
+	TUNMTU           int
+	RouteCIDRs       []string
+	ExcludeCIDRs     []string
 	// AllowlistOutbound tags the SOCKS-only (no TUN) path: "desync" or "tunnel".
 	AllowlistOutbound string
 	DesyncSOCKSHost   string
@@ -103,6 +104,9 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 	}
 	if len(p.DirectDomains) == 0 {
 		p.DirectDomains = DefaultDirectDomains()
+	}
+	if len(p.ProtectedDomains) == 0 {
+		p.ProtectedDomains = defaultProtectedDomains()
 	}
 	allowOut := strings.ToLower(strings.TrimSpace(p.AllowlistOutbound))
 	if allowOut == "" {
@@ -201,11 +205,18 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 					"ip_is_private": true,
 					"outbound":      "direct",
 				},
-				// Reject remaining QUIC to keep protected HTTPS on TCP.
-				udp.QuicRejectRule(),
 			},
 		},
 	}
+
+	route := cfg["route"].(map[string]any)
+	rules := route["rules"].([]any)
+	if p.EnableTUN {
+		rules = append(rules, applicationUDPRules(p, true)...)
+	}
+	quic := udp.QuicRejectRule()
+	quic["domain_suffix"] = p.ProtectedDomains
+	route["rules"] = append(rules, quic)
 
 	if p.EnableTUN || p.Provider == ProviderDesync {
 		prependDesyncOutbound(cfg, p)
@@ -343,6 +354,7 @@ func appendPolicyRules(cfg map[string]any, p BuildParams, socksOutbound string) 
 				"outbound":      "desync",
 			})
 		}
+		rules = append(rules, applicationUDPRules(p, false)...)
 		rules = append(rules, map[string]any{
 			"network":  "udp",
 			"outbound": "direct",

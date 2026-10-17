@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"os"
 	"time"
+
+	"github.com/erayselim/offveil/offveil-core/internal/proc"
 )
 
 // FailClass matches ByeDPI --auto triggers and contracts.md probe classes
@@ -42,6 +44,7 @@ type Strategy struct {
 
 // Config controls the ByeDPI sidecar.
 type Config struct {
+	Context context.Context
 	// BinaryPath is ciadpi (ciadpi.exe on Windows). Empty → Locate next to core.
 	BinaryPath string
 	// ListenIP defaults to 127.0.0.1.
@@ -82,17 +85,19 @@ func DefaultConfig() Config {
 
 // Info is runtime desync status for engine/status.
 type Info struct {
-	SocksAddr     string    `json:"socks_addr"`
-	StrategyID    string    `json:"strategy_id"`
-	BindInterface string    `json:"bind_interface,omitempty"`
-	BinaryPath    string    `json:"binary_path,omitempty"`
-	PID           int       `json:"pid,omitempty"`
-	Up            bool      `json:"up"`
-	LastProbe     FailClass `json:"last_probe,omitempty"`
-	LastProbeAt   string    `json:"last_probe_at,omitempty"`
-	FailTimeouts  int       `json:"fail_timeouts"`
-	FailSSLErrs   int       `json:"fail_ssl_errs"`
-	FailResets    int       `json:"fail_resets"`
+	SocksAddr     string         `json:"socks_addr"`
+	StrategyID    string         `json:"strategy_id"`
+	BindInterface string         `json:"bind_interface,omitempty"`
+	BinaryPath    string         `json:"binary_path,omitempty"`
+	PID           int            `json:"pid,omitempty"`
+	Up            bool           `json:"up"`
+	LastProbe     FailClass      `json:"last_probe,omitempty"`
+	LastProbeAt   string         `json:"last_probe_at,omitempty"`
+	FailTimeouts  int            `json:"fail_timeouts"`
+	FailSSLErrs   int            `json:"fail_ssl_errs"`
+	FailResets    int            `json:"fail_resets"`
+	Exit          *proc.ExitInfo `json:"exit,omitempty"`
+	Checks        []FailSignal   `json:"checks,omitempty"`
 }
 
 // Session is a running ByeDPI SOCKS desync outbound.

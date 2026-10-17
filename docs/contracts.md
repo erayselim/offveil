@@ -351,8 +351,10 @@ DNS stub query watch -> `MatchPackage` / `ExpandForHost` -> capture
 `AddPrefixes` (legacy CDN half-load). Discord voice UDP follows the special
 package path (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
 tunnel). Generic UDP stays on the ISP path. Outside explicit DIRECT
-domain/private-IP exceptions, sniffed QUIC is rejected in sing-box so HTTPS
-falls back to TCP TLS; raw UDP/443 is not dropped.
+domain/private-IP exceptions, QUIC for protected domains and supported apps
+is rejected so HTTPS falls back to TCP TLS. Other QUIC and raw UDP/443 stay
+direct. Discord/IMVU process names and macOS app paths also identify raw UDP
+when no hostname is available.
 Network change or sleep triggers silent self-heal (Windows power notifications;
 Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 
@@ -363,7 +365,7 @@ Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 - TUN inbound with split-default `route_address` (`0.0.0.0/1` + `128.0.0.0/1`, never `0.0.0.0/0`). `auto_route` on. Windows: Wintun `interface_name` `offveil`. Darwin: omit `interface_name` (sing-box picks `utunN`; `"offveil"` is a bad tun name). Go capture is snapshot-only (`SkipAdapter`).
 - DoH / DNS hijack
 - Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
-- After sniff and DNS hijack, explicit DIRECT domain/private-IP exceptions precede sniffed QUIC reject (not port 443). Other HTTP/3 traffic falls back to TCP TLS.
+- After sniff and DNS hijack, explicit DIRECT exceptions precede protected-domain/app QUIC rejection. Other HTTP/3 stays direct.
 - Selective tunnel outbound(s) for special IP-drop and canary throttle/IP-drop suffixes
 - Sidecar: `sing-box.exe` (Windows) / `sing-box` (Darwin). Same release tag; Darwin asset `sing-box-*-darwin-arm64.tar.gz`.
 

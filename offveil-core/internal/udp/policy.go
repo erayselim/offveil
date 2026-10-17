@@ -1,7 +1,7 @@
 // Package udp covers Discord voice media UDP and QUIC (HTTP/3).
 // Voice signalling is TCP/WSS; media is a separate UDP path that needs
-// TUN or SOCKS5 UDP ASSOCIATE. Outside explicit DIRECT exceptions, sniffed
-// QUIC is dropped so HTTPS falls back to TCP TLS. Raw game UDP on port 443
+// TUN or SOCKS5 UDP ASSOCIATE. Protected-domain/app QUIC is dropped so
+// HTTPS falls back to TCP TLS. Raw game UDP on port 443
 // is not QUIC and stays ISS.
 package udp
 
@@ -27,7 +27,7 @@ const (
 )
 
 // Info is diagnostics for status.udp (UI may ignore). Quic describes the
-// default policy; explicit DIRECT route exceptions take precedence.
+// protected traffic policy; explicit DIRECT route exceptions take precedence.
 type Info struct {
 	VoicePath VoiceUDPPath `json:"voice_path"`
 	Quic      QuicPolicy   `json:"quic"`
@@ -46,25 +46,25 @@ func ForOutbound(tcpPath string) Info {
 		return Info{
 			VoicePath: VoiceDesync,
 			Quic:      QuicDrop,
-			Note:      "voice UDP → ByeDPI SOCKS5 UDP ASSOCIATE; sniffed QUIC drop → TCP TLS",
+			Note:      "voice UDP → ByeDPI SOCKS5 UDP ASSOCIATE; protected QUIC drop → TCP TLS",
 		}
 	case "tunnel":
 		return Info{
 			VoicePath: VoiceTunnel,
 			Quic:      QuicDrop,
-			Note:      "voice UDP → sing-box SOCKS → selective tunnel; sniffed QUIC drop → TCP TLS",
+			Note:      "voice UDP → sing-box SOCKS → selective tunnel; protected QUIC drop → TCP TLS",
 		}
 	case "direct":
 		return Info{
 			VoicePath: VoiceDirect,
 			Quic:      QuicDrop,
-			Note:      "voice UDP direct; sniffed QUIC drop (force TCP HTTPS)",
+			Note:      "voice UDP direct; protected QUIC drop → TCP TLS",
 		}
 	default:
 		return Info{
 			VoicePath: VoiceDirect,
 			Quic:      QuicDrop,
-			Note:      "outbound unknown - voice UDP direct; sniffed QUIC drop",
+			Note:      "outbound unknown - voice UDP direct; protected QUIC drop",
 		}
 	}
 }

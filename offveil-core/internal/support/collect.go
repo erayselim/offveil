@@ -54,6 +54,9 @@ func Collect(ctx context.Context, rpc RPC) diag.Input {
 		}
 	}
 	in.System = system
+	if len(in.Failures) == 0 {
+		in.Failures = diag.ReadFailures()
+	}
 	in.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	return in
 }

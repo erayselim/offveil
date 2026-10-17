@@ -38,6 +38,13 @@ func fakeNet(_ context.Context) netinfo.Info {
 	return netinfo.Info{ASN: "9121", ISPHint: "Turk Telekom", Fingerprint: "testfp"}
 }
 
+type hostProbeSession struct {
+	desync.Session
+	probe func(string) desync.FailSignal
+}
+
+func (s *hostProbeSession) ProbeTLS(host string) desync.FailSignal { return s.probe(host) }
+
 func newTestEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
@@ -582,10 +589,12 @@ func TestTunnelEscalateDiscordOnly(t *testing.T) {
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
 			desyncCalls++
-			return desync.NewFakeSession(desync.Info{
+			return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{
 				SocksAddr: "127.0.0.1:18080", StrategyID: cfg.Strategy.ID,
 				LastProbe: desync.FailTimeout, Up: true,
-			}), nil
+			}), probe: func(host string) desync.FailSignal {
+				return desync.FailSignal{Target: host, Class: desync.FailOK}
+			}}, nil
 		}).
 		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
 			return tunnel.NewFakeSession(tunnel.Info{
@@ -638,6 +647,71 @@ func TestTunnelEscalateDiscordOnly(t *testing.T) {
 	}
 	if desyncCalls != 2 {
 		t.Fatalf("desyncCalls=%d want 2 (ASN cache must not skip default desync)", desyncCalls)
+	}
+}
+
+func TestIMVUFailureEscalatesItsOwnPackage(t *testing.T) {
+	eng := newTestEngine(t)
+	checked := 0
+	eng.WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
+		if cfg.ProbeHost != "discord.com" {
+			t.Fatalf("primary probe=%s", cfg.ProbeHost)
+		}
+		return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{LastProbe: desync.FailOK}), probe: func(host string) desync.FailSignal {
+			if host != "secure.imvu.com" {
+				t.Fatalf("unexpected extra probe=%s", host)
+			}
+			checked++
+			return desync.FailSignal{Target: host, Class: desync.FailReset}
+		}}, nil
+	})
+	eng.WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+		if cfg.AllowlistOutbound != "tunnel" || cfg.ProbeHost != "secure.imvu.com" {
+			t.Fatalf("wrong IMVU fallback: %+v", cfg)
+		}
+		for _, host := range cfg.TunnelDomains {
+			if strings.Contains(host, "discord") {
+				t.Fatal("IMVU failure rerouted Discord")
+			}
+		}
+		return tunnel.NewFakeSession(tunnel.Info{ProviderID: tunnel.ProviderWARP, Up: true, LastProbe: tunnel.FailOK}), nil
+	})
+	st, err := eng.Start("auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Stop()
+	if checked != 1 {
+		t.Fatalf("IMVU checked %d times", checked)
+	}
+	for _, target := range st.Targets {
+		if target.ID == "imvu" && target.Path != "tunnel" || target.ID == "discord" && target.Path != "desync" {
+			t.Fatalf("target=%+v", target)
+		}
+	}
+}
+
+func TestFailedIMVUFallbackIsNotReportedHealthy(t *testing.T) {
+	eng := newTestEngine(t)
+	eng.WithDesyncStart(func(desync.Config) (desync.Session, error) {
+		return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{LastProbe: desync.FailOK}), probe: func(host string) desync.FailSignal {
+			return desync.FailSignal{Target: host, Class: desync.FailReset}
+		}}, nil
+	})
+	eng.WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+		if cfg.AllowlistOutbound == "tunnel" {
+			return tunnel.NewFakeSession(tunnel.Info{Up: false, RetryHint: true}), nil
+		}
+		return tunnel.NewFakeSession(tunnel.Info{ProviderID: tunnel.ProviderDesync, Up: true}), nil
+	})
+	st, err := eng.Start("auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Stop()
+	info, ok := st.Tunnel.(*tunnel.Info)
+	if st.State != engine.StateDegraded || st.LastError == nil || !ok || !info.Up {
+		t.Fatalf("failed protected path with a working local dataplane: %+v", st)
 	}
 }
 

@@ -41,6 +41,7 @@ func (e *Engine) startReliabilityLocked() {
 	go power.Watch(ctx, func() {
 		e.requestSessionHeal("power_resume", session)
 	})
+	go e.watchComponents(ctx, session)
 }
 
 func (e *Engine) stopReliabilityLocked() {
@@ -236,6 +237,7 @@ func (e *Engine) diagnosticsInputLocked() diag.Input {
 
 func writeDiagnostics(in diag.Input) (*diag.BundleMeta, error) {
 	// OS inspection and ZIP I/O must not hold the engine lifecycle lock.
+	in.Failures = diag.ReadFailures()
 	in.Notes = append(in.Notes, offdns.RelayDiagNotes()...)
 	return diag.WriteZip(in)
 }

@@ -38,7 +38,11 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	if timeout <= 0 {
 		timeout = 12 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	parent := s.cfg.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	// Prefer domain CONNECT so sing-box domain_suffix rules match.
