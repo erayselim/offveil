@@ -1,0 +1,32 @@
+--- a/proxy.c
++++ b/proxy.c
+@@ -609,4 +609,9 @@
+ static int on_accept(struct poolhd *pool, struct eval *val, int et)
+ {
++#if defined(__APPLE__)
++    if (et == POLLTIMEOUT && mod_etype(pool, val, POLLIN) < 0) {
++        return -1;
++    }
++#endif
+     union sockaddr_u client;
+     struct eval *rval;
+@@ -622,6 +627,19 @@
+             if (get_e() == EAGAIN ||
+                     get_e() == EINPROGRESS)
+                 break;
++#if defined(__APPLE__)
++            int error = get_e();
++            if (error == EINTR || error == ECONNABORTED) {
++                continue;
++            }
++            if (error == EMFILE || error == ENFILE ||
++                    error == ENOBUFS || error == ENOMEM) {
++                uniperror("accept");
++                mod_etype(pool, val, 0);
++                set_timer(pool, val, 100);
++                return 0;
++            }
++#endif
+             uniperror("accept");
+             pool->brk = 1;
+             return -1;

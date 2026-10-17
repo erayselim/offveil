@@ -44,6 +44,8 @@ fi
 # upstream commit. Never silently build without it: utun must not capture ciadpi.
 git apply --check "${ROOT}/patches/byedpi-darwin-bind-interface.patch"
 git apply "${ROOT}/patches/byedpi-darwin-bind-interface.patch"
+git apply --check "${ROOT}/patches/byedpi-darwin-accept.patch"
+git apply "${ROOT}/patches/byedpi-darwin-accept.patch"
 
 make
 if [[ ! -f ./ciadpi ]]; then

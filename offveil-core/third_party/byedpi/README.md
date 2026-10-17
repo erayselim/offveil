@@ -39,3 +39,5 @@ splitting and OOB. The build applies the checked-in
 `patches/byedpi-darwin-bind-interface.patch` after verifying the upstream commit.
 The Apple-only patch pins outbound sockets with `IP_BOUND_IF` / `IPV6_BOUND_IF`
 using the physical interface passed by the core in `OFFVEIL_BIND_INTERFACE`.
+The Darwin accept patch retries interrupted/aborted accepts and backs off on
+file descriptor or memory pressure instead of terminating the proxy.
