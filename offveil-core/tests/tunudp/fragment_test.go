@@ -63,9 +63,19 @@ func (t *memoryTUN) Read(p []byte) (int, error) {
 	return copy(p, b), nil
 }
 func (t *memoryTUN) Write(p []byte) (int, error) {
+	// System-stack writes include Darwin's address-family prefix. The memory
+	// device exposes raw IP packets like Wintun; gVisor WritePacket is already
+	// raw IP on every platform and must not lose its network header.
+	written := len(p)
+	if tun.PacketOffset > 0 && len(p) > tun.PacketOffset && p[0]>>4 != 4 && p[0]>>4 != 6 {
+		version := p[tun.PacketOffset] >> 4
+		if version == 4 || version == 6 {
+			p = p[tun.PacketOffset:]
+		}
+	}
 	select {
 	case t.out <- bytes.Clone(p):
-		return len(p), nil
+		return written, nil
 	case <-t.closed:
 		return 0, os.ErrClosed
 	case <-t.ctx.Done():
