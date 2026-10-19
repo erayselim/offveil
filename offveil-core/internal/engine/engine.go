@@ -72,19 +72,22 @@ type Engine struct {
 	sessionCtx        context.Context
 	sessionCancel     context.CancelFunc
 
-	state       string
-	protection  bool
-	summary     string
-	since       *time.Time
-	lastError   *string
-	pathError   *string
-	targets     []ipc.TargetStatus
-	captureInfo *capture.Info
-	dnsInfo     *offdns.Info
-	desyncInfo  *desync.Info
-	tunnelInfo  *tunnel.Info
-	lastProbe   *probe.Report
-	rulesetSnap *ruleset.Snapshot
+	state             string
+	protection        bool
+	summary           string
+	since             *time.Time
+	lastError         *string
+	pathError         *string
+	targets           []ipc.TargetStatus
+	captureInfo       *capture.Info
+	dnsInfo           *offdns.Info
+	desyncInfo        *desync.Info
+	tunnelInfo        *tunnel.Info
+	lastProbe         *probe.Report
+	desyncScan        *desync.ScanResult
+	tunnelFallback    *tunnel.Info
+	strategySwitching bool
+	rulesetSnap       *ruleset.Snapshot
 
 	cleanup *cleanup.Registry
 	job     *proc.Job
@@ -131,6 +134,7 @@ type Engine struct {
 	tunnelConfig      *tunnel.Config
 	recoveryAttempts  map[string]int
 	lastRecovery      time.Time
+	lastPathCheck     time.Time
 	failureKey        string
 
 	// Last active-session support snapshot (kept after Stop so diag stays useful).
@@ -240,6 +244,8 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.failureKey = ""
 	e.recoveryAttempts = make(map[string]int)
 	e.lastRecovery = time.Time{}
+	e.lastPathCheck = time.Time{}
+	e.desyncScan, e.tunnelFallback = nil, nil
 	e.dnsConfig, e.desyncConfig, e.tunnelConfig = nil, nil, nil
 	e.captureInfo = nil
 	e.dnsInfo = nil
@@ -526,10 +532,6 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.desyncInfo = &dsi
 	slog.Info("engine: desync started", "strategy", dsi.StrategyID, "source", stratSource, "probe", dsi.LastProbe)
 
-	if dsi.LastProbe == desync.FailOK && store != nil {
-		_ = store.Put(asn, strat, probeHost)
-	}
-
 	if dsi.LastProbe != "" && dsi.LastProbe != desync.FailOK {
 		if store != nil && stratSource == "asn-cache" {
 			_ = store.Delete(asn)
@@ -547,24 +549,36 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 		slog.Info("engine: desync probe failed", "target", probeHost,
 			"class", dsi.LastProbe, "strategy", dsi.StrategyID)
 	}
+	allDesyncOK := dsi.LastProbe == desync.FailOK
 	for _, host := range probeHosts {
 		if host == probeHost {
 			continue
 		}
 		path := targetPath(targets, rs.Doc.PackageIDForHost(host))
 		if path == policy.PathTunnel {
+			allDesyncOK = false
 			continue
 		}
 		sig := desSess.ProbeTLS(host)
 		if sig.Class == desync.FailOK {
 			e.policy.OnDesyncOK(host, desSess.StrategyID())
 		} else {
+			allDesyncOK = false
 			e.policy.OnDesyncFail(sig)
 			applyProbeResult(targets, rs.Doc, host, string(sig.Class), policy.PathTunnel)
 		}
 	}
 	dsi = desSess.Info()
 	e.desyncInfo = &dsi
+	// The strategy is shared by all targets. A Discord-only success must not
+	// keep an IMVU-failing strategy pinned to the ISP cache across refreshes.
+	if store != nil {
+		if allDesyncOK {
+			_ = store.Put(asn, strat, probeHost)
+		} else {
+			_ = store.Delete(asn)
+		}
+	}
 
 	tunnelHosts, desyncUDP := splitSpecialHosts(rs.Doc, targets, e.policy)
 	needTunnel := len(tunnelHosts) > 0
@@ -577,6 +591,9 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	tunCfg.TUNInterface = capture.AdapterName
 	tunCfg.TUNAddress = capture.TunIPv4
 	tunCfg.TUNMTU = capture.DefaultMTU
+	if e.captureInfo != nil && e.captureInfo.Egress != nil {
+		tunCfg.EgressInterface = e.captureInfo.Egress.Name
+	}
 	tunCfg.RouteCIDRs = append([]string{}, tunnel.SplitDefaultCIDRs()...)
 	tunCfg.DirectDomains = directDomains
 	tunCfg.ProtectedDomains = rs.Doc.ProtectedDomains()
@@ -610,15 +627,31 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	fallbackUnavailable := false
 	if needTunnel && (terr != nil || tunSess == nil || !tunUp(tunSess)) {
 		fallbackUnavailable = true
+		markTunnelRetry(targets)
 		if terr != nil {
 			slog.Warn("engine: special tunnel failed, falling back to desync dataplane", "err", terr)
 		}
-		markTunnelRetry(targets)
-		tunCfg.AllowlistOutbound = "desync"
-		tunCfg.SpecialDomains = append(append([]string{}, desyncUDP...), tunnelHosts...)
-		tunCfg.TunnelDomains = nil
-		tunCfg.ProbeHost = ""
-		tunSess, terr = tunStart(tunCfg)
+		closed := true
+		if tunSess != nil {
+			failed := tunSess.Info()
+			// Keep allowlisted failure facts, not provider error text which may
+			// contain registration responses, URLs or credentials.
+			failed.FailDetail = ""
+			e.tunnelFallback = &failed
+			if closeErr := tunSess.Close(); closeErr != nil {
+				terr = fmt.Errorf("close failed tunnel: %w", closeErr)
+				e.tun = tunSess // Keep ownership for later cleanup.
+				closed = false
+			}
+		}
+		if closed {
+			tunCfg.AllowlistOutbound = "desync"
+			tunCfg.SpecialDomains = append(append([]string{}, desyncUDP...), tunnelHosts...)
+			tunCfg.TunnelDomains = nil
+			tunCfg.ProbeHost = ""
+			tunCfg.ProbeTimeout = desync.ScanPerStrategyTimeout
+			tunSess, terr = tunStart(tunCfg)
+		}
 	}
 	e.tunnelConfig = &tunCfg
 	if terr != nil {
@@ -715,15 +748,21 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	}
 	if fallbackUnavailable {
 		e.state, e.summary = StateDegraded, "Bozuldu"
-		message := "tunnel: protected path unavailable"
+		message := unavailablePathMessage(targets)
 		e.lastError = &message
 		e.pathError = &message
+		e.lastPathCheck = now
 		e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: "path_unavailable"})
 	}
 
 	e.startReprobeLoop()
 	e.startReliabilityLocked()
 	e.freezeSupportLocked()
+	if fallbackUnavailable {
+		// Keep start within its IPC budget. Trials can run alongside the
+		// fallback dataplane without blocking status, stop or diagnostics.
+		go e.recoverDesyncStrategySession(e.sessionGeneration)
+	}
 	if os.Getenv("OFFVEIL_CANARY_BG") != "0" {
 		generation := e.sessionGeneration
 		go e.probeCanarySession(generation)

@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,18 @@ import (
 	"testing"
 	"time"
 )
+
+func TestWARPRegistrationFailureExportsStatusWithoutResponseBody(t *testing.T) {
+	client := &http.Client{Transport: warpTestTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden,
+			Body:   io.NopCloser(strings.NewReader(`{"token":"private-test-token","device_id":"private-device"}`)),
+			Header: make(http.Header)}, nil
+	})}
+	_, _, err := registerWARP(context.Background(), client)
+	if err == nil || strings.Contains(err.Error(), "private") || providerFailureReason(fmt.Errorf("warp: %w", err)) != "http_403" {
+		t.Fatalf("registration failure lost status or exposed response: %v", err)
+	}
+}
 
 type warpTestTransport func(*http.Request) (*http.Response, error)
 

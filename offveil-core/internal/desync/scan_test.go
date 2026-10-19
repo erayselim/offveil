@@ -2,12 +2,92 @@ package desync_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
 )
+
+type hostTrialSession struct {
+	*desync.FakeSession
+	check func(string) desync.FailSignal
+}
+
+func (s *hostTrialSession) ProbeTLS(host string) desync.FailSignal { return s.check(host) }
+
+func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
+	var trials []*desync.FakeSession
+	var hosts []string
+	res := desync.Scan(context.Background(), desync.ScanConfig{
+		Host: "secure.imvu.com", VerifyHosts: []string{"discord.com", "secure.imvu.com"},
+		ConnIP: "192.0.2.10", BindInterface: "Wi-Fi",
+		Candidates: []desync.Strategy{
+			{ID: "imvu-only", Args: []string{"--split", "1"}},
+			{ID: "both", Args: []string{"--split", "2"}},
+		},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			if cfg.Context == nil || cfg.Sink != nil || cfg.ProbeHost != "" ||
+				cfg.ConnIP != "192.0.2.10" || cfg.BindInterface != "Wi-Fi" || cfg.ListenPort == 18080 {
+				t.Fatalf("trial config lost isolation/egress: %+v", cfg)
+			}
+			base := desync.NewFakeSession(desync.Info{StrategyID: cfg.Strategy.ID})
+			trials = append(trials, base)
+			return &hostTrialSession{base, func(host string) desync.FailSignal {
+				hosts = append(hosts, host)
+				class := desync.FailOK
+				if cfg.Strategy.ID == "imvu-only" && host == "discord.com" {
+					class = desync.FailReset
+				}
+				return desync.FailSignal{Target: host, Class: class}
+			}}, nil
+		},
+	})
+	if !res.OK || res.Strategy.ID != "both" || len(res.Tried) != 2 || len(hosts) != 4 || len(res.Tried[0].Checks) != 2 {
+		t.Fatalf("single-target winner accepted: %+v hosts=%v", res, hosts)
+	}
+	for _, trial := range trials {
+		if !trial.Closed() {
+			t.Fatal("trial helper left running")
+		}
+	}
+}
+
+func TestScanCancellationRejectsLateSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	base := desync.NewFakeSession(desync.Info{})
+	res := desync.Scan(ctx, desync.ScanConfig{
+		Host: "discord.com", Candidates: []desync.Strategy{{ID: "late", Args: []string{"--split", "1"}}},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			return &hostTrialSession{base, func(host string) desync.FailSignal {
+				cancel()
+				return desync.FailSignal{Target: host, Class: desync.FailOK}
+			}}, nil
+		},
+	})
+	if res.OK || !base.Closed() {
+		t.Fatal("cancelled trial won or leaked its process")
+	}
+}
+
+func TestScanBoundsStartupWithParentDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	res := desync.Scan(ctx, desync.ScanConfig{
+		Timeout: time.Minute, PerStrategy: time.Minute,
+		Candidates: []desync.Strategy{{ID: "blocked", Args: []string{"--split", "1"}}},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			<-cfg.Context.Done()
+			return nil, errors.New("cancelled startup")
+		},
+	})
+	if res.OK || time.Since(began) > time.Second {
+		t.Fatal("startup ignored the caller's total scan deadline")
+	}
+}
 
 func TestScanCandidates(t *testing.T) {
 	cands := desync.ScanCandidates()

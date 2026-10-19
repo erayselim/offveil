@@ -41,6 +41,37 @@ five-second cooldown. ByeDPI recovery keeps a healthy TUN running. The last
 codes and stderr classes, never raw sidecar logs. Discord and IMVU are
 validated separately before selecting their fallback paths.
 
+If both a target's desync path and the tunnel providers fail, the local
+dataplane stays available while one background strategy search runs. Its
+default budget is 12 seconds total, at most four seconds per trial including
+startup and all target checks. Trials use separate loopback ports, the same
+physical source/interface binding and the session cancellation context.
+They cannot change the live policy or turn a cancelled late result into a
+winner. Status, diagnostics and stop remain available during network work.
+
+A winner is verified again on the real helper port and through sing-box's
+SOCKS dataplane for all protected probe hosts. Failure restores the previous
+strategy; success updates the recovery configuration and ASN cache. A
+strategy that passes Discord but fails IMVU is removed from the ASN cache.
+Process recovery is suspended during the helper switch to avoid competing
+processes on the same port. Stop and replacement sessions invalidate trials,
+verification and rollback, including dependencies that return late.
+
+An unavailable protected path is also checked through the running fallback
+SOCKS dataplane every 30 seconds. Only successful TLS clears its error and
+retry hint; independent canary failures remain degraded. This does not
+repeatedly register WARP accounts or rebuild working capture routes. Local
+desync probes resolve the destination before SOCKS CONNECT because ByeDPI
+rejects domain CONNECT with `--no-domain`; TLS still uses the original SNI
+and certificate validation.
+
+Support retains `sidecars.tunnel_fallback` after a failed provider is replaced
+by the local dataplane, including provider/class, bounded HTTP reason codes
+and available process exit facts. `sidecars.desync_scan` records candidate
+checks and the outcome of real-port verification. Provider response bodies
+are not included. `protected_path_unavailable` is separate from `tun_failed`;
+the word "tunnel" alone is not evidence of a TUN driver failure.
+
 Go requires `Wait` after a successful `Start` and disallows concurrent `Wait`
 calls. See the [Go process contract](https://pkg.go.dev/os/exec#Cmd.Wait) and
 [`WaitDelay`](https://pkg.go.dev/os/exec#Cmd).
@@ -55,6 +86,19 @@ unregistered. See [Go callbacks](https://pkg.go.dev/syscall?GOOS=windows#NewCall
 and [native unregistration](https://learn.microsoft.com/en-us/windows/win32/api/powerbase/nf-powerbase-powerunregistersuspendresumenotification).
 
 ## Repeated network work
+
+Windows uses sing-box's `mixed` stack: system TCP and gVisor UDP. The pinned
+system UDP parser discarded IPv4 fragments, so the 1280-byte capture MTU
+could lose otherwise ordinary UDP datagrams. The mixed path reassembles
+fragments before forwarding; macOS retains its existing full gVisor stack.
+The selected physical interface now pins the direct outbound, while local
+ByeDPI SOCKS remains unpinned. The owned offveil adapter cannot be selected
+as egress even if it reports an Ethernet-like interface type. DNS hijacking
+precedes a drop guard for the TUN's own subnet; private/direct exceptions
+follow it so a packet cannot loop through the same capture interface.
+
+The separate [packet test module](../offveil-core/tests/tunudp/README.md)
+exercises the pinned runtime stack without creating a real TUN.
 
 Windows explicitly opts out of seed resolution and host-prefix expansion
 when sing-box owns split-default routes. Per-host capture configurations
@@ -85,6 +129,19 @@ repair/start ordering, bounded canary rows and report ownership, process
 exit/close, power subscription ownership, split-default capture and fallback
 coalescing/reset. Windows and macOS CI run the selected race checks.
 
+The fallback regressions also cover a working Discord/failed IMVU pair,
+multi-host candidate selection, startup/parent deadlines, failed-winner
+rollback, cancellation during scan and verification, recovery without a
+process restart, retained provider facts and redacted registration errors.
+
+Windows CI also runs `scripts/test-tun-udp.ps1` and native sing-box UDP/config
+checks. The packet module follows the config generator's stack/MTU, verifies
+both directions and reversed fragments across the MTU boundary, and includes
+the old system-stack failure as a controlled reproduction. Only its automatic
+Windows firewall installer is stubbed in a private test source copy. Native
+SOCKS tests separately check opaque UDP and interface binding with an owned
+loopback echo peer. Neither fixture changes system DNS or capture routes.
+
 For sidecar integration checks, start the bundled binaries on private SOCKS
 ports and verify `up=false` after terminating each owned test process. Keep
 this check separate from routed TUN traffic: a SOCKS-only sing-box session
@@ -96,3 +153,5 @@ devices are needed for Discord/IMVU voice, sleep/wake recovery and energy
 measurements. Changes to the MTU, desynchronization strategies, tunnel
 providers or platform-specific TUN stacks need traffic validation as well as
 unit tests.
+
+A SOCKS check cannot prove that an application's TUN or UDP path works.

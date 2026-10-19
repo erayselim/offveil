@@ -7,8 +7,14 @@ via the Permitted API). This is aggregation, not a combined work.
 Corresponding source for GPL components is the pinned upstream tag, not a
 fork. Hashes below are fail-closed in `offveil-core/scripts/fetch-*.ps1`.
 
-This file is the Windows installer copy. Darwin sidecars use the same tags
-via `fetch-sing-box-darwin-arm64.sh` / `build-byedpi-darwin.sh` (not this bundle).
+Darwin sidecars are **not** in the Windows installer. Same tags, different
+assets: `sing-box-1.13.14-darwin-arm64.tar.gz` (SHA in
+`fetch-sing-box-darwin-arm64.sh`) and ByeDPI `v0.17.3` built with `make`
+(`build-byedpi-darwin.sh`). The Linux `*-aarch64.tar.gz` ByeDPI release is
+not used. The Darwin ByeDPI build applies the Apple-only outbound interface
+binding patch in `offveil-core/patches/byedpi-darwin-bind-interface.patch`.
+Its source and rationale are in `docs/mac-reliability.md`; upstream MIT notices
+are preserved. The Windows binary is unmodified.
 
 ## sing-box (GPL-3.0-or-later)
 
@@ -47,7 +53,28 @@ Redistribution is allowed only alongside software that uses Wintun via the
 Permitted API (`wintun.h`). offveil loads the official DLL that way; the DLL
 is not modified.
 
+## Instrument Sans (SIL Open Font License 1.1)
+
+Bundled in the UI as a self-hosted variable font (`@fontsource-variable/instrument-sans`).
+
+| | |
+|---|---|
+| Upstream | https://github.com/Instrument/instrument-sans |
+| License | SIL OFL 1.1 |
+| Notice | Copyright 2022 The Instrument Sans Project Authors |
+
+The OFL text ships with the npm package. The font is not sold by itself.
+
 ## Other (not redistributed as sidecar binaries)
+
+The isolated packet regression module in `offveil-core/tests/tunudp` uses
+`sing-tun v0.8.11` and `sing v0.8.11` (GPL-3.0-or-later), plus SagerNet's
+gVisor fork (Apache-2.0), pinned to the bundled sing-box's stack versions.
+These are test dependencies in a separate Go module; they are not linked
+into offveil-core or included as test executables in the installer. Go module
+downloads retain upstream license files. The Windows test runner stages a
+private source copy and replaces only the automatic firewall-rule installer
+with an inert fixture. Packet processing and reassembly use upstream code.
 
 Go, Rust, Tauri, React, and other build/runtime libraries follow their own
 licenses (typically MIT / Apache-2.0 / BSD). See `go.mod`, `Cargo.lock`, and

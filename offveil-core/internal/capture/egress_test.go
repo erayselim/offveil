@@ -32,3 +32,14 @@ func TestPickEgressCopiesIPv4(t *testing.T) {
 		t.Fatalf("want egress IPv4, got %+v", eg)
 	}
 }
+
+func TestPickEgressRejectsOwnedAdapterWithoutTunnelType(t *testing.T) {
+	physical := capture.AdapterInfo{Name: "Ethernet", OperStatus: "up", IPv4Metric: 25, Gateways: []string{"192.168.0.1"}}
+	owned := capture.AdapterInfo{Name: "OFFVEIL", OperStatus: "up", IPv4Metric: 1, Gateways: []string{"10.87.0.2"}}
+	if got := capture.PickEgress([]capture.AdapterInfo{owned, physical}); got == nil || got.Name != "Ethernet" {
+		t.Fatalf("TUN selected as physical egress: %+v", got)
+	}
+	if got := capture.PickEgress([]capture.AdapterInfo{owned}); got != nil {
+		t.Fatalf("missing physical network was masked: %+v", got)
+	}
+}

@@ -100,6 +100,8 @@ type Config struct {
 	AllowlistOutbound string
 	// DesyncSOCKS is ByeDPI listen addr (default 127.0.0.1:18080) when AllowlistOutbound=desync.
 	DesyncSOCKS string
+	// EgressInterface is the physical NIC selected before installing TUN routes.
+	EgressInterface string
 }
 
 // DefaultConfig returns selective-tunnel defaults.
@@ -114,24 +116,36 @@ func DefaultConfig() Config {
 	}
 }
 
+// ProviderFailure retains allowlisted facts from an exhausted provider attempt.
+type ProviderFailure struct {
+	ProviderID ProviderID     `json:"provider_id"`
+	Class      FailClass      `json:"class"`
+	Reason     string         `json:"reason,omitempty"`
+	Exit       *proc.ExitInfo `json:"exit,omitempty"`
+}
+
 // Info is runtime tunnel status for engine/status.
 type Info struct {
-	SocksAddr      string         `json:"socks_addr"`
-	ProviderID     ProviderID     `json:"provider_id"`
-	BinaryPath     string         `json:"binary_path,omitempty"`
-	ConfigPath     string         `json:"config_path,omitempty"`
-	PID            int            `json:"pid,omitempty"`
-	Exit           *proc.ExitInfo `json:"exit,omitempty"`
-	Up             bool           `json:"up"`
-	Selective      bool           `json:"selective"` // never full-tunnel
-	LastProbe      FailClass      `json:"last_probe,omitempty"`
-	LastProbeAt    string         `json:"last_probe_at,omitempty"`
-	RetryHint      bool           `json:"retry_hint,omitempty"` // UI: "yeniden dene" (all providers failed)
-	FailDetail     string         `json:"fail_detail,omitempty"`
-	TunnelHosts    []string       `json:"tunnel_hosts,omitempty"`
-	DirectHosts    []string       `json:"direct_hosts,omitempty"`
-	FailoverFrom   ProviderID     `json:"failover_from,omitempty"` // previous provider if auto-switched
-	ProvidersTried []ProviderID   `json:"providers_tried,omitempty"`
+	SocksAddr       string            `json:"socks_addr"`
+	ProviderID      ProviderID        `json:"provider_id"`
+	BinaryPath      string            `json:"binary_path,omitempty"`
+	ConfigPath      string            `json:"config_path,omitempty"`
+	PID             int               `json:"pid,omitempty"`
+	Exit            *proc.ExitInfo    `json:"exit,omitempty"`
+	Up              bool              `json:"up"`
+	Selective       bool              `json:"selective"` // never full-tunnel
+	LastProbe       FailClass         `json:"last_probe,omitempty"`
+	LastProbeAt     string            `json:"last_probe_at,omitempty"`
+	RetryHint       bool              `json:"retry_hint,omitempty"` // UI: "yeniden dene" (all providers failed)
+	FailDetail      string            `json:"fail_detail,omitempty"`
+	TunnelHosts     []string          `json:"tunnel_hosts,omitempty"`
+	DirectHosts     []string          `json:"direct_hosts,omitempty"`
+	FailoverFrom    ProviderID        `json:"failover_from,omitempty"` // previous provider if auto-switched
+	ProvidersTried  []ProviderID      `json:"providers_tried,omitempty"`
+	Failures        []ProviderFailure `json:"failures,omitempty"`
+	EgressInterface string            `json:"egress_interface,omitempty"`
+	TUNStack        string            `json:"tun_stack,omitempty"`
+	TUNMTU          int               `json:"tun_mtu,omitempty"`
 }
 
 // Session is a running selective tunnel outbound (sing-box SOCKS).

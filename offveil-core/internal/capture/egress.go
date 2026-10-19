@@ -1,6 +1,9 @@
 package capture
 
-import "net/netip"
+import (
+	"net/netip"
+	"strings"
+)
 
 // PickEgress chooses the best physical NIC for loop-prevention bind.
 // Lowest IPv4 metric among up adapters that have a gateway and are not TUN-like.
@@ -8,7 +11,9 @@ func PickEgress(adapters []AdapterInfo) *EgressInfo {
 	var best *AdapterInfo
 	for i := range adapters {
 		a := &adapters[i]
-		if a.OperStatus != "up" || a.IsTUNLike || len(a.Gateways) == 0 {
+		// Wintun can report an Ethernet-like type. The owned adapter must
+		// still be excluded when a stale/live snapshot sees its gateway.
+		if a.OperStatus != "up" || a.IsTUNLike || strings.EqualFold(a.Name, AdapterName) || len(a.Gateways) == 0 {
 			continue
 		}
 		if best == nil || a.IPv4Metric < best.IPv4Metric {

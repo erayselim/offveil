@@ -67,6 +67,15 @@ The OFL text ships with the npm package. The font is not sold by itself.
 
 ## Other (not redistributed as sidecar binaries)
 
+The isolated packet regression module in `offveil-core/tests/tunudp` uses
+`sing-tun v0.8.11` and `sing v0.8.11` (GPL-3.0-or-later), plus SagerNet's
+gVisor fork (Apache-2.0), pinned to the bundled sing-box's stack versions.
+These are test dependencies in a separate Go module; they are not linked
+into offveil-core or included as test executables in the installer. Go module
+downloads retain upstream license files. The Windows test runner stages a
+private source copy and replaces only the automatic firewall-rule installer
+with an inert fixture. Packet processing and reassembly use upstream code.
+
 Go, Rust, Tauri, React, and other build/runtime libraries follow their own
 licenses (typically MIT / Apache-2.0 / BSD). See `go.mod`, `Cargo.lock`, and
 `package-lock.json`.

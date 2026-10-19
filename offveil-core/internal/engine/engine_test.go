@@ -1,10 +1,14 @@
 package engine_test
 
 import (
+	"archive/zip"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/capture"
 	"github.com/erayselim/offveil/offveil-core/internal/cleanup"
@@ -56,7 +60,7 @@ func newTestEngine(t *testing.T) *engine.Engine {
 		t.Fatal(err)
 	}
 	reg := cleanup.NewRegistry()
-	return engine.New(reg).
+	eng := engine.New(reg).
 		WithStrategyStore(store).
 		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
 			return desync.ScanResult{OK: false, Reason: "test-skip"}
@@ -101,6 +105,8 @@ func newTestEngine(t *testing.T) *engine.Engine {
 		}).
 		WithProbe(fakeDesyncProbe).
 		WithNetInfo(fakeNet)
+	t.Cleanup(func() { _, _ = eng.Stop() })
+	return eng
 }
 
 func TestStartStopStatus(t *testing.T) {
@@ -223,6 +229,9 @@ func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
 	}
 	if desCfg.BindInterface != "Ethernet" {
 		t.Fatalf("BindInterface=%q", desCfg.BindInterface)
+	}
+	if tunCfg.EgressInterface != "Ethernet" {
+		t.Fatalf("dataplane egress=%q, want the same physical NIC as ByeDPI", tunCfg.EgressInterface)
 	}
 	got := strings.Join(tunCfg.RouteCIDRs, ",")
 	if !strings.Contains(got, "0.0.0.0/1") || !strings.Contains(got, "128.0.0.0/1") {
@@ -652,6 +661,14 @@ func TestTunnelEscalateDiscordOnly(t *testing.T) {
 
 func TestIMVUFailureEscalatesItsOwnPackage(t *testing.T) {
 	eng := newTestEngine(t)
+	store, openErr := desync.OpenStrategyStore(t.TempDir() + "/strategies.json")
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	if err := store.Put("9121", desync.NativeSafeStrategy(), "discord.com"); err != nil {
+		t.Fatal(err)
+	}
+	eng.WithStrategyStore(store)
 	checked := 0
 	eng.WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
 		if cfg.ProbeHost != "discord.com" {
@@ -684,6 +701,9 @@ func TestIMVUFailureEscalatesItsOwnPackage(t *testing.T) {
 	if checked != 1 {
 		t.Fatalf("IMVU checked %d times", checked)
 	}
+	if _, cached := store.Lookup("9121"); cached {
+		t.Fatal("strategy failing IMVU remained cached after Discord success")
+	}
 	for _, target := range st.Targets {
 		if target.ID == "imvu" && target.Path != "tunnel" || target.ID == "discord" && target.Path != "desync" {
 			t.Fatalf("target=%+v", target)
@@ -693,6 +713,11 @@ func TestIMVUFailureEscalatesItsOwnPackage(t *testing.T) {
 
 func TestFailedIMVUFallbackIsNotReportedHealthy(t *testing.T) {
 	eng := newTestEngine(t)
+	scanned := make(chan desync.ScanConfig, 1)
+	eng.WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
+		scanned <- cfg
+		return desync.ScanResult{Reason: "exhausted"}
+	})
 	eng.WithDesyncStart(func(desync.Config) (desync.Session, error) {
 		return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{LastProbe: desync.FailOK}), probe: func(host string) desync.FailSignal {
 			return desync.FailSignal{Target: host, Class: desync.FailReset}
@@ -700,7 +725,10 @@ func TestFailedIMVUFallbackIsNotReportedHealthy(t *testing.T) {
 	})
 	eng.WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
 		if cfg.AllowlistOutbound == "tunnel" {
-			return tunnel.NewFakeSession(tunnel.Info{Up: false, RetryHint: true}), nil
+			return tunnel.NewFakeSession(tunnel.Info{Up: false, RetryHint: true, LastProbe: tunnel.FailAuth,
+				FailDetail: "private-provider-response", ProvidersTried: []tunnel.ProviderID{tunnel.ProviderWARP},
+				Failures: []tunnel.ProviderFailure{{ProviderID: tunnel.ProviderWARP, Class: tunnel.FailAuth, Reason: "http_403"}},
+			}), nil
 		}
 		return tunnel.NewFakeSession(tunnel.Info{ProviderID: tunnel.ProviderDesync, Up: true}), nil
 	})
@@ -713,6 +741,49 @@ func TestFailedIMVUFallbackIsNotReportedHealthy(t *testing.T) {
 	if st.State != engine.StateDegraded || st.LastError == nil || !ok || !info.Up {
 		t.Fatalf("failed protected path with a working local dataplane: %+v", st)
 	}
+	select {
+	case cfg := <-scanned:
+		if cfg.Host != "secure.imvu.com" || len(cfg.VerifyHosts) != 2 {
+			t.Fatalf("failed target did not trigger multi-target recovery: %+v", cfg)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("exhausted fallback did not schedule strategy recovery")
+	}
+	meta, diagErr := eng.Diagnostics()
+	if diagErr != nil {
+		t.Fatal(diagErr)
+	}
+	zr, diagErr := zip.OpenReader(meta.Path)
+	if diagErr != nil {
+		t.Fatal(diagErr)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.Name != "diagnostics.json" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rc.Close()
+		raw, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var bundle struct {
+			Sidecars map[string]json.RawMessage `json:"sidecars"`
+		}
+		if err := json.Unmarshal(raw, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		fallback := string(bundle.Sidecars["tunnel_fallback"])
+		if !strings.Contains(fallback, "http_403") || !strings.Contains(fallback, "warp") || strings.Contains(string(raw), "private-provider-response") {
+			t.Fatalf("provider failure discarded or response leaked: %s", fallback)
+		}
+		return
+	}
+	t.Fatal("diagnostics.json missing")
 }
 
 func TestProbeIPDropStartsTunnel(t *testing.T) {

@@ -10,6 +10,7 @@ func (e *Engine) beginSessionLocked() {
 
 func (e *Engine) cancelSessionLocked() {
 	e.sessionGeneration++
+	e.strategySwitching = false
 	if e.sessionCancel != nil {
 		e.sessionCancel()
 		e.sessionCancel = nil

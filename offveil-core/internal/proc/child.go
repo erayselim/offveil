@@ -65,11 +65,22 @@ func stderrClass(tail string) string {
 		{"cannot allocate memory", "memory_limit"},
 		{"out of memory", "memory_limit"},
 		{"address already in use", "address_in_use"},
+		{"only one usage of each socket address", "address_in_use"},
+		{"not enough buffer space", "socket_limit"},
+		{"no buffer space available", "socket_limit"},
 		{"permission denied", "permission_denied"},
 		{"operation not permitted", "permission_denied"},
+		{"access is denied", "permission_denied"},
+		{"decode config", "config_invalid"},
+		{"create tun", "tun_setup"},
+		{"configure tun", "tun_setup"},
+		{"open tun", "tun_setup"},
+		{"create adapter", "tun_setup"},
+		{"bind outbound interface", "interface_bind"},
 		{"panic:", "panic"},
 		{"fatal error:", "fatal"},
-		{"bind outbound interface", "interface_bind"},
+		{"fatal[", "fatal"},
+		{"fatal ", "fatal"},
 	} {
 		if strings.Contains(tail, match.text) {
 			return match.class

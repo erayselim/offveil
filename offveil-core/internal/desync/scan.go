@@ -11,8 +11,7 @@ import (
 
 const (
 	// ScanDefaultTimeout is the total wall budget for a limited blockcheck pass.
-	// Zapret/SplitWire blockcheck is minutes; offveil must stay UI-snappy.
-	// Research: fail-fast → tunnel escalate beats a long invisible scan (2026).
+	// Used only after the selected desync strategy and tunnel path fail.
 	ScanDefaultTimeout = 12 * time.Second
 	// ScanPerStrategyTimeout is the TLS probe budget per candidate.
 	ScanPerStrategyTimeout = 4 * time.Second
@@ -29,6 +28,9 @@ type ScanFunc func(ctx context.Context, cfg ScanConfig) ScanResult
 // ScanConfig controls a limited auto-strategy pass.
 type ScanConfig struct {
 	Host string
+	// VerifyHosts must also pass before changing the shared strategy. A fix for
+	// IMVU must not break an already-working Discord connection.
+	VerifyHosts []string
 	// Timeout caps the whole scan (default ScanDefaultTimeout).
 	Timeout time.Duration
 	// PerStrategy caps each candidate probe (default ScanPerStrategyTimeout).
@@ -42,17 +44,20 @@ type ScanConfig struct {
 	// Resolve looks up host via DoH for --no-domain strategies.
 	Resolve func(ctx context.Context, host string) (netip.Addr, error)
 	// AssignJob attaches trial processes to the engine Job Object.
-	AssignJob  func(*os.Process) error
-	BasePort   int
-	BinaryPath string
+	AssignJob     func(*os.Process) error
+	BasePort      int
+	BinaryPath    string
+	ConnIP        string
+	BindInterface string
 }
 
 // Tried records one candidate outcome during Scan.
 type Tried struct {
-	StrategyID string    `json:"strategy_id"`
-	Class      FailClass `json:"class"`
-	Detail     string    `json:"detail,omitempty"`
-	Took       string    `json:"took,omitempty"`
+	StrategyID string       `json:"strategy_id"`
+	Class      FailClass    `json:"class"`
+	Detail     string       `json:"detail,omitempty"`
+	Took       string       `json:"took,omitempty"`
+	Checks     []FailSignal `json:"checks,omitempty"`
 }
 
 // ScanResult is the outcome of a limited blockcheck-style pass.
@@ -91,9 +96,17 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 		startFn = Start
 	}
 
-	deadline := time.Now().Add(cfg.Timeout)
-	sctx, cancel := context.WithDeadline(ctx, deadline)
+	sctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
+	deadline, _ := sctx.Deadline()
+	hosts := []string{cfg.Host}
+	seen := map[string]bool{cfg.Host: true}
+	for _, host := range cfg.VerifyHosts {
+		if host != "" && !seen[host] {
+			hosts = append(hosts, host)
+			seen[host] = true
+		}
+	}
 
 	port := cfg.BasePort
 	for _, strat := range cands {
@@ -126,18 +139,23 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 		trialPort := port
 		port++
 		t0 := time.Now()
+		trialCtx, trialCancel := context.WithTimeout(sctx, per)
 		trialCfg := Config{
-			BinaryPath:   cfg.BinaryPath,
-			ListenIP:     "127.0.0.1",
-			ListenPort:   trialPort,
-			Strategy:     strat,
-			AssignJob:    cfg.AssignJob,
-			Resolve:      cfg.Resolve,
-			ProbeHost:    "", // probe explicitly below
-			ProbeTimeout: per,
+			Context:       trialCtx,
+			BinaryPath:    cfg.BinaryPath,
+			ListenIP:      "127.0.0.1",
+			ListenPort:    trialPort,
+			Strategy:      strat,
+			AssignJob:     cfg.AssignJob,
+			Resolve:       cfg.Resolve,
+			ProbeHost:     "", // probe explicitly below
+			ProbeTimeout:  per,
+			ConnIP:        cfg.ConnIP,
+			BindInterface: cfg.BindInterface,
 		}
 		sess, err := startFn(trialCfg)
 		if err != nil {
+			trialCancel()
 			out.Tried = append(out.Tried, Tried{
 				StrategyID: strat.ID,
 				Class:      FailTimeout,
@@ -148,21 +166,42 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 			continue
 		}
 
-		sig := sess.ProbeTLS(cfg.Host)
+		checks := make([]FailSignal, 0, len(hosts))
+		class := FailOK
+		detail := ""
+		for _, host := range hosts {
+			if trialCtx.Err() != nil {
+				class = FailTimeout
+				break
+			}
+			sig := sess.ProbeTLS(host)
+			checks = append(checks, sig)
+			if sig.Class != FailOK {
+				class, detail = sig.Class, sig.Detail
+				break
+			}
+		}
+		// A cancelled/expired trial cannot win even if an injected probe
+		// ignores its context and returns success late.
+		if trialCtx.Err() != nil {
+			class = FailTimeout
+		}
 		_ = sess.Close()
+		trialCancel()
 		took := time.Since(t0).Round(time.Millisecond).String()
 		out.Tried = append(out.Tried, Tried{
 			StrategyID: strat.ID,
-			Class:      sig.Class,
-			Detail:     sig.Detail,
+			Class:      class,
+			Detail:     detail,
 			Took:       took,
+			Checks:     checks,
 		})
 		slog.Info("desync scan: candidate",
 			"strategy", strat.ID,
-			"class", sig.Class,
+			"class", class,
 			"took", took,
 		)
-		if sig.Class == FailOK {
+		if class == FailOK {
 			out.OK = true
 			out.Strategy = strat
 			out.Took = time.Since(started).Round(time.Millisecond).String()

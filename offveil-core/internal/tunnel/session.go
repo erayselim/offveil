@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -35,6 +36,7 @@ type session struct {
 	lastProbeAt    atomic.Value // string
 	failoverFrom   ProviderID
 	providersTried []ProviderID
+	failures       []ProviderFailure
 }
 
 // Start brings up selective tunnel with WARP↔Reality failover.
@@ -75,6 +77,7 @@ func Start(cfg Config) (Session, error) {
 		tried      []ProviderID
 		lastFail   Session
 		prevFailed ProviderID
+		failures   []ProviderFailure
 	)
 	for i, attempt := range order {
 		tried = append(tried, attempt.ID)
@@ -89,6 +92,7 @@ func Start(cfg Config) (Session, error) {
 				)
 			}
 			s.providersTried = append([]ProviderID(nil), tried...)
+			s.failures = append([]ProviderFailure(nil), failures...)
 			if cfg.Sink != nil && cfg.ProbeHost != "" {
 				info := s.Info()
 				if info.LastProbe == FailOK || info.LastProbe == "" {
@@ -98,6 +102,11 @@ func Start(cfg Config) (Session, error) {
 			return s, nil
 		}
 		prevFailed = attempt.ID
+		failure := ProviderFailure{ProviderID: attempt.ID, Class: failClass, Reason: providerFailureReason(failErr)}
+		if s != nil {
+			failure.Exit = s.child.Exit()
+		}
+		failures = append(failures, failure)
 		slog.Warn("tunnel: provider failed, trying next",
 			"provider", attempt.ID,
 			"class", failClass,
@@ -106,10 +115,8 @@ func Start(cfg Config) (Session, error) {
 		)
 		if s != nil {
 			_ = s.Close()
-			lastFail = softFailSession(cfg, attempt.ID, failClass, failErr, tried, prevFailed)
-		} else {
-			lastFail = softFailSession(cfg, attempt.ID, failClass, failErr, tried, prevFailed)
 		}
+		lastFail = softFailSession(cfg, attempt.ID, failClass, failErr, tried, prevFailed)
 	}
 
 	// All providers failed → surface retry_hint once.
@@ -123,7 +130,28 @@ func Start(cfg Config) (Session, error) {
 			class = v
 		}
 	}
-	return failSession(cfg, order[len(order)-1].ID, class, fmt.Errorf("%s", detail), tried, prevFailed)
+	final, err := failSession(cfg, order[len(order)-1].ID, class, fmt.Errorf("%s", detail), tried, prevFailed)
+	final.(*session).failures = failures
+	return final, err
+}
+
+// Only stable reason codes enter support data; never provider responses or URLs.
+func providerFailureReason(err error) string {
+	var status *warpHTTPError
+	if errors.As(err, &status) {
+		return fmt.Sprintf("http_%d", status.code)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "timeout"
+	}
+	return ""
 }
 
 // startOne launches one provider. ok=false means try next (or final fail).
@@ -199,7 +227,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 
 	if err := proc.WaitTCP(s.socks, 8*time.Second, s.child); err != nil {
 		_ = s.Close()
-		return nil, false, FailDial, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
+		return s, false, FailDial, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
 	}
 	s.up.Store(true)
 	slog.Info("tunnel: selective outbound up",
@@ -219,7 +247,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		if sig.Class != FailOK {
 			detail := sig.Detail
 			_ = s.Close()
-			return nil, false, sig.Class, fmt.Errorf("probe: %s", detail)
+			return s, false, sig.Class, fmt.Errorf("probe: %s", detail)
 		}
 		s.lastProbe.Store(FailOK)
 	} else {
@@ -281,18 +309,27 @@ func failSession(cfg Config, provider ProviderID, class FailClass, err error, tr
 
 func (s *session) Info() Info {
 	info := Info{
-		SocksAddr:      s.socks,
-		ProviderID:     s.provider,
-		BinaryPath:     s.binPath,
-		ConfigPath:     s.configPath,
-		Up:             s.isUp(),
-		Exit:           s.child.Exit(),
-		Selective:      true,
-		RetryHint:      s.retryHint.Load(),
-		TunnelHosts:    s.cfg.TunnelDomains,
-		DirectHosts:    s.cfg.DirectDomains,
-		FailoverFrom:   s.failoverFrom,
-		ProvidersTried: append([]ProviderID(nil), s.providersTried...),
+		SocksAddr:       s.socks,
+		ProviderID:      s.provider,
+		BinaryPath:      s.binPath,
+		ConfigPath:      s.configPath,
+		Up:              s.isUp(),
+		Exit:            s.child.Exit(),
+		Selective:       true,
+		RetryHint:       s.retryHint.Load(),
+		TunnelHosts:     s.cfg.TunnelDomains,
+		DirectHosts:     s.cfg.DirectDomains,
+		FailoverFrom:    s.failoverFrom,
+		ProvidersTried:  append([]ProviderID(nil), s.providersTried...),
+		Failures:        append([]ProviderFailure(nil), s.failures...),
+		EgressInterface: s.cfg.EgressInterface,
+	}
+	if s.cfg.EnableTUN {
+		info.TUNStack = tunStack()
+		info.TUNMTU = s.cfg.TUNMTU
+		if info.TUNMTU <= 0 {
+			info.TUNMTU = defaultTUNMTU
+		}
 	}
 	if s.child != nil {
 		info.PID = s.child.PID()
@@ -330,6 +367,9 @@ func (s *session) recordProbe(sig FailSignal) {
 	if sig.Class != FailOK {
 		s.retryHint.Store(true)
 		s.failDetail.Store(sig.Detail)
+	} else {
+		s.retryHint.Store(false)
+		s.failDetail.Store("")
 	}
 }
 
@@ -380,6 +420,7 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		RouteCIDRs:        append([]string{}, cfg.RouteCIDRs...),
 		ExcludeCIDRs:      append([]string{}, cfg.ExcludeCIDRs...),
 		AllowlistOutbound: cfg.AllowlistOutbound,
+		EgressInterface:   cfg.EgressInterface,
 		DesyncSOCKSHost:   host,
 		DesyncSOCKSPort:   port,
 	}

@@ -45,8 +45,20 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	// Prefer domain CONNECT so sing-box domain_suffix rules match.
-	err := tlsViaSOCKS(ctx, s.socks, host, host)
+	// Tunnel providers need the domain for selective routing. The local
+	// ByeDPI helper rejects domain CONNECT (--no-domain), so its dataplane
+	// check must use the same resolved-IP destination as TUN traffic.
+	dialHost := host
+	if s.provider == ProviderDesync && s.cfg.Resolve != nil {
+		addr, err := s.cfg.Resolve(ctx, host)
+		if err != nil {
+			sig.Class, sig.Detail = FailTimeout, "resolve: "+err.Error()
+			s.recordProbe(sig)
+			return sig
+		}
+		dialHost = addr.String()
+	}
+	err := tlsViaSOCKS(ctx, s.socks, dialHost, host)
 	if err == nil {
 		sig.Class = FailOK
 		s.recordProbe(sig)

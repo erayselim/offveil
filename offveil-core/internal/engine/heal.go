@@ -290,6 +290,12 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 	if st.Tunnel != nil {
 		in.Sidecars["tunnel"] = scrubSidecar(st.Tunnel)
 	}
+	if e.tunnelFallback != nil {
+		in.Sidecars["tunnel_fallback"] = scrubSidecar(e.tunnelFallback)
+	}
+	if e.desyncScan != nil {
+		in.Sidecars["desync_scan"] = scrubSidecar(e.desyncScan)
+	}
 	if st.UDP != nil {
 		in.Sidecars["udp"] = st.UDP
 	}

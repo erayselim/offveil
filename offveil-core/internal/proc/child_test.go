@@ -58,6 +58,18 @@ func TestStderrClassOmitsLogContents(t *testing.T) {
 	if got := stderrClass("https://private.example/?token=secret"); got != "other" {
 		t.Fatalf("class=%q", got)
 	}
+	for _, tc := range []struct{ stderr, want string }{
+		{"FATAL[0020] start service: unspecified failure", "fatal"},
+		{"FATAL[0000] start inbound/tun[tun-in]: create adapter: failed", "tun_setup"},
+		{"FATAL[0000] decode config at C:\\private: invalid key", "config_invalid"},
+		{"Only one usage of each socket address is normally permitted", "address_in_use"},
+		{"wsasend: no buffer space available token=secret", "socket_limit"},
+		{"Access is denied C:\\private", "permission_denied"},
+	} {
+		if got := stderrClass(tc.stderr); got != tc.want {
+			t.Errorf("class=%q want %q", got, tc.want)
+		}
+	}
 }
 
 func TestChildConcurrentCloseWaitsOnce(t *testing.T) {

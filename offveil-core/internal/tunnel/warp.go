@@ -189,7 +189,7 @@ func registerWARP(ctx context.Context, client *http.Client) (*WARPAccount, *WARP
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("warp register HTTP %d: %s", resp.StatusCode, truncate(string(payload), 200))
+		return nil, nil, &warpHTTPError{code: resp.StatusCode, operation: "register"}
 	}
 	var reg warpRegResponse
 	if err := json.Unmarshal(payload, &reg); err != nil {
@@ -240,10 +240,17 @@ func enableWARP(ctx context.Context, client *http.Client, acc *WARPAccount) erro
 }
 
 type warpHTTPError struct {
-	code int
+	code      int
+	operation string
 }
 
-func (e *warpHTTPError) Error() string { return fmt.Sprintf("warp config HTTP %d", e.code) }
+func (e *warpHTTPError) Error() string {
+	op := e.operation
+	if op == "" {
+		op = "config"
+	}
+	return fmt.Sprintf("warp %s HTTP %d", op, e.code)
+}
 
 func fetchWARPProfile(ctx context.Context, client *http.Client, acc *WARPAccount) (*WARPProfile, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, warpAPIBase+"/reg/"+acc.DeviceID, nil)
@@ -295,11 +302,4 @@ func profileFromConfig(privateKey string, cfg warpConfigBody) (*WARPProfile, err
 		ClientID:      cfg.ClientID,
 		Reserved:      reserved,
 	}, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

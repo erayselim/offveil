@@ -36,9 +36,13 @@ func tunInterfaceName(name string) string {
 	return name
 }
 
-// Darwin uses the portable userspace TCP/IP stack. The system stack accepted
-// connections through SOCKS but failed the real utun TCP path on macOS 26.
+// Windows keeps system TCP but uses gVisor UDP reassembly. The pinned system
+// UDP stack drops IPv4 fragments; at MTU 1280 even a 1300-byte datagram fails.
+// Darwin needs gVisor for its TCP path too.
 func tunStack() string {
+	if runtime.GOOS == "windows" {
+		return "mixed"
+	}
 	if runtime.GOOS == "darwin" {
 		return "gvisor"
 	}
@@ -67,6 +71,9 @@ type BuildParams struct {
 	TUNMTU           int
 	RouteCIDRs       []string
 	ExcludeCIDRs     []string
+	// EgressInterface pins direct traffic to the physical interface selected
+	// before TUN creation. The loopback ByeDPI outbound must remain unpinned.
+	EgressInterface string
 	// AllowlistOutbound tags the SOCKS-only (no TUN) path: "desync" or "tunnel".
 	AllowlistOutbound string
 	DesyncSOCKSHost   string
@@ -132,6 +139,12 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		if p.TUNMTU <= 0 {
 			p.TUNMTU = defaultTUNMTU
 		}
+		if _, err := netip.ParsePrefix(p.TUNAddress); err != nil {
+			return nil, fmt.Errorf("invalid TUN address: %w", err)
+		}
+		if p.EgressInterface != "" && strings.EqualFold(p.EgressInterface, p.TUNInterface) {
+			return nil, fmt.Errorf("physical egress must not be the TUN interface")
+		}
 		p.RouteCIDRs = FilterRouteCIDRs(p.RouteCIDRs, p.ExcludeCIDRs, p.WARP, p.TUNAddress)
 		if len(p.RouteCIDRs) == 0 {
 			p.RouteCIDRs = FilterRouteCIDRs(SplitDefaultCIDRs(), p.ExcludeCIDRs, p.WARP, p.TUNAddress)
@@ -167,6 +180,10 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		inbounds = append(inbounds, tunIn)
 	}
 
+	direct := map[string]any{"type": "direct", "tag": "direct"}
+	if p.EgressInterface != "" {
+		direct["bind_interface"] = p.EgressInterface
+	}
 	cfg := map[string]any{
 		"log": map[string]any{
 			"level":     "warn",
@@ -187,7 +204,7 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		},
 		"inbounds": inbounds,
 		"outbounds": []any{
-			map[string]any{"type": "direct", "tag": "direct"},
+			direct,
 		},
 		"route": map[string]any{
 			"auto_detect_interface":   true,
@@ -196,21 +213,26 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 			"rules": []any{
 				map[string]any{"action": "sniff"},
 				map[string]any{"protocol": "dns", "action": "hijack-dns"},
-				// Explicit DIRECT exceptions also apply to QUIC (HTTP/3).
-				map[string]any{
-					"domain_suffix": p.DirectDomains,
-					"outbound":      "direct",
-				},
-				map[string]any{
-					"ip_is_private": true,
-					"outbound":      "direct",
-				},
 			},
 		},
 	}
 
 	route := cfg["route"].(map[string]any)
 	rules := route["rules"].([]any)
+	if p.EnableTUN {
+		prefix, _ := netip.ParsePrefix(p.TUNAddress)
+		// A destination owned by this TUN must never re-enter its own direct
+		// outbound. DNS to the peer is already handled by hijack-dns above.
+		rules = append(rules, map[string]any{
+			"ip_cidr": []string{prefix.Masked().String()},
+			"action":  "reject", "method": "drop",
+		})
+	}
+	// Explicit DIRECT exceptions also apply to QUIC (HTTP/3), after loop guard.
+	rules = append(rules,
+		map[string]any{"domain_suffix": p.DirectDomains, "outbound": "direct"},
+		map[string]any{"ip_is_private": true, "outbound": "direct"},
+	)
 	if p.EnableTUN {
 		rules = append(rules, applicationUDPRules(p, true)...)
 	}

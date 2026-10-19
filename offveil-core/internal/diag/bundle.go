@@ -240,10 +240,11 @@ func buildSummary(in Input, sha string) string {
 		b.WriteString(fmt.Sprintf("- %s (%s): %s → %s\n", t.Label, t.ID, t.Outcome, t.Path))
 	}
 	if in.Probe != nil && len(in.Probe.Results) > 0 {
-		b.WriteString("\n## Last probe\n\n")
+		b.WriteString("\n## Last classification\n\n")
 		for _, r := range in.Probe.Results {
 			b.WriteString(fmt.Sprintf("- %s: %s → %s (ok=%v)\n", r.Target, r.Class, r.Path, r.OK))
 		}
+		b.WriteString("\n_ok means classification completed, not that the selected bypass path works. See sidecar checks for TLS results._\n")
 	}
 	b.WriteString("\n_No public IP / SSID / credentials included._\n")
 	return b.String()
@@ -301,6 +302,7 @@ func scrubNode(v any) any {
 var (
 	winUserPath  = regexp.MustCompile(`(?i)(?:[a-z]:)?[/\\]+users[/\\]+[^/\\]+`)
 	unixHomePath = regexp.MustCompile(`(?i)(/Users|/home)/[^/\s"']+`)
+	tunWord      = regexp.MustCompile(`\btun\b`)
 )
 
 func scrubHomePaths(s string) string {
@@ -370,11 +372,13 @@ func ClassifyError(scrubbed, hint string) string {
 	switch {
 	case strings.Contains(low, "privilege"), strings.Contains(low, "access is denied"):
 		return "privilege"
-	case strings.Contains(low, "tun"), strings.Contains(low, "wintun"):
+	case strings.Contains(low, "protected path unavailable"):
+		return "protected_path_unavailable"
+	case strings.Contains(low, "wintun"), tunWord.MatchString(low), strings.Contains(low, "tun_failed"):
 		return "tun_failed"
-	case strings.Contains(low, "byedpi"), strings.Contains(low, "desync"):
-		return "engine_failed"
 	case strings.Contains(low, "tunnel"), strings.Contains(low, "warp"), strings.Contains(low, "sing-box"):
+		return "engine_failed"
+	case strings.Contains(low, "byedpi"), strings.Contains(low, "desync"):
 		return "engine_failed"
 	case scrubbed == "":
 		return ""

@@ -75,7 +75,8 @@ type AdapterInfo struct {
 	IsTUNLike    bool     `json:"is_tun_like,omitempty"`
 }
 
-// EgressInfo is the physical NIC used for loop-prevention bind later (ciadpi --conn-ip).
+// EgressInfo selects physical outbound binding: ByeDPI's source IP and
+// sing-box's direct interface must agree before capture routes are installed.
 type EgressInfo struct {
 	Name    string `json:"name"`
 	IfIndex uint32 `json:"if_index"`

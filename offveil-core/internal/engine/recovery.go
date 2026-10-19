@@ -19,8 +19,10 @@ func (e *Engine) failedComponentLocked() (component, reason string, pid int, exi
 	switch {
 	case e.dnsInfo != nil && !e.dnsInfo.StubUp:
 		return "dns", "dns: local resolver stopped", 0, nil
-	case e.desyncInfo != nil && !e.desyncInfo.Up:
+	case !e.strategySwitching && e.desyncInfo != nil && !e.desyncInfo.Up:
 		return "desync", "desync: sidecar exited", e.desyncInfo.PID, e.desyncInfo.Exit
+	case !e.strategySwitching && e.des == nil && e.desyncConfig != nil:
+		return "desync", "desync: sidecar unavailable", 0, nil
 	case e.tunnelInfo != nil && !e.tunnelInfo.Up:
 		return "tunnel", "tunnel: sidecar exited", e.tunnelInfo.PID, e.tunnelInfo.Exit
 	case e.tun == nil && e.tunnelConfig != nil:
@@ -44,6 +46,7 @@ func (e *Engine) watchComponents(ctx context.Context, generation uint64) {
 			return
 		case now := <-ticker.C:
 			e.recoverComponent(generation, now)
+			e.recoverProtectedPath(generation, now)
 		}
 	}
 }
@@ -51,7 +54,7 @@ func (e *Engine) watchComponents(ctx context.Context, generation uint64) {
 func (e *Engine) recoverComponent(generation uint64, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.currentSessionLocked(generation) {
+	if !e.currentSessionLocked(generation) || e.strategySwitching {
 		return
 	}
 	e.statusLocked()
@@ -135,6 +138,11 @@ func (e *Engine) recoverComponent(generation uint64, now time.Time) {
 				}
 			}
 			e.recordFailureLocked(diag.Failure{Component: component, Event: "recovered", Attempt: attempt + 1})
+			if e.pathError != nil && e.desyncScan == nil {
+				// Initial local dataplane startup may have failed before a scan
+				// could begin. Retry scheduling after component recovery.
+				go e.recoverDesyncStrategySession(generation)
+			}
 			return
 		}
 	}

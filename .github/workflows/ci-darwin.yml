@@ -23,7 +23,9 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.9"
-          cache-dependency-path: offveil-core/go.sum
+          cache-dependency-path: |
+            offveil-core/go.sum
+            offveil-core/tests/tunudp/go.sum
       - name: Test
         working-directory: offveil-core
         env:
@@ -41,6 +43,9 @@ jobs:
           GOOS: darwin
           GOARCH: arm64
         run: go build -trimpath -ldflags="-s -w" -o dist/offveil-core ./cmd/offveil-core
+      - name: Packet-level UDP reassembly regression
+        working-directory: offveil-core/tests/tunudp
+        run: go test -tags=with_gvisor -timeout=60s ./...
       - name: Fetch sing-box darwin-arm64
         working-directory: offveil-core
         run: bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
@@ -51,7 +56,7 @@ jobs:
         run: python3 scripts/byedpi-darwin-resource-test.py offveil-core/dist/ciadpi
       - name: Validate generated sing-box routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip)$'
       - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
         working-directory: offveil-core
         run: |

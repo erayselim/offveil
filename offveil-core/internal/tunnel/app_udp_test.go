@@ -65,7 +65,7 @@ func TestQUICRejectIsScopedToProtectedTraffic(t *testing.T) {
 	}
 	found := 0
 	for _, rule := range cfg.Route.Rules {
-		if rule["action"] != "reject" {
+		if rule["action"] != "reject" || rule["protocol"] != "quic" {
 			continue
 		}
 		found++

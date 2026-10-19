@@ -12,6 +12,21 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
 )
 
+func TestErrorClassificationSeparatesTunnelFromTUN(t *testing.T) {
+	for _, tc := range []struct{ message, want string }{
+		{"tunnel: protected path unavailable (IMVU)", "protected_path_unavailable"},
+		{"tunnel: sidecar exited", "engine_failed"},
+		{"tunnel: warp config HTTP 403", "engine_failed"},
+		{"sing-box: start inbound/tun: create adapter", "tun_failed"},
+		{"configure TUN interface: failed", "tun_failed"},
+		{"open Wintun adapter: failed", "tun_failed"},
+	} {
+		if got := diag.ClassifyError(tc.message, ""); got != tc.want {
+			t.Errorf("%q classified as %q, want %q", tc.message, got, tc.want)
+		}
+	}
+}
+
 func TestConcurrentBundlesAreDistinctAndReadable(t *testing.T) {
 	t.Setenv("OFFVEIL_DIAG_DIR", t.TempDir())
 	paths := make(chan string, 8)

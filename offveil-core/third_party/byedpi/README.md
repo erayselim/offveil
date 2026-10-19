@@ -21,10 +21,17 @@ Default strategy (`byedpi:windows-safe`) is the official
 `dist/windows/byedpi.bat` plus `--auto=ssl_err` fake fallback. See
 `internal/desync/strategies.go`.
 
-On probe fail, `Scan` tries `ScanCandidates()` (split / disorder / fake /
-ttl / tlsrec) with a ~40s budget, then stores the winner under the ISS ASN
+If the selected strategy and tunnel providers both fail, a background `Scan`
+tries `ScanCandidates()` (split / disorder / fake / ttl / tlsrec) with a
+12-second total budget. A candidate must pass every protected probe host,
+then pass again through the real helper and the sing-box SOCKS dataplane.
+Only that verified winner is stored under the ISS ASN
 in `%ProgramData%\offveil\desync\desync-strategies.json`
 (`OFFVEIL_DESYNC_CACHE` override).
+
+Trials preserve the physical egress bind, use separate loopback ports, and
+are cancelled on stop. Failed real-port verification restores the previous
+strategy. A partial success is not persisted as an ISP-wide winner.
 
 Darwin: do not use `byedpi-*-aarch64.tar.gz` (Linux). Build the same tag:
 

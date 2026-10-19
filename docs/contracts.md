@@ -393,6 +393,25 @@ Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
   scrubbed error_class. No public IP, SSID, MAC, user path, or credentials.
 - Anonymous probe sharing, if added, is opt-in.
 
+Additive diagnostics fields (contracts version stays 1):
+
+- `sidecars.desync_scan`: bounded candidate attempts, per-host TLS checks and
+  the result of real-helper/dataplane verification. Only one search runs per
+  accepted protection session, after a protected provider path fails.
+- `sidecars.tunnel_fallback`: the failed provider snapshot retained when a
+  local desync dataplane replaces it. `failures` contains provider/class,
+  allowlisted reason codes (such as `http_403`) and available exit facts;
+  provider response text is omitted from this snapshot.
+- `cascade.error_class=protected_path_unavailable`: a protected target has
+  no verified path. It does not imply a TUN adapter/driver failure.
+- `probe.results[].ok` indicates a completed classification; per-sidecar
+  TLS checks establish connectivity through a selected path. The support
+  summary distinguishes those two concepts.
+- `sidecars.tunnel.tun_stack`, `tun_mtu` and `egress_interface` describe the
+  generated capture stack and physical direct-traffic binding. Windows uses
+  `mixed` (system TCP, gVisor UDP); macOS uses `gvisor`. These fields describe
+  configuration, not a successful end-to-end UDP/game test.
+
 ## 8. Versioning
 
 - This file's `contracts` major: bump on breaking IPC/field changes.

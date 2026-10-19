@@ -54,22 +54,22 @@ func TestNativeUDPClient(t *testing.T) {
 	if proxy == "" {
 		return
 	}
-	// SOCKS metadata uses the control connection's source port; TUN uses the UDP source.
-	// Reserve UDP first to avoid Windows' excluded UDP port ranges.
+	// SOCKS metadata uses the control connection's source port; TUN uses the UDP
+	// source. Let Windows choose a valid TCP source first: a UDP auto-port can
+	// fall inside a TCP exclusion range and make every explicit TCP bind fail.
 	var conn net.Conn
 	var udp *net.UDPConn
 	var err error
-	for range 10 {
-		udp, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	for range 32 {
+		conn, err = net.DialTimeout("tcp4", proxy, 2*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
-		dialer := net.Dialer{Timeout: 2 * time.Second, LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: udp.LocalAddr().(*net.UDPAddr).Port}}
-		conn, err = dialer.Dial("tcp4", proxy)
+		udp, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: conn.LocalAddr().(*net.TCPAddr).Port})
 		if err == nil {
 			break
 		}
-		_ = udp.Close()
+		_ = conn.Close()
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -82,19 +82,23 @@ func TestNativeUDPClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = udp.SetDeadline(time.Now().Add(4 * time.Second))
-	packet := append([]byte{0, 0, 0, 1, 127, 0, 0, 1, 0, 9}, stunProbe...)
+	payload := stunProbe
+	if size, err := strconv.Atoi(os.Getenv("OFFVEIL_UDP_TEST_BYTES")); err == nil && size >= len(stunProbe) && size <= 60000 {
+		payload = append(bytes.Repeat([]byte{0xa5}, size-len(stunProbe)), stunProbe...)
+	}
+	packet := append([]byte{0, 0, 0, 1, 127, 0, 0, 1, 0, 9}, payload...)
 	if port, err := strconv.Atoi(os.Getenv("OFFVEIL_UDP_TEST_PORT")); err == nil {
 		binary.BigEndian.PutUint16(packet[8:10], uint16(port))
 	}
 	if _, err := udp.WriteToUDP(packet, address); err != nil {
 		t.Fatal(err)
 	}
-	var response [512]byte
+	var response [65535]byte
 	n, _, err := udp.ReadFromUDP(response[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasSuffix(response[:n], stunProbe) {
+	if !bytes.HasSuffix(response[:n], payload) {
 		t.Fatalf("unexpected response: %x", response[:n])
 	}
 }
