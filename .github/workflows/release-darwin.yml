@@ -39,7 +39,9 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: offveil-core/go.sum
+          cache-dependency-path: |
+            offveil-core/go.sum
+            offveil-core/tests/tunudp/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -77,6 +79,14 @@ jobs:
           bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
           bash ./scripts/build-byedpi-darwin.sh dist
           ./dist/offveil-core check-payload
+
+      - name: Verify packet-level UDP reassembly
+        working-directory: offveil-core/tests/tunudp
+        run: go test -tags=with_gvisor -timeout=60s ./...
+
+      - name: Verify native UDP routing
+        working-directory: offveil-core
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip)$'
 
       - name: Sign ruleset
         env:

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4-beta.1",
+  "version": "1.0.4-beta.2",
   "notes": {
-    "tr": "BETA — test sürümü\n\nmacOS’ta korumanın “Bozuldu” durumuna düşmesine yol açabilen bir kaynak sınırı sorunu için düzeltme eklendi. Bağlantı yardımcılarından biri durursa korumanın kendini toparlaması iyileştirildi.\n\nDiğer sitelerdeki bağlantılara gereksiz müdahale azaltıldı; bağlantı hızı ve kararlılığı için yapılan bu değişiklikleri farklı ağlarda test ediyoruz.\n\nBir sorunla karşılaşırsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
-    "en": "BETA — test release\n\nAdded a fix for a resource-limit issue that could leave protection in the “Broken” state on macOS. Improved recovery when a connection helper stops.\n\nReduced interference with connections to other sites. We are testing these speed and reliability changes across different networks.\n\nIf something goes wrong, share a report from Settings → Save support file."
+    "tr": "BETA 2 — test sürümü\n\nBağlantı kurulamadığında alternatif yöntemlerin otomatik denenmesi ve korumanın kendini toparlaması iyileştirildi. Yeni bir yöntem, korunan bağlantılar doğrulandıktan sonra kullanılıyor.\n\nDestek raporları bağlantı hatalarını ve kurtarma denemelerini daha ayrıntılı gösteriyor. Farklı ağ ve cihazlarda testler sürüyor.\n\nSorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
+    "en": "BETA 2 — test release\n\nImproved automatic fallback and recovery when a protected connection is unavailable. A replacement strategy is used after the protected connections pass verification.\n\nSupport reports now provide more detail about connection failures and recovery attempts. Testing continues across different networks and devices.\n\nIf something goes wrong, share a report from Settings → Save support file."
   }
 }

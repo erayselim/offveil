@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4-beta.1",
+  "version": "1.0.4-beta.2",
   "notes": {
-    "tr": "BETA — test sürümü\n\nBağlantı yardımcılarından biri durursa korumanın kendini toparlaması iyileştirildi. Diğer sitelerdeki bağlantılara gereksiz müdahale azaltıldı.\n\nWindows’ta Discord’un güncellemede takıldığı durumları incelemek için isteğe bağlı ek bağlantı kontrolü eklendi. Bu sorunun çözüldüğü henüz doğrulanmadı.\n\nBir sorunla karşılaşırsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
-    "en": "BETA — test release\n\nImproved recovery when a connection helper stops. Reduced interference with connections to other sites.\n\nAdded an optional connectivity check to investigate Discord getting stuck during updates on Windows. A fix for that issue has not yet been confirmed.\n\nIf something goes wrong, share a report from Settings → Save support file."
+    "tr": "BETA 2 — test sürümü\n\nBağlantı kurulamadığında alternatif yöntemlerin otomatik denenmesi ve korumanın kendini toparlaması iyileştirildi.\n\nWindows’ta oyun ve sesli görüşme gibi UDP kullanan uygulamaları etkileyebilen bir veri aktarım sorunu düzeltildi. Bu değişiklikleri farklı ağ ve cihazlarda test etmeye devam ediyoruz.\n\nDestek raporları bağlantı hatalarını ve kurtarma denemelerini daha ayrıntılı gösteriyor. Sorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
+    "en": "BETA 2 — test release\n\nImproved automatic fallback and recovery when a protected connection is unavailable.\n\nFixed a Windows UDP forwarding issue that could affect games and voice calls. We are continuing to test these changes across different networks and devices.\n\nSupport reports now provide more detail about connection failures and recovery attempts. If something goes wrong, share a report from Settings → Save support file."
   }
 }

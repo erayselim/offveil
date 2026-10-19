@@ -168,19 +168,21 @@ async function verifyPublished(tag, repo, dir) {
   const releases = JSON.parse(await fetchBytes(`https://api.github.com/repos/${repo}/releases?per_page=100`)).filter((r) => {
     try { releaseVersion(r.tag_name); return true; } catch { return false; }
   });
-  for (const prior of ["v1.0.0-b4", "v1.0.0-b5", "v1.0.0-mac.3", "v1.0.0-mac.4", "v1.0.0"]) {
+  const sharedPriorVersions = ["v1.0.3", "v1.0.4-beta.1"];
+  for (const prior of ["v1.0.0-b4", "v1.0.0-b5", "v1.0.0-mac.3", "v1.0.0-mac.4", "v1.0.0", ...sharedPriorVersions]) {
     const old = JSON.parse(execFileSync("git", ["show", `${prior}:offveil-ui/src-tauri/tauri.conf.json`], { cwd: ROOT, encoding: "utf8" }));
     if (old.plugins.updater.pubkey !== currentKey || compareVersions(version, prior) <= 0) throw new Error(`Incompatible prior client ${prior}`);
-    if (prior.includes("-mac")) {
+    if (!prior.includes("-mac") && (windowsLive.version !== version ||
+      JSON.stringify(windowsLive.platforms["windows-x86_64"]) !== JSON.stringify(windows.platforms["windows-x86_64"]) ||
+      old.plugins.updater.endpoints[0] !== `https://github.com/${repo}/releases/latest/download/latest.json`)) {
+      throw new Error(`${prior} Windows update endpoint does not offer ${tag}`);
+    }
+    if (prior.includes("-mac") || sharedPriorVersions.includes(prior)) {
       const candidate = releases.filter((r) => !r.draft && compareVersions(r.tag_name, prior) > 0 &&
         ["latest-mac.json", `offveil_${releaseVersion(r.tag_name)}_aarch64.app.tar.gz`, `offveil_${releaseVersion(r.tag_name)}_aarch64.app.tar.gz.sig`]
           .every((name) => r.assets.some((a) => a.name === name && a.state === "uploaded"))
       ).sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
-      if (candidate?.tag_name !== tag) throw new Error(`${prior} would not discover the RC`);
-    } else if (windowsLive.version !== version ||
-      JSON.stringify(windowsLive.platforms["windows-x86_64"]) !== JSON.stringify(windows.platforms["windows-x86_64"]) ||
-      old.plugins.updater.endpoints[0] !== `https://github.com/${repo}/releases/latest/download/latest.json`) {
-      throw new Error(`${prior} Windows update endpoint does not offer the RC`);
+      if (candidate?.tag_name !== tag) throw new Error(`${prior} Mac update discovery does not offer ${tag}`);
     }
     console.log(`${prior} -> ${tag}: discovery, version and signing key verified`);
   }

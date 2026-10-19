@@ -30,7 +30,9 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: offveil-core/go.sum
+          cache-dependency-path: |
+            offveil-core/go.sum
+            offveil-core/tests/tunudp/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -59,8 +61,17 @@ jobs:
       - name: Test and build core
         working-directory: offveil-core
         run: |
+          $ErrorActionPreference = "Stop"
+          $env:OFFVEIL_SINGBOX_TEST = (Resolve-Path ./third_party/sing-box/sing-box.exe).Path
           go test ./...
+          if ($LASTEXITCODE -ne 0) { throw "Core tests failed" }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw "Core vet failed" }
           go build -trimpath -ldflags="-s -w" -o offveil-core.exe ./cmd/offveil-core
+          if ($LASTEXITCODE -ne 0) { throw "Core build failed" }
+
+      - name: Verify packet-level UDP reassembly
+        run: ./scripts/test-tun-udp.ps1
 
       - name: Sign ruleset
         env:
@@ -77,8 +88,11 @@ jobs:
         working-directory: offveil-ui
         run: |
           npm ci
+          if ($LASTEXITCODE -ne 0) { throw "UI dependency installation failed" }
           node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Release/update tests failed" }
           cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "UI Rust tests failed" }
 
       - name: Tauri build (NSIS + updater artifacts)
         working-directory: offveil-ui

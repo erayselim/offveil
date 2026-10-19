@@ -15,9 +15,9 @@ One switch. Local DoH, DPI desync, and a selective tunnel when that is not enoug
 
 ## Download
 
-**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.1/offveil_1.0.4-beta.1_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.1/offveil_1.0.4-beta.1_aarch64.dmg)**
+**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.2/offveil_1.0.4-beta.2_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.2/offveil_1.0.4-beta.2_aarch64.dmg)**
 
-**1.0.4-beta.1 — test release.** Includes a fix for a macOS resource-limit failure, improved connection recovery, and less interference with unrelated traffic. Windows also gains an optional Discord updater diagnostic; the reported update issue is still under investigation. Available for Windows and M1-or-later Macs; Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.4-beta.1).
+**1.0.4-beta.2 — test release.** Improves automatic connection recovery and diagnostics, and fixes a Windows UDP forwarding issue that could affect games and voice calls. Testing continues across networks and devices. Available for Windows and Apple Silicon Macs; Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.4-beta.2).
 
 Existing users can use **Check for Updates**. Verify downloads against `SHA256SUMS.txt` on the same release:
 

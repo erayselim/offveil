@@ -30,6 +30,12 @@ Windows endpoint, Mac discovery from both prior versions, signing-key continuity
 downloaded package signatures, ruleset signature and all published checksums.
 It does not simulate interactive installation or physical-device networking.
 
+The same bridge is used for beta releases. The published verification also
+checks the current stable client and Beta 1 on both supported platforms.
+Windows uses signed NSIS executables; Mac uses signed tar update archives.
+The updater's unused Windows ZIP feature is disabled, removing its ZIP
+extraction dependency while preserving these two update formats.
+
 For a normal stable release, GitHub Latest moves to the new release and the
 standard Windows endpoint follows automatically. For an RC rollback, restore
 both saved legacy metadata files. Do not replace a published installer's bytes
