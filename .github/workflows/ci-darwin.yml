@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   core:
+    name: macos-core
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -142,6 +143,7 @@ jobs:
           if-no-files-found: warn
 
   ui:
+    name: macos-ui
     needs: core
     runs-on: macos-latest
     steps:

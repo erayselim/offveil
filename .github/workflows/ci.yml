@@ -11,6 +11,7 @@ permissions:
 jobs:
   # Apple Silicon core: .github/workflows/ci-darwin.yml (separate check).
   core:
+    name: windows-core
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -52,6 +53,7 @@ jobs:
           go test ./internal/desync -run '^TestNativeNewStrategiesPreserveVerifiedTLS$'
 
   ui:
+    name: windows-ui
     runs-on: windows-latest
     steps:
       - name: Checkout
