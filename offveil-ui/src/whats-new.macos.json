@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4-beta.2",
+  "version": "1.0.4-beta.3",
   "notes": {
-    "tr": "BETA 2 — test sürümü\n\nBağlantı kurulamadığında alternatif yöntemlerin otomatik denenmesi ve korumanın kendini toparlaması iyileştirildi. Yeni bir yöntem, korunan bağlantılar doğrulandıktan sonra kullanılıyor.\n\nDestek raporları bağlantı hatalarını ve kurtarma denemelerini daha ayrıntılı gösteriyor. Farklı ağ ve cihazlarda testler sürüyor.\n\nSorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
-    "en": "BETA 2 — test release\n\nImproved automatic fallback and recovery when a protected connection is unavailable. A replacement strategy is used after the protected connections pass verification.\n\nSupport reports now provide more detail about connection failures and recovery attempts. Testing continues across different networks and devices.\n\nIf something goes wrong, share a report from Settings → Save support file."
+    "tr": "BETA 3 — test sürümü\n\nBağlantı sorunlarında alternatif yöntemlerin arka planda denenmesi ve Discord’un ek bağlantılarının kontrolü iyileştirildi. Yeni yöntem, korunan bağlantılar doğrulandıktan sonra kullanılıyor.\n\nCore servisi bağlantısı ve destek raporları iyileştirildi. Farklı ağ ve cihazlarda testler sürüyor; sorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
+    "en": "BETA 3 — test release\n\nImproved background fallback discovery and checks for Discord’s related connections. A replacement method is used after the protected connections pass verification.\n\nImproved core service connectivity and support reports. Testing continues across networks and devices; share a report from Settings → Save support file if something goes wrong."
   }
 }
