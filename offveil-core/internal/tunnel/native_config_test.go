@@ -12,7 +12,7 @@ func TestNativeSingBoxConfig(t *testing.T) {
 	if bin == "" {
 		t.Skip("set OFFVEIL_SINGBOX_TEST to the pinned sing-box binary")
 	}
-	build, err := BuildSingBox(BuildParams{Provider: ProviderDesync, EnableTUN: true, SpecialDomains: []string{"discord.com", "imvu.com"}})
+	build, err := BuildSingBox(BuildParams{Provider: ProviderDesync, EnableTUN: true, DNSAddress: "127.0.0.1:53", SpecialDomains: []string{"discord.com", "imvu.com"}})
 	if err != nil {
 		t.Fatal(err)
 	}

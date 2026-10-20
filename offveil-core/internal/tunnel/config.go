@@ -80,6 +80,7 @@ type BuildParams struct {
 	DesyncSOCKSPort   int
 	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
 	SpecialDomains []string
+	DNSAddress     string
 }
 
 // BuildSingBoxConfig produces a selective SOCKS→tunnel config (no TUN).
@@ -215,6 +216,23 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 				map[string]any{"protocol": "dns", "action": "hijack-dns"},
 			},
 		},
+	}
+	if p.DNSAddress != "" {
+		host, portText, err := net.SplitHostPort(p.DNSAddress)
+		if err != nil {
+			return nil, fmt.Errorf("invalid core DNS address")
+		}
+		addr, err := netip.ParseAddr(host)
+		port, portErr := strconv.Atoi(portText)
+		if err != nil || !addr.IsLoopback() || portErr != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("core DNS must use a loopback IP and valid port")
+		}
+		// Literal loopback avoids bootstrap DNS and bypasses the TUN. Core's
+		// DoH bootstrap IPs are independently excluded from capture routes.
+		// Leave this dialer unpinned, like the local ByeDPI SOCKS connection.
+		cfg["dns"].(map[string]any)["servers"] = []any{map[string]any{
+			"type": "tcp", "tag": "doh", "server": addr.String(), "server_port": port,
+		}}
 	}
 
 	route := cfg["route"].(map[string]any)

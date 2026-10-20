@@ -12,7 +12,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
-// recoverDesyncStrategySession runs only after tunnel providers were exhausted.
+// recoverDesyncStrategySession handles failed providers and secondary endpoints.
 // Trials use private SOCKS ports and the same physical egress as the live helper.
 // No policy changes until the winner also passes on the real helper port.
 func (e *Engine) recoverDesyncStrategySession(generation uint64) {
@@ -23,7 +23,7 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 		e.mu.Unlock()
 		return
 	}
-	hosts := e.rulesetSnap.Doc.ProbeHosts()
+	hosts := e.verificationHostsLocked()
 	failedHost := ""
 	for _, host := range hosts {
 		if targetPath(e.targets, e.rulesetSnap.Doc.PackageIDForHost(host)) == policy.PathTunnel {
@@ -65,6 +65,21 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 		return
 	}
 	e.desyncScan = &result
+	for _, tried := range result.Tried {
+		target := failedHost
+		for _, check := range tried.Checks {
+			if check.Class != desync.FailOK {
+				target = check.Target
+				break
+			}
+		}
+		reason := string(tried.Class)
+		if tried.Reason != "" {
+			reason += ":" + tried.Reason
+		}
+		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_trial", Strategy: tried.StrategyID, Target: target, Reason: reason})
+	}
+	e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_scan", Reason: result.Reason})
 	if e.des != original || e.pathError == nil {
 		result.OK, result.Reason = false, "superseded"
 		return
@@ -181,7 +196,7 @@ func (e *Engine) recoverProtectedPath(generation uint64, now time.Time) {
 	}
 	e.lastPathCheck = now
 	var hosts []string
-	for _, host := range e.rulesetSnap.Doc.ProbeHosts() {
+	for _, host := range e.verificationHostsLocked() {
 		if targetPath(e.targets, e.rulesetSnap.Doc.PackageIDForHost(host)) == policy.PathTunnel {
 			hosts = append(hosts, host)
 		}

@@ -23,7 +23,9 @@ Default strategy (`byedpi:windows-safe`) is the official
 
 If the selected strategy and tunnel providers both fail, a background `Scan`
 tries `ScanCandidates()` (split / disorder / fake / ttl / tlsrec) with a
-12-second total budget. A candidate must pass every protected probe host,
+32-second network-work budget, two isolated helpers and six seconds per trial.
+A candidate must pass every protected probe host and the enabled secondary
+Discord endpoints,
 then pass again through the real helper and the sing-box SOCKS dataplane.
 Only that verified winner is stored under the ISS ASN
 in `%ProgramData%\offveil\desync\desync-strategies.json`

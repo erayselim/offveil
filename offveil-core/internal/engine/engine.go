@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,22 +73,24 @@ type Engine struct {
 	sessionCtx        context.Context
 	sessionCancel     context.CancelFunc
 
-	state             string
-	protection        bool
-	summary           string
-	since             *time.Time
-	lastError         *string
-	pathError         *string
-	targets           []ipc.TargetStatus
-	captureInfo       *capture.Info
-	dnsInfo           *offdns.Info
-	desyncInfo        *desync.Info
-	tunnelInfo        *tunnel.Info
-	lastProbe         *probe.Report
-	desyncScan        *desync.ScanResult
-	tunnelFallback    *tunnel.Info
-	strategySwitching bool
-	rulesetSnap       *ruleset.Snapshot
+	state               string
+	protection          bool
+	summary             string
+	since               *time.Time
+	lastError           *string
+	pathError           *string
+	targets             []ipc.TargetStatus
+	captureInfo         *capture.Info
+	dnsInfo             *offdns.Info
+	desyncInfo          *desync.Info
+	tunnelInfo          *tunnel.Info
+	lastProbe           *probe.Report
+	desyncScan          *desync.ScanResult
+	tunnelFallback      *tunnel.Info
+	strategySwitching   bool
+	extraProbeHosts     []string
+	endpointTunnelTried bool
+	rulesetSnap         *ruleset.Snapshot
 
 	cleanup *cleanup.Registry
 	job     *proc.Job
@@ -591,6 +594,9 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	tunCfg.TUNInterface = capture.AdapterName
 	tunCfg.TUNAddress = capture.TunIPv4
 	tunCfg.TUNMTU = capture.DefaultMTU
+	if runtime.GOOS == "windows" && e.dnsInfo != nil && e.dnsInfo.StubUp {
+		tunCfg.DNSAddress = e.dnsInfo.ListenAddr
+	}
 	if e.captureInfo != nil && e.captureInfo.Egress != nil {
 		tunCfg.EgressInterface = e.captureInfo.Egress.Name
 	}
@@ -638,6 +644,9 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 			// contain registration responses, URLs or credentials.
 			failed.FailDetail = ""
 			e.tunnelFallback = &failed
+			for _, failure := range failed.Failures {
+				e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: "provider_failed", Provider: string(failure.ProviderID), Reason: string(failure.Class) + ":" + failure.Reason, Exit: failure.Exit})
+			}
 			if closeErr := tunSess.Close(); closeErr != nil {
 				terr = fmt.Errorf("close failed tunnel: %w", closeErr)
 				e.tun = tunSess // Keep ownership for later cleanup.
@@ -758,6 +767,10 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.startReprobeLoop()
 	e.startReliabilityLocked()
 	e.freezeSupportLocked()
+	if os.Getenv("OFFVEIL_CANARY_BG") != "0" {
+		e.extraProbeHosts = secondaryProbeHosts(rs.Doc)
+		go e.monitorProtectedEndpointsSession(e.sessionGeneration)
+	}
 	if fallbackUnavailable {
 		// Keep start within its IPC budget. Trials can run alongside the
 		// fallback dataplane without blocking status, stop or diagnostics.

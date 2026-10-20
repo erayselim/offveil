@@ -226,8 +226,15 @@ func buildSummary(in Input, sha string) string {
 	if in.Network.ISPHint != "" {
 		b.WriteString(fmt.Sprintf("- isp_hint: %s\n", in.Network.ISPHint))
 	}
-	b.WriteString(fmt.Sprintf("- state: %s · protection=%v · hint=%s\n",
-		in.Cascade.State, in.Cascade.Protection, in.Cascade.OutboundHint))
+	protection := fmt.Sprint(in.Cascade.Protection)
+	if state, ok := in.System["protection_state"].(string); ok && (state == "on" || state == "off" || state == "unknown") {
+		protection = state
+	}
+	b.WriteString(fmt.Sprintf("- state: %s · protection=%s · hint=%s\n",
+		in.Cascade.State, protection, in.Cascade.OutboundHint))
+	if protection == "off" && in.Cascade.Protection {
+		b.WriteString("- cascade/targets describe the retained active session; protection is currently off.\n")
+	}
 	if len(in.Failures) > 0 {
 		last := in.Failures[len(in.Failures)-1]
 		b.WriteString(fmt.Sprintf("- last component event: %s · %s · %s\n", last.Component, last.Event, last.At))

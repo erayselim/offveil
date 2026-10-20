@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,11 +20,13 @@ type hostTrialSession struct {
 func (s *hostTrialSession) ProbeTLS(host string) desync.FailSignal { return s.check(host) }
 
 func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
+	var mu sync.Mutex
 	var trials []*desync.FakeSession
 	var hosts []string
 	res := desync.Scan(context.Background(), desync.ScanConfig{
 		Host: "secure.imvu.com", VerifyHosts: []string{"discord.com", "secure.imvu.com"},
-		ConnIP: "192.0.2.10", BindInterface: "Wi-Fi",
+		Concurrency: 1,
+		ConnIP:      "192.0.2.10", BindInterface: "Wi-Fi",
 		Candidates: []desync.Strategy{
 			{ID: "imvu-only", Args: []string{"--split", "1"}},
 			{ID: "both", Args: []string{"--split", "2"}},
@@ -33,9 +37,13 @@ func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
 				t.Fatalf("trial config lost isolation/egress: %+v", cfg)
 			}
 			base := desync.NewFakeSession(desync.Info{StrategyID: cfg.Strategy.ID})
+			mu.Lock()
 			trials = append(trials, base)
+			mu.Unlock()
 			return &hostTrialSession{base, func(host string) desync.FailSignal {
+				mu.Lock()
 				hosts = append(hosts, host)
+				mu.Unlock()
 				class := desync.FailOK
 				if cfg.Strategy.ID == "imvu-only" && host == "discord.com" {
 					class = desync.FailReset
@@ -51,6 +59,68 @@ func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
 		if !trial.Closed() {
 			t.Fatal("trial helper left running")
 		}
+	}
+}
+
+func TestScanSlowFirstCandidateCannotStarveWorkingAlternative(t *testing.T) {
+	blocked := make(chan struct{})
+	var active, peak atomic.Int32
+	var trials sync.Map
+	res := desync.Scan(context.Background(), desync.ScanConfig{
+		Host: "discord.com", Timeout: time.Second, PerStrategy: time.Second,
+		Candidates: []desync.Strategy{{ID: "slow", Args: []string{"--split", "1"}}, {ID: "works", Args: []string{"--tlsrec", "1+s"}}},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			n := active.Add(1)
+			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+			}
+			base := desync.NewFakeSession(desync.Info{StrategyID: cfg.Strategy.ID})
+			trials.Store(cfg.Strategy.ID, base)
+			return &hostTrialSession{base, func(host string) desync.FailSignal {
+				defer active.Add(-1)
+				if cfg.Strategy.ID == "slow" {
+					close(blocked)
+					<-cfg.Context.Done()
+					return desync.FailSignal{Target: host, Class: desync.FailTimeout}
+				}
+				<-blocked
+				return desync.FailSignal{Target: host, Class: desync.FailOK}
+			}}, nil
+		},
+	})
+	if !res.OK || res.Strategy.ID != "works" || peak.Load() != 2 || active.Load() != 0 {
+		t.Fatalf("alternative was starved or worker leaked: %+v peak=%d active=%d", res, peak.Load(), active.Load())
+	}
+	trials.Range(func(_, value any) bool {
+		if !value.(*desync.FakeSession).Closed() {
+			t.Error("trial leaked")
+		}
+		return true
+	})
+}
+
+func TestScanSharesDeadlineAcrossConcurrentTargetChecks(t *testing.T) {
+	var entered atomic.Int32
+	all := make(chan struct{})
+	res := desync.Scan(context.Background(), desync.ScanConfig{
+		Host: "discord.com", VerifyHosts: []string{"updates.discord.com", "gateway.discord.gg"},
+		Timeout: time.Second, PerStrategy: time.Second,
+		Candidates: []desync.Strategy{{ID: "all", Args: []string{"--split", "1"}}},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			return &hostTrialSession{desync.NewFakeSession(desync.Info{}), func(host string) desync.FailSignal {
+				if entered.Add(1) == 3 {
+					close(all)
+				}
+				select {
+				case <-all:
+					return desync.FailSignal{Target: host, Class: desync.FailOK}
+				case <-cfg.Context.Done():
+					return desync.FailSignal{Target: host, Class: desync.FailTimeout}
+				}
+			}}, nil
+		},
+	})
+	if !res.OK || len(res.Tried[0].Checks) != 3 {
+		t.Fatalf("targets serialized or omitted: %+v", res)
 	}
 }
 
@@ -122,6 +192,7 @@ func TestScanFindsWorkingStrategy(t *testing.T) {
 
 	res := desync.Scan(context.Background(), desync.ScanConfig{
 		Host:        "discord.com",
+		Concurrency: 1,
 		Timeout:     5 * time.Second,
 		PerStrategy: 500 * time.Millisecond,
 		Start:       start,

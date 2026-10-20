@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,14 +30,15 @@ type session struct {
 	configPath string
 	binPath    string
 
-	up             atomic.Bool
-	retryHint      atomic.Bool
-	failDetail     atomic.Value // string
-	lastProbe      atomic.Value // FailClass
-	lastProbeAt    atomic.Value // string
-	failoverFrom   ProviderID
-	providersTried []ProviderID
-	failures       []ProviderFailure
+	up              atomic.Bool
+	retryHint       atomic.Bool
+	failDetail      atomic.Value // string
+	lastProbe       atomic.Value // FailClass
+	lastProbeAt     atomic.Value // string
+	failoverFrom    ProviderID
+	providersTried  []ProviderID
+	failures        []ProviderFailure
+	startupAttempts int
 }
 
 // Start brings up selective tunnel with WARP↔Reality failover.
@@ -159,10 +161,14 @@ func providerFailureReason(err error) string {
 func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class FailClass, err error) {
 	provider := attempt.ID
 	reality := attempt.Reality
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	var warp *WARPProfile
 	if provider == ProviderWARP {
-		_, warp, err = LoadOrRegisterWARP(cfg.DataDir, nil)
+		_, warp, err = loadOrRegisterWARP(ctx, cfg.DataDir, nil)
 		if err != nil {
 			return nil, false, FailAuth, fmt.Errorf("warp: %w", err)
 		}
@@ -173,8 +179,28 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		return nil, false, FailAuth, err
 	}
 
-	cfgPath := filepath.Join(cfg.DataDir, "sing-box-tunnel.json")
-	if err := os.WriteFile(cfgPath, build.JSON, 0o600); err != nil {
+	// Background provider changes may finish after Stop/new Start. Each launch
+	// owns a distinct configuration so a late write cannot replace a new one's.
+	configFile, err := os.CreateTemp(cfg.DataDir, "sing-box-*.json")
+	if err != nil {
+		return nil, false, FailAuth, err
+	}
+	cfgPath := configFile.Name()
+	keepConfig := false
+	defer func() {
+		if !keepConfig {
+			_ = os.Remove(cfgPath)
+		}
+	}()
+	_, writeErr := configFile.Write(build.JSON)
+	closeErr := configFile.Close()
+	if writeErr != nil {
+		return nil, false, FailAuth, writeErr
+	}
+	if closeErr != nil {
+		return nil, false, FailAuth, closeErr
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, false, FailAuth, err
 	}
 
@@ -189,6 +215,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	s.failDetail.Store("")
 
 	if cfg.SkipStart {
+		keepConfig = true
 		s.up.Store(true)
 		s.lastProbe.Store(FailOK)
 		return s, true, FailOK, nil
@@ -200,40 +227,45 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	}
 	s.binPath = bin
 
-	if err := ensureWintunBeside(bin); err != nil {
-		slog.Warn("tunnel: wintun.dll not staged beside sing-box", "err", err)
-	}
-
-	ctx := cfg.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
-	stderr := &proc.TailBuffer{}
-	cmd.Stdout = nil
-	cmd.Stderr = stderr
-	proc.PrepareCmd(cmd)
-	if err := cmd.Start(); err != nil {
-		return nil, false, FailDial, fmt.Errorf("sing-box start: %w", err)
-	}
-	if cfg.AssignJob != nil && cmd.Process != nil {
-		if err := cfg.AssignJob(cmd.Process); err != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			return nil, false, FailDial, fmt.Errorf("assign job: %w", err)
+	if cfg.EnableTUN {
+		if err := ensureWintunBeside(bin); err != nil {
+			return nil, false, FailDial, fmt.Errorf("wintun staging: %w", err)
 		}
 	}
-	s.child = proc.WatchChild(cmd)
 
-	if err := proc.WaitTCP(s.socks, 8*time.Second, s.child); err != nil {
-		_ = s.Close()
-		return s, false, FailDial, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
+	s.child, s.startupAttempts, err = startWithTUNRetry(ctx, cfg.EnableTUN && runtime.GOOS == "windows", func(readiness context.Context) (*proc.Child, error) {
+		// The process belongs to the protection session, not the readiness deadline.
+		cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
+		stderr := &proc.TailBuffer{}
+		cmd.Stdout = nil
+		cmd.Stderr = stderr
+		proc.PrepareCmd(cmd)
+		if err := cmd.Start(); err != nil {
+			return nil, fmt.Errorf("sing-box start: %w", err)
+		}
+		if cfg.AssignJob != nil && cmd.Process != nil {
+			if err := cfg.AssignJob(cmd.Process); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return nil, fmt.Errorf("assign job: %w", err)
+			}
+		}
+		child := proc.WatchChild(cmd)
+		if err := proc.WaitTCPContext(readiness, s.socks, 8*time.Second, child); err != nil {
+			child.Close()
+			return child, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
+		}
+		return child, nil
+	})
+	if err != nil {
+		return s, false, FailDial, err
 	}
 	s.up.Store(true)
+	keepConfig = true
 	slog.Info("tunnel: selective outbound up",
 		"provider", provider,
 		"socks", s.socks,
-		"pid", cmd.Process.Pid,
+		"pid", s.child.PID(),
 		"selective", true,
 	)
 
@@ -323,6 +355,7 @@ func (s *session) Info() Info {
 		ProvidersTried:  append([]ProviderID(nil), s.providersTried...),
 		Failures:        append([]ProviderFailure(nil), s.failures...),
 		EgressInterface: s.cfg.EgressInterface,
+		StartupAttempts: s.startupAttempts,
 	}
 	if s.cfg.EnableTUN {
 		info.TUNStack = tunStack()
@@ -330,6 +363,10 @@ func (s *session) Info() Info {
 		if info.TUNMTU <= 0 {
 			info.TUNMTU = defaultTUNMTU
 		}
+	}
+	info.DNSMode = "standalone_doh"
+	if s.cfg.DNSAddress != "" {
+		info.DNSMode = "core_stub"
 	}
 	if s.child != nil {
 		info.PID = s.child.PID()
@@ -354,9 +391,15 @@ func (s *session) Close() error {
 	defer s.mu.Unlock()
 	s.up.Store(false)
 	if s.child == nil {
+		if s.configPath != "" {
+			_ = os.Remove(s.configPath)
+		}
 		return nil
 	}
 	s.child.Close()
+	if s.configPath != "" {
+		_ = os.Remove(s.configPath)
+	}
 	slog.Info("tunnel: stopped", "socks", s.socks)
 	return nil
 }
@@ -423,6 +466,7 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		EgressInterface:   cfg.EgressInterface,
 		DesyncSOCKSHost:   host,
 		DesyncSOCKSPort:   port,
+		DNSAddress:        cfg.DNSAddress,
 	}
 }
 

@@ -37,14 +37,17 @@ before the SOCKS timeout, and bounds inherited output-pipe draining with
 mark protection degraded when a live component has stopped. A two-second
 watcher retries only the failed component, at most twice per session with a
 five-second cooldown. ByeDPI recovery keeps a healthy TUN running. The last
-16 failure/recovery events survive daemon restarts; support includes exit
-codes and stderr classes, never raw sidecar logs. Discord and IMVU are
+64 failure/recovery events survive daemon restarts; support includes exit
+codes, allowlisted adapter reasons, candidate/target/provider outcomes and
+build/session generations, never raw sidecar logs. Discord and IMVU are
 validated separately before selecting their fallback paths.
 
-If both a target's desync path and the tunnel providers fail, the local
-dataplane stays available while one background strategy search runs. Its
-default budget is 12 seconds total, at most four seconds per trial including
-startup and all target checks. Trials use separate loopback ports, the same
+After a protected path or secondary endpoint fails, the local dataplane stays
+available while a background strategy search runs. Its default network-work
+budget is 32 seconds, at most six seconds per trial including startup and
+target checks, followed by bounded process teardown. Two isolated helpers run
+concurrently; each checks at most four hosts concurrently. A slow first
+candidate cannot starve all later methods. Trials use separate loopback ports, the same
 physical source/interface binding and the session cancellation context.
 They cannot change the live policy or turn a cancelled late result into a
 winner. Status, diagnostics and stop remain available during network work.
@@ -64,6 +67,32 @@ repeatedly register WARP accounts or rebuild working capture routes. Local
 desync probes resolve the destination before SOCKS CONNECT because ByeDPI
 rejects domain CONNECT with `--no-domain`; TLS still uses the original SNI
 and certificate validation.
+
+While the local desync dataplane is active, background TLS checks also cover
+Discord's updater, Gateway and download CDN once per minute. Only hosts owned
+by the enabled signed package are contacted. A failure must repeat before
+it invalidates the homepage-only ASN cache and starts discovery. The same
+endpoints must pass candidate adoption and later path recovery. These are
+TLS checks, not manifest/download or WebSocket validation.
+
+If discovery cannot repair a new endpoint failure, a single provider promotion
+per session replaces only sing-box, keeping the DNS stub and ByeDPI alive.
+All service endpoints must pass before adoption; failure restores the local
+dataplane. Cancellation prevents a late provider or rollback from taking over
+a replacement session. Each launch owns a distinct temporary configuration,
+removed on close, so overlapping canceled starts cannot overwrite each other.
+
+Windows retries only known transient adapter-exists/removing/busy startup
+errors, at most three attempts inside one eight-second readiness budget.
+Permission, configuration and network failures are not treated as adapter
+conflicts. A missing Wintun payload fails explicitly before launch.
+
+Service startup waits for IPC listener readiness. An unexpected listener exit
+runs owned network cleanup and terminates unsuccessfully so the supervisor
+can apply recovery. Intentional stop cancels IPC before cleanup. Offline
+Windows support reads SCM state/PID/exit codes, owned adapter presence and
+Wintun file facts; `system.protection_state=unknown` distinguishes unavailable
+daemon state from a measured disabled session.
 
 Support retains `sidecars.tunnel_fallback` after a failed provider is replaced
 by the local dataplane, including provider/class, bounded HTTP reason codes
@@ -109,8 +138,12 @@ same client as DoH, with separate transport keys. Each caller keeps its own
 response ID, private response copy and cancellation. Plain responses are not
 cached; the existing positive DoH cache, poison filtering, circuit timing and
 upstream race remain in place. Network reset detaches both transports' old
-flights. The sing-box DNS configuration is unchanged: rerouting that resolver
-requires separate real-traffic validation for bootstrap and DNS loops.
+flights. On Windows, sing-box delegates DNS to the already-running core stub
+over literal loopback TCP, sharing its upstream failover and poison filtering.
+The local DNS dialer remains unpinned; loopback and every core bootstrap DNS
+IP are excluded from TUN capture. Standalone helpers and macOS retain their
+existing DoH default. A pinned native sing-box fixture validates DNS hijacking
+through the core TCP stub without installing a TUN or changing system DNS.
 
 ## Validation
 
@@ -119,7 +152,7 @@ Run from `offveil-core` on each supported platform:
 ```text
 go vet ./...
 go test ./...
-go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel
+go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel ./internal/support ./internal/appservice
 ```
 
 Repair unit tests use a fake restore operation to avoid modifying the host's

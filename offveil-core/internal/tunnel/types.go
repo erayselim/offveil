@@ -102,6 +102,9 @@ type Config struct {
 	DesyncSOCKS string
 	// EgressInterface is the physical NIC selected before installing TUN routes.
 	EgressInterface string
+	// DNSAddress is the already-running core DNS stub. Only loopback literals
+	// are accepted; empty retains standalone DoH for isolated sidecar use.
+	DNSAddress string
 }
 
 // DefaultConfig returns selective-tunnel defaults.
@@ -146,6 +149,8 @@ type Info struct {
 	EgressInterface string            `json:"egress_interface,omitempty"`
 	TUNStack        string            `json:"tun_stack,omitempty"`
 	TUNMTU          int               `json:"tun_mtu,omitempty"`
+	StartupAttempts int               `json:"startup_attempts,omitempty"`
+	DNSMode         string            `json:"dns_mode,omitempty"`
 }
 
 // Session is a running selective tunnel outbound (sing-box SOCKS).

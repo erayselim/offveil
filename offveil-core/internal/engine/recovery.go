@@ -32,6 +32,7 @@ func (e *Engine) failedComponentLocked() (component, reason string, pid int, exi
 }
 
 func (e *Engine) recordFailureLocked(failure diag.Failure) {
+	failure.Generation = e.sessionGeneration
 	if err := diag.RecordFailure(failure); err != nil {
 		slog.Warn("engine: save failure", "err", err)
 	}

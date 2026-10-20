@@ -6,15 +6,17 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"sort"
+	"sync"
 	"time"
 )
 
 const (
 	// ScanDefaultTimeout is the total wall budget for a limited blockcheck pass.
-	// Used only after the selected desync strategy and tunnel path fail.
-	ScanDefaultTimeout = 12 * time.Second
+	// Runs in the background after a protected path or endpoint fails.
+	ScanDefaultTimeout = 32 * time.Second
 	// ScanPerStrategyTimeout is the TLS probe budget per candidate.
-	ScanPerStrategyTimeout = 4 * time.Second
+	ScanPerStrategyTimeout = 6 * time.Second
 	// ScanBasePort is the first SOCKS port used during scanning (main uses 18080).
 	ScanBasePort = 18110
 )
@@ -35,6 +37,8 @@ type ScanConfig struct {
 	Timeout time.Duration
 	// PerStrategy caps each candidate probe (default ScanPerStrategyTimeout).
 	PerStrategy time.Duration
+	// Concurrency bounds isolated trial helpers; defaults to two (maximum four).
+	Concurrency int
 	// Candidates defaults to NativeScanCandidates().
 	Candidates []Strategy
 	// SkipIDs are not tried (e.g. already-failed default).
@@ -58,6 +62,7 @@ type Tried struct {
 	Detail     string       `json:"detail,omitempty"`
 	Took       string       `json:"took,omitempty"`
 	Checks     []FailSignal `json:"checks,omitempty"`
+	Reason     string       `json:"reason,omitempty"`
 }
 
 // ScanResult is the outcome of a limited blockcheck-style pass.
@@ -98,7 +103,6 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 
 	sctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	deadline, _ := sctx.Deadline()
 	hosts := []string{cfg.Host}
 	seen := map[string]bool{cfg.Host: true}
 	for _, host := range cfg.VerifyHosts {
@@ -108,7 +112,11 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 		}
 	}
 
-	port := cfg.BasePort
+	type candidate struct {
+		index    int
+		strategy Strategy
+	}
+	var candidates []candidate
 	for _, strat := range cands {
 		if strat.ID == "" || len(strat.Args) == 0 {
 			continue
@@ -118,104 +126,165 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 				continue
 			}
 		}
-		select {
-		case <-sctx.Done():
-			out.Reason = "timeout"
-			out.Took = time.Since(started).Round(time.Millisecond).String()
-			return out
-		default:
-		}
-		remain := time.Until(deadline)
-		if remain <= 0 {
-			out.Reason = "timeout"
-			out.Took = time.Since(started).Round(time.Millisecond).String()
-			return out
-		}
-		per := cfg.PerStrategy
-		if per > remain {
-			per = remain
-		}
-
-		trialPort := port
-		port++
-		t0 := time.Now()
-		trialCtx, trialCancel := context.WithTimeout(sctx, per)
-		trialCfg := Config{
-			Context:       trialCtx,
-			BinaryPath:    cfg.BinaryPath,
-			ListenIP:      "127.0.0.1",
-			ListenPort:    trialPort,
-			Strategy:      strat,
-			AssignJob:     cfg.AssignJob,
-			Resolve:       cfg.Resolve,
-			ProbeHost:     "", // probe explicitly below
-			ProbeTimeout:  per,
-			ConnIP:        cfg.ConnIP,
-			BindInterface: cfg.BindInterface,
-		}
-		sess, err := startFn(trialCfg)
-		if err != nil {
-			trialCancel()
-			out.Tried = append(out.Tried, Tried{
-				StrategyID: strat.ID,
-				Class:      FailTimeout,
-				Detail:     "start: " + err.Error(),
-				Took:       time.Since(t0).Round(time.Millisecond).String(),
-			})
-			slog.Debug("desync scan: start failed", "strategy", strat.ID, "err", err)
-			continue
-		}
-
-		checks := make([]FailSignal, 0, len(hosts))
-		class := FailOK
-		detail := ""
-		for _, host := range hosts {
-			if trialCtx.Err() != nil {
-				class = FailTimeout
-				break
+		candidates = append(candidates, candidate{len(candidates), strat})
+	}
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	concurrency = min(concurrency, 4, len(candidates))
+	type completed struct {
+		candidate
+		tried Tried
+		ok    bool
+	}
+	jobs := make(chan candidate)
+	results := make(chan completed, len(candidates))
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Go(func() {
+			for cand := range jobs {
+				if sctx.Err() != nil {
+					return
+				}
+				tried, ok := scanTrial(sctx, cfg, cand.strategy, cfg.BasePort+cand.index, hosts, startFn)
+				results <- completed{cand, tried, ok}
+				if ok {
+					cancel()
+					return
+				}
 			}
-			sig := sess.ProbeTLS(host)
-			checks = append(checks, sig)
-			if sig.Class != FailOK {
-				class, detail = sig.Class, sig.Detail
-				break
-			}
-		}
-		// A cancelled/expired trial cannot win even if an injected probe
-		// ignores its context and returns success late.
-		if trialCtx.Err() != nil {
-			class = FailTimeout
-		}
-		_ = sess.Close()
-		trialCancel()
-		took := time.Since(t0).Round(time.Millisecond).String()
-		out.Tried = append(out.Tried, Tried{
-			StrategyID: strat.ID,
-			Class:      class,
-			Detail:     detail,
-			Took:       took,
-			Checks:     checks,
 		})
-		slog.Info("desync scan: candidate",
-			"strategy", strat.ID,
-			"class", class,
-			"took", took,
-		)
-		if class == FailOK {
-			out.OK = true
-			out.Strategy = strat
-			out.Took = time.Since(started).Round(time.Millisecond).String()
-			out.Reason = "ok"
-			return out
+	}
+	go func() {
+		defer close(jobs)
+		for _, cand := range candidates {
+			select {
+			case <-sctx.Done():
+				return
+			case jobs <- cand:
+			}
+		}
+	}()
+	go func() { workers.Wait(); close(results) }()
+	var finished []completed
+	for result := range results {
+		finished = append(finished, result)
+		if result.ok && !out.OK {
+			out.OK, out.Strategy = true, result.strategy
 		}
 	}
-
-	out.Reason = "exhausted"
-	if len(out.Tried) == 0 {
-		out.Reason = "no_candidates"
+	// Return only after every owned trial is reaped, including losing workers.
+	sort.Slice(finished, func(i, j int) bool { return finished[i].index < finished[j].index })
+	for _, result := range finished {
+		out.Tried = append(out.Tried, result.tried)
 	}
 	out.Took = time.Since(started).Round(time.Millisecond).String()
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		out.OK, out.Strategy, out.Reason = false, Strategy{}, "timeout"
+	case ctx.Err() != nil:
+		out.OK, out.Strategy, out.Reason = false, Strategy{}, "canceled"
+	case out.OK:
+		out.Reason = "ok"
+	case len(candidates) == 0:
+		out.Reason = "no_candidates"
+	case sctx.Err() != nil:
+		out.Reason = "timeout"
+	default:
+		out.Reason = "exhausted"
+	}
 	return out
+}
+
+func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, hosts []string, startFn StartFunc) (Tried, bool) {
+	t0 := time.Now()
+	trialCtx, trialCancel := context.WithTimeout(ctx, cfg.PerStrategy)
+	defer trialCancel()
+	trialCfg := Config{
+		Context:       trialCtx,
+		BinaryPath:    cfg.BinaryPath,
+		ListenIP:      "127.0.0.1",
+		ListenPort:    port,
+		Strategy:      strat,
+		AssignJob:     cfg.AssignJob,
+		Resolve:       cfg.Resolve,
+		ProbeHost:     "", // probe explicitly below
+		ProbeTimeout:  cfg.PerStrategy,
+		ConnIP:        cfg.ConnIP,
+		BindInterface: cfg.BindInterface,
+	}
+	sess, err := startFn(trialCfg)
+	if sess != nil {
+		defer sess.Close()
+	}
+	if err != nil {
+		reason := "startup_failed"
+		if trialCtx.Err() == context.Canceled {
+			reason = "canceled"
+		}
+		return Tried{
+			StrategyID: strat.ID,
+			Class:      FailTimeout,
+			Detail:     "start: " + err.Error(),
+			Took:       time.Since(t0).Round(time.Millisecond).String(),
+			Reason:     reason,
+		}, false
+	}
+	if sess == nil {
+		return Tried{StrategyID: strat.ID, Class: FailTimeout, Detail: "start: no session"}, false
+	}
+	// A slow target cannot spend the other targets' verification budget.
+	// At most four probes run per helper, each using the same trial deadline.
+	checks := make([]FailSignal, len(hosts))
+	var probes sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for i, host := range hosts {
+		probes.Go(func() {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-trialCtx.Done():
+				checks[i] = FailSignal{Target: host, Class: FailTimeout}
+				return
+			}
+			checks[i] = sess.ProbeTLS(host)
+		})
+	}
+	probes.Wait()
+	class := FailOK
+	detail := ""
+	for _, sig := range checks {
+		if sig.Class != FailOK {
+			class, detail = sig.Class, sig.Detail
+			break
+		}
+	}
+	// A cancelled/expired trial cannot win even if an injected probe
+	// ignores its context and returns success late.
+	if trialCtx.Err() != nil {
+		class = FailTimeout
+	}
+	took := time.Since(t0).Round(time.Millisecond).String()
+	tried := Tried{
+		StrategyID: strat.ID,
+		Class:      class,
+		Detail:     detail,
+		Took:       took,
+		Checks:     checks,
+	}
+	if trialCtx.Err() == context.Canceled {
+		tried.Reason = "canceled"
+	}
+	if trialCtx.Err() == context.DeadlineExceeded {
+		tried.Reason = "timeout"
+	}
+	slog.Info("desync scan: candidate",
+		"strategy", strat.ID,
+		"class", class,
+		"took", took,
+	)
+	return tried, class == FailOK
 }
 
 // ScanEnvTimeout allows OFFVEIL_DESYNC_SCAN_TIMEOUT (e.g. "25s") for diagnostics.

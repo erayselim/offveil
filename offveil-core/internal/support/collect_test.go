@@ -24,6 +24,9 @@ func TestOfflineBundleWithoutService(t *testing.T) {
 	if in.System["collection_mode"] != "offline" || in.Cascade.State != "unavailable" {
 		t.Fatalf("%+v", in)
 	}
+	if in.System["protection_state"] != "unknown" {
+		t.Fatal("offline state was treated as measured off")
+	}
 	output := filepath.Join(t.TempDir(), "support.zip")
 	meta, err := Write(in, output)
 	if err != nil {
@@ -61,7 +64,7 @@ func TestOfflineBundleWithoutService(t *testing.T) {
 
 func TestLiveBundleAndExternalPathRejected(t *testing.T) {
 	t.Setenv("OFFVEIL_DIAG_DIR", t.TempDir())
-	meta, err := diag.WriteZip(diag.Input{Cascade: diag.CascadeInfo{State: "starting"}, Notes: []string{"startup_stage=tunnel"}})
+	meta, err := diag.WriteZip(diag.Input{Cascade: diag.CascadeInfo{State: "active", Protection: true}, System: map[string]any{"protection_state": "off"}, Notes: []string{"Protection is currently off; retained active snapshot."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +73,7 @@ func TestLiveBundleAndExternalPathRejected(t *testing.T) {
 		return raw, err
 	}
 	in := Collect(context.Background(), rpc)
-	if in.Cascade.State != "starting" || in.System["collection_mode"] != "live" {
+	if in.Cascade.State != "active" || in.System["collection_mode"] != "live" || in.System["protection_state"] != "off" {
 		t.Fatalf("%+v", in)
 	}
 	meta.Path = filepath.Join(t.TempDir(), "unrelated.txt")

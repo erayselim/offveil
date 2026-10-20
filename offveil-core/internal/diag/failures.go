@@ -10,18 +10,25 @@ import (
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/proc"
+	"github.com/erayselim/offveil/offveil-core/internal/version"
 )
 
-const maxFailures = 16
+const maxFailures = 64
 
 var failuresMu sync.Mutex
 
 type Failure struct {
-	At        string         `json:"at"`
-	Component string         `json:"component"`
-	Event     string         `json:"event"`
-	Attempt   int            `json:"attempt,omitempty"`
-	Exit      *proc.ExitInfo `json:"exit,omitempty"`
+	At         string         `json:"at"`
+	Component  string         `json:"component"`
+	Event      string         `json:"event"`
+	Attempt    int            `json:"attempt,omitempty"`
+	Target     string         `json:"target,omitempty"`
+	Provider   string         `json:"provider,omitempty"`
+	Strategy   string         `json:"strategy,omitempty"`
+	Reason     string         `json:"reason,omitempty"`
+	Version    string         `json:"version,omitempty"`
+	Generation uint64         `json:"generation,omitempty"`
+	Exit       *proc.ExitInfo `json:"exit,omitempty"`
 }
 
 func ReadFailures() []Failure {
@@ -54,6 +61,9 @@ func readFailures() []Failure {
 func RecordFailure(failure Failure) error {
 	failuresMu.Lock()
 	defer failuresMu.Unlock()
+	if failure.Version == "" {
+		failure.Version = version.Version
+	}
 	if failure.At == "" {
 		failure.At = time.Now().UTC().Format(time.RFC3339)
 	}

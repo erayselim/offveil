@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/erayselim/offveil/offveil-core/internal/cleanup"
 	"github.com/erayselim/offveil/offveil-core/internal/crashlog"
+	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/engine"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 )
@@ -31,8 +33,12 @@ type Program struct {
 	server *ipc.Server
 	api    *API
 
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	stopOnce    sync.Once
+	serveIPC    func(context.Context) error
+	ipcReady    <-chan struct{}
+	exitProcess func(int)
 
 	// stopSCM asks the service manager to stop this process (no UAC / no sudo:
 	// LocalSystem SCM stop, or root launchd unload).
@@ -50,6 +56,7 @@ func NewProgram() *Program {
 		server: ipc.NewServer(api),
 	}
 	api.Shutdown = p.requestShutdown
+	p.serveIPC, p.ipcReady, p.exitProcess = p.server.ListenAndServe, p.server.Ready(), os.Exit
 	return p
 }
 
@@ -81,30 +88,61 @@ func (p *Program) Start(s service.Service) error {
 	}
 
 	p.wg.Add(1)
+	exited, accepted := make(chan error, 1), make(chan struct{})
 	go func() {
 		defer p.wg.Done()
 		defer crashlog.Guard()
-		if err := p.server.ListenAndServe(ctx); err != nil {
-			slog.Error("ipc server exited", "err", err)
+		err := p.serveIPC(ctx)
+		exited <- err
+		select {
+		case <-accepted:
+			if ctx.Err() == nil {
+				slog.Error("ipc server exited unexpectedly", "err", err)
+				// Teardown must run outside the listener goroutine: Stop joins it.
+				go func() {
+					_ = diag.RecordFailure(diag.Failure{Component: "core", Event: "ipc_unavailable", Reason: "listener_exit"})
+					_ = p.Stop(s)
+					p.exitProcess(1) // SCM can now apply its configured failure recovery.
+				}()
+			}
+		case <-ctx.Done():
 		}
 	}()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-p.ipcReady:
+		close(accepted)
+	case err := <-exited:
+		cancel()
+		p.wg.Wait()
+		_ = diag.RecordFailure(diag.Failure{Component: "core", Event: "ipc_unavailable", Reason: "listen_failed"})
+		return fmt.Errorf("IPC listener did not start: %v", err)
+	case <-timer.C:
+		cancel()
+		_ = p.server.Close()
+		p.wg.Wait()
+		return fmt.Errorf("IPC listener readiness timed out")
+	}
 	slog.Info("offveil-core started", "service", Name)
 	return nil
 }
 
 func (p *Program) Stop(s service.Service) error {
 	_ = s
-	slog.Info("offveil-core stopping")
-	if st := p.eng.Status(); st.Protection || st.State != engine.StateStopped {
-		_, _ = p.eng.Stop()
-	}
-	p.eng.CrashCleanup("service_stop") // docs/contracts.md §9 — leftover DNS must not blackhole
-	if p.cancel != nil {
-		p.cancel()
-	}
-	_ = p.server.Close()
-	p.wg.Wait()
-	slog.Info("offveil-core stopped")
+	p.stopOnce.Do(func() {
+		if p.cancel != nil {
+			p.cancel()
+		}
+		slog.Info("offveil-core stopping")
+		if st := p.eng.Status(); st.Protection || st.State != engine.StateStopped {
+			_, _ = p.eng.Stop()
+		}
+		p.eng.CrashCleanup("service_stop") // docs/contracts.md §9 — leftover DNS must not blackhole
+		_ = p.server.Close()
+		p.wg.Wait()
+		slog.Info("offveil-core stopped")
+	})
 	return nil
 }
 

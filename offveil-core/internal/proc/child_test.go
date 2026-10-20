@@ -1,12 +1,23 @@
 package proc
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestReadinessWaitHonorsOwningSessionCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	began := time.Now()
+	if err := WaitTCPContext(ctx, "127.0.0.1:1", time.Minute, nil); !errors.Is(err, context.Canceled) || time.Since(began) > time.Second {
+		t.Fatalf("canceled session kept waiting: %v", err)
+	}
+}
 
 func TestChildHelper(t *testing.T) {
 	switch os.Getenv("OFFVEIL_CHILD_TEST") {
@@ -68,6 +79,21 @@ func TestStderrClassOmitsLogContents(t *testing.T) {
 	} {
 		if got := stderrClass(tc.stderr); got != tc.want {
 			t.Errorf("class=%q want %q", got, tc.want)
+		}
+	}
+}
+
+func TestTransientAdapterReasonsAreSpecificAndRedacted(t *testing.T) {
+	for _, tc := range []struct{ stderr, want string }{
+		{"FATAL configure tun interface: Cannot create a file when that file already exists. token=secret", "adapter_exists"},
+		{"FATAL configure tun interface: Zaten var olan bir dosya oluşturulamaz.", "adapter_exists"},
+		{"create adapter: The device is being removed", "adapter_removing"},
+		{"configure tun interface: The requested resource is in use", "adapter_busy"},
+		{"configure tun interface: Access is denied", "access_denied"},
+		{"dial tcp: The requested resource is in use token=secret", ""},
+	} {
+		if got := stderrReason(tc.stderr); got != tc.want {
+			t.Errorf("reason=%q want %q", got, tc.want)
 		}
 	}
 }

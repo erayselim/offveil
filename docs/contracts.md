@@ -396,8 +396,10 @@ Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
 Additive diagnostics fields (contracts version stays 1):
 
 - `sidecars.desync_scan`: bounded candidate attempts, per-host TLS checks and
-  the result of real-helper/dataplane verification. Only one search runs per
-  accepted protection session, after a protected provider path fails.
+  the result of real-helper/dataplane verification. One search runs at a time
+  per session. A newly confirmed secondary-endpoint failure can start another
+  discovery episode after an earlier path recovered. Canceled losing trials
+  have an explicit reason, separate from a measured network timeout.
 - `sidecars.tunnel_fallback`: the failed provider snapshot retained when a
   local desync dataplane replaces it. `failures` contains provider/class,
   allowlisted reason codes (such as `http_403`) and available exit facts;
@@ -411,6 +413,16 @@ Additive diagnostics fields (contracts version stays 1):
   generated capture stack and physical direct-traffic binding. Windows uses
   `mixed` (system TCP, gVisor UDP); macOS uses `gvisor`. These fields describe
   configuration, not a successful end-to-end UDP/game test.
+- `sidecars.tunnel.dns_mode`: `core_stub` when Windows delegates to the local
+  core resolver, otherwise `standalone_doh`. `startup_attempts` counts bounded
+  process starts, including retries for known transient TUN errors.
+- `failures`: up to 64 persistent events, with additive `target`, `provider`,
+  `strategy`, `reason`, `version` and per-process `generation` fields. Exit
+  `reason` is an allowlisted adapter condition, never a raw stderr excerpt.
+- `system.protection_state`: `on`, `off` or `unknown`. In offline collection,
+  the legacy boolean `cascade.protection` is not a measured current state.
+  Windows adds query-only `windows_service` state/PID/exit facts,
+  `offveil_adapter` presence/MTU and `wintun.dll` installation file facts.
 
 ## 8. Versioning
 

@@ -214,6 +214,7 @@ func (e *Engine) diagnosticsInputLocked() diag.Input {
 	}
 	if e.lastSupport != nil {
 		in := *e.lastSupport
+		in.System = map[string]any{"protection_state": protectionState(e.protection)}
 		in.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		if !e.protection {
 			in.Notes = append(append([]string{}, in.Notes...),
@@ -266,6 +267,7 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 			Health:       st.Health,
 		},
 		Sidecars: map[string]any{},
+		System:   map[string]any{"protection_state": protectionState(e.protection)},
 	}
 	for _, t := range st.Targets {
 		in.Cascade.Targets = append(in.Cascade.Targets, diag.TargetRow{
@@ -316,6 +318,13 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 		}
 	}
 	return in
+}
+
+func protectionState(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 func probeToDiag(rep *probe.Report) *diag.ProbeInfo {

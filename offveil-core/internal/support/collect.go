@@ -31,6 +31,7 @@ func Collect(ctx context.Context, rpc RPC) diag.Input {
 	system["os"] = runtime.GOOS
 	system["architecture"] = runtime.GOARCH
 	system["collection_mode"] = "offline"
+	system["protection_state"] = "unknown"
 	platformFacts(ctx, system)
 	if rpc != nil {
 		rpcCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
@@ -45,6 +46,11 @@ func Collect(ctx context.Context, rpc RPC) diag.Input {
 					in = live
 					system["collection_mode"] = "live"
 					system["daemon_version"] = meta.Version
+					// Cascade may be a retained active snapshot after Stop. Only
+					// an explicit current-state fact is authoritative.
+					if state, ok := live.System["protection_state"].(string); ok && (state == "on" || state == "off") {
+						system["protection_state"] = state
+					}
 				}
 			}
 		}
@@ -111,9 +117,13 @@ func installationFacts() map[string]any {
 			installedDir = filepath.Join(pf, "offveil")
 		}
 	}
-	for _, name := range []string{"offveil-core", "ciadpi", "sing-box"} {
+	names := []string{"offveil-core", "ciadpi", "sing-box"}
+	if runtime.GOOS == "windows" {
+		names = append(names, "wintun.dll")
+	}
+	for _, name := range names {
 		binary := name
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == "windows" && name != "wintun.dll" {
 			binary += ".exe"
 		}
 		bundled := filepath.Join(filepath.Dir(exe), binary)

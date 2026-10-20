@@ -19,17 +19,22 @@ type Handler interface {
 type Server struct {
 	handler Handler
 
-	mu       sync.Mutex
-	listener net.Listener
-	conns    map[net.Conn]struct{}
-	wg       sync.WaitGroup
-	closed   bool
-	closeErr error
+	mu        sync.Mutex
+	listener  net.Listener
+	conns     map[net.Conn]struct{}
+	wg        sync.WaitGroup
+	closed    bool
+	closeErr  error
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 func NewServer(h Handler) *Server {
-	return &Server{handler: h}
+	return &Server{handler: h, ready: make(chan struct{})}
 }
+
+// Ready closes only after a listener is bound and owned by the server.
+func (s *Server) Ready() <-chan struct{} { return s.ready }
 
 // Endpoint is the local IPC address (named pipe on Windows, unix socket on Darwin).
 func Endpoint() string { return endpoint() }
@@ -69,11 +74,17 @@ func (s *Server) Close() error {
 
 func (s *Server) serveListener(ctx context.Context, ln net.Listener) error {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = ln.Close()
+		return net.ErrClosed
+	}
 	s.listener = ln
 	if s.conns == nil {
 		s.conns = make(map[net.Conn]struct{})
 	}
 	s.mu.Unlock()
+	s.readyOnce.Do(func() { close(s.ready) })
 
 	go func() {
 		<-ctx.Done()

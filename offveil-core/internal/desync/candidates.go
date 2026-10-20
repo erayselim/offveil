@@ -64,6 +64,26 @@ func ScanCandidates() []Strategy {
 			},
 			Note: "TLS record split in SNI only",
 		},
+		{
+			ID:   "byedpi:split-sni-mid",
+			Args: []string{"--no-domain", "--timeout", "3", "--split", "1", "--split", "0+sm"},
+			Note: "TCP header and middle-of-SNI splits without TTL-dependent tricks",
+		},
+		{
+			ID:   "byedpi:tlsrec-sni-mid",
+			Args: []string{"--no-domain", "--timeout", "3", "--tlsrec", "0+sm"},
+			Note: "TLS record boundary inside SNI, independent of TCP segmentation",
+		},
+		{
+			ID:   "byedpi:split-tlsrec",
+			Args: []string{"--no-domain", "--timeout", "3", "--split", "1", "--split", "1+s", "--tlsrec", "1+s"},
+			Note: "Combine TCP and TLS record splits for different DPI reassembly paths",
+		},
+		{
+			ID:   "byedpi:split-disorder-tlsrec",
+			Args: []string{"--no-domain", "--timeout", "3", "--split", "1+s", "--disorder", "3+s", "--tlsrec", "1+s"},
+			Note: "Windows split/disorder plus a separate TLS record boundary",
+		},
 	}
 }
 

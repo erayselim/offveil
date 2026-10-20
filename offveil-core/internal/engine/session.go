@@ -11,6 +11,8 @@ func (e *Engine) beginSessionLocked() {
 func (e *Engine) cancelSessionLocked() {
 	e.sessionGeneration++
 	e.strategySwitching = false
+	e.extraProbeHosts = nil
+	e.endpointTunnelTried = false
 	if e.sessionCancel != nil {
 		e.sessionCancel()
 		e.sessionCancel = nil

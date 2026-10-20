@@ -88,7 +88,7 @@ func Start(cfg Config) (Session, error) {
 	s.lastProbe.Store(FailClass(""))
 	s.lastProbeAt.Store("")
 
-	if err := proc.WaitTCP(s.socks, 5*time.Second, s.child); err != nil {
+	if err := proc.WaitTCPContext(ctx, s.socks, 5*time.Second, s.child); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("desync: socks not ready: %w; stderr: %s", err, stderr.String())
 	}
