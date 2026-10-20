@@ -1,7 +1,7 @@
 {
   "version": "1.0.4-beta.3",
   "notes": {
-    "tr": "BETA 3 — test sürümü\n\nBağlantı sorunlarında alternatif yöntemlerin arka planda denenmesi ve Discord’un ek bağlantılarının kontrolü iyileştirildi. Yeni yöntem, korunan bağlantılar doğrulandıktan sonra kullanılıyor.\n\nCore servisi bağlantısı ve destek raporları iyileştirildi. Farklı ağ ve cihazlarda testler sürüyor; sorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
-    "en": "BETA 3 — test release\n\nImproved background fallback discovery and checks for Discord’s related connections. A replacement method is used after the protected connections pass verification.\n\nImproved core service connectivity and support reports. Testing continues across networks and devices; share a report from Settings → Save support file if something goes wrong."
+    "tr": "BETA 3 — test sürümü\n\nBağlantı sorunlarında alternatif yöntemlerin arka planda denenmesi ve Discord’un ek bağlantılarının kontrolü iyileştirildi. Yeni yöntem, korunan bağlantılar doğrulandıktan sonra kullanılıyor.\n\nCore servisi bağlantısı ve destek raporları iyileştirildi. Farklı ağ ve cihazlarda testler sürüyor; sorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.\n\nTLS sertifika doğrulama bileşenleri güvenlik yamalarıyla güncellendi.",
+    "en": "BETA 3 — test release\n\nImproved background fallback discovery and checks for Discord’s related connections. A replacement method is used after the protected connections pass verification.\n\nImproved core service connectivity and support reports. Testing continues across networks and devices; share a report from Settings → Save support file if something goes wrong.\n\nUpdated TLS certificate verification components with security fixes."
   }
 }

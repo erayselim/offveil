@@ -5,8 +5,11 @@
 - More DPI bypass methods are tried in the background. Replacements must pass protected-connection checks before use; unsuccessful changes restore the previous method.
 - Discord updater, Gateway and download endpoints receive additional TLS checks. Windows DNS, adapter startup and core service recovery are improved.
 - Support reports retain more useful failure information when the service is unavailable. Existing UDP fixes remain included.
+- Updated certificate verification and root certificates for [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html) and [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383.html).
 
 DPI aşma ve otomatik kurtarma güçlendirildi. Discord’un güncelleme ve diğer bağlantıları için ek kontroller eklendi; Windows DNS, ağ arayüzü ve servis toparlanması iyileştirildi. Destek raporları servis kapandığında da daha fazla hata bilgisini koruyor.
+
+TLS sertifika doğrulama ve kök sertifika bağımlılıkları güncel güvenlik yamalarıyla yenilendi.
 
 Testing continues across networks and devices. This beta does not claim to resolve every ISP or Discord issue. / Farklı ağ ve cihazlarda testler sürüyor; tüm ISS veya Discord sorunlarının çözüldüğü henüz doğrulanmadı.
 
