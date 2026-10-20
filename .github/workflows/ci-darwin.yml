@@ -35,7 +35,7 @@ jobs:
         working-directory: offveil-core
         env:
           CGO_ENABLED: "1"
-        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel
+        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel ./internal/support ./internal/appservice
       - name: Build darwin/arm64
         working-directory: offveil-core
         env:
@@ -56,7 +56,7 @@ jobs:
         run: python3 scripts/byedpi-darwin-resource-test.py offveil-core/dist/ciadpi
       - name: Validate generated sing-box routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
       - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
         working-directory: offveil-core
         run: |

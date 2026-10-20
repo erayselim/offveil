@@ -27,7 +27,7 @@ jobs:
         run: go test ./...
       - name: Race check engine and network lifecycle
         working-directory: offveil-core
-        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel
+        run: go test -race ./internal/engine ./internal/dns ./internal/capture ./internal/proc ./internal/power ./internal/ipc ./internal/desync ./internal/tunnel ./internal/support ./internal/appservice
       - name: Packet-level UDP reassembly regression
         shell: pwsh
         run: ./scripts/test-tun-udp.ps1
@@ -40,7 +40,16 @@ jobs:
         shell: pwsh
         run: |
           $env:OFFVEIL_SINGBOX_TEST = (Resolve-Path ./third_party/sing-box/sing-box.exe).Path
-          go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip)$'
+          go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
+      - name: Validate Windows DPI strategies against pinned ByeDPI
+        working-directory: offveil-core
+        shell: pwsh
+        run: |
+          ./scripts/fetch-byedpi.ps1
+          go run ./cmd/offveil-core check-payload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:OFFVEIL_BYEDPI_TEST = (Resolve-Path ./third_party/byedpi/ciadpi.exe).Path
+          go test ./internal/desync -run '^TestNativeNewStrategiesPreserveVerifiedTLS$'
 
   ui:
     runs-on: windows-latest

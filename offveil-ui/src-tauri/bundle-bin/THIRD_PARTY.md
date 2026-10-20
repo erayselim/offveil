@@ -63,7 +63,9 @@ Bundled in the UI as a self-hosted variable font (`@fontsource-variable/instrume
 | License | SIL OFL 1.1 |
 | Notice | Copyright 2022 The Instrument Sans Project Authors |
 
-The OFL text ships with the npm package. The font is not sold by itself.
+The OFL text is included in the app as `licenses/instrument-sans-LICENSE.txt`
+and in source under `offveil-ui/src-tauri/bundle-bin/`. The font is not sold
+by itself.
 
 ## Other (not redistributed as sidecar binaries)
 

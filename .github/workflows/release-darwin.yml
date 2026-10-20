@@ -7,6 +7,11 @@ on:
       - "v*-mac*"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      shared_release:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -86,7 +91,7 @@ jobs:
 
       - name: Verify native UDP routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
 
       - name: Sign ruleset
         env:
@@ -184,7 +189,7 @@ jobs:
             dist-release/SHA256SUMS.txt
 
       - name: Upload workflow artifacts
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.shared_release
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offveil-darwin-arm64
@@ -213,7 +218,7 @@ jobs:
             dist-release/latest-mac.json
 
       - name: Upload Mac artifacts for the shared release
-        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-mac')
+        if: inputs.shared_release || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-mac'))
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-macos

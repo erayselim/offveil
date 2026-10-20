@@ -52,6 +52,7 @@
     "resources": {
       "bundle-bin/LICENSE": "LICENSE",
       "bundle-bin/THIRD_PARTY.md": "THIRD_PARTY.md",
+      "bundle-bin/instrument-sans-LICENSE.txt": "licenses/instrument-sans-LICENSE.txt",
       "bundle-bin/byedpi-LICENSE.txt": "licenses/byedpi-LICENSE.txt",
       "bundle-bin/sing-box-LICENSE.txt": "licenses/sing-box-LICENSE.txt",
       "bundle-bin/sing-box-COPYING.txt": "licenses/sing-box-COPYING.txt"

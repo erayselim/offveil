@@ -5,6 +5,18 @@ workflow builds and tests both platforms before assembling a draft. It verifies
 the updater signatures, ruleset signature and version agreement, then publishes
 the complete release. One checksum file covers both platforms.
 
+Before tagging, dispatch `release.yml` from the intended branch. This builds
+the signed Windows/Mac packages and verifies the combined release metadata
+without publishing a GitHub release or changing update pointers. Verified
+packages remain in the `verified-release-preflight` workflow artifact. Only
+a tag push enables publication steps.
+
+The Windows job verifies the updater signatures before executing installers
+on its disposable runner. It checks a clean install, payload/license files,
+demand-start service and versioned IPC, then upgrades from the prior beta and
+checks again. It does not enable protection or modify a developer's machine.
+macOS runs the existing bundle and installation smoke tests.
+
 Update the version in package.json/package-lock.json, Cargo.toml/Cargo.lock,
 tauri.conf.json, the core version and both localized whats-new files. Run
 `node scripts/release.cjs check vVERSION` before tagging. The short release body
@@ -31,7 +43,7 @@ downloaded package signatures, ruleset signature and all published checksums.
 It does not simulate interactive installation or physical-device networking.
 
 The same bridge is used for beta releases. The published verification also
-checks the current stable client and Beta 1 on both supported platforms.
+checks the current stable client and Beta 1/Beta 2 on both supported platforms.
 Windows uses signed NSIS executables; Mac uses signed tar update archives.
 The updater's unused Windows ZIP feature is disabled, removing its ZIP
 extraction dependency while preserving these two update formats.

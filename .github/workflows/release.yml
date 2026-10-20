@@ -1,6 +1,7 @@
 name: release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -42,9 +43,11 @@ jobs:
           cache-dependency-path: offveil-ui/package-lock.json
 
       - name: Check release versions
-        env:
-          TAG: ${{ github.ref_name }}
-        run: node scripts/release.cjs check $env:TAG
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'v' + (Get-Content offveil-ui/package.json -Raw | ConvertFrom-Json).version }
+          node scripts/release.cjs check $tag
+          if ($LASTEXITCODE -ne 0) { throw 'Release version check failed' }
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
@@ -63,12 +66,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $env:OFFVEIL_SINGBOX_TEST = (Resolve-Path ./third_party/sing-box/sing-box.exe).Path
+          $env:OFFVEIL_BYEDPI_TEST = (Resolve-Path ./third_party/byedpi/ciadpi.exe).Path
           go test ./...
           if ($LASTEXITCODE -ne 0) { throw "Core tests failed" }
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw "Core vet failed" }
           go build -trimpath -ldflags="-s -w" -o offveil-core.exe ./cmd/offveil-core
           if ($LASTEXITCODE -ne 0) { throw "Core build failed" }
+          ./offveil-core.exe check-payload
+          if ($LASTEXITCODE -ne 0) { throw 'Native DPI argument check failed' }
 
       - name: Verify packet-level UDP reassembly
         run: ./scripts/test-tun-udp.ps1
@@ -104,7 +110,7 @@ jobs:
       - name: Checksums and latest.json
         id: artifacts
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           $nsis = Get-ChildItem -Recurse "offveil-ui/src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
           if (-not $nsis) { throw "NSIS installer not found" }
@@ -125,6 +131,13 @@ jobs:
           Get-Content "$out/SHA256SUMS.txt"
           "installer=$($nsis.Name)" >> $env:GITHUB_OUTPUT
           "dir=$out" >> $env:GITHUB_OUTPUT
+
+      - name: Verify clean install and prior-beta upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = Get-ChildItem dist-release -Filter '*-setup.exe' | Select-Object -First 1
+          ./scripts/windows-installer-smoke.ps1 -Installer $installer.FullName -ExpectedVersion ($env:RELEASE_TAG.TrimStart('v'))
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -147,6 +160,8 @@ jobs:
   macos:
     if: ${{ !contains(github.ref_name, '-mac') }}
     uses: ./.github/workflows/release-darwin.yml
+    with:
+      shared_release: true
     secrets: inherit
 
   publish:
@@ -162,6 +177,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
+      - name: Resolve release tag
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then TAG="$GITHUB_REF_NAME"; else TAG="v$(node -p "require('./offveil-ui/package.json').version")"; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
@@ -170,7 +189,7 @@ jobs:
       - name: Verify and assemble the shared release
         run: node scripts/release.cjs prepare "$TAG" "$GITHUB_REPOSITORY" dist-release "$RUNNER_TEMP/release-body.md"
       - name: Save the legacy Windows update pointer
-        if: contains(github.ref_name, '-')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
         run: |
           set -euo pipefail
           LEGACY_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
@@ -180,17 +199,19 @@ jobs:
           cp "$RUNNER_TEMP/legacy-original/"* "$RUNNER_TEMP/legacy-update/"
           node scripts/release.cjs bridge "$RUNNER_TEMP/legacy-update" dist-release
       - name: Keep a rollback copy of the legacy metadata
-        if: contains(github.ref_name, '-')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: legacy-update-backup
           path: ${{ runner.temp }}/legacy-original/
           retention-days: 30
       - name: Attest shared checksums
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist-release/SHA256SUMS.txt
       - name: Stage complete release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -202,6 +223,7 @@ jobs:
           fi
           gh release upload "$TAG" dist-release/* --clobber
       - name: Publish the shared release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
           if [[ "$TAG" == *-* ]]; then
@@ -211,4 +233,12 @@ jobs:
             gh release edit "$TAG" --draft=false --prerelease=false --latest --notes-file "$RUNNER_TEMP/release-body.md"
           fi
       - name: Verify published updates from supported prior versions
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: node scripts/release.cjs verify-published "$TAG" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/published-release"
+      - name: Upload verified preflight packages
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-release-preflight
+          path: dist-release/
+          if-no-files-found: error

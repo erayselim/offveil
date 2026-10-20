@@ -168,7 +168,7 @@ async function verifyPublished(tag, repo, dir) {
   const releases = JSON.parse(await fetchBytes(`https://api.github.com/repos/${repo}/releases?per_page=100`)).filter((r) => {
     try { releaseVersion(r.tag_name); return true; } catch { return false; }
   });
-  const sharedPriorVersions = ["v1.0.3", "v1.0.4-beta.1"];
+  const sharedPriorVersions = ["v1.0.3", "v1.0.4-beta.1", "v1.0.4-beta.2"];
   for (const prior of ["v1.0.0-b4", "v1.0.0-b5", "v1.0.0-mac.3", "v1.0.0-mac.4", "v1.0.0", ...sharedPriorVersions]) {
     const old = JSON.parse(execFileSync("git", ["show", `${prior}:offveil-ui/src-tauri/tauri.conf.json`], { cwd: ROOT, encoding: "utf8" }));
     if (old.plugins.updater.pubkey !== currentKey || compareVersions(version, prior) <= 0) throw new Error(`Incompatible prior client ${prior}`);
@@ -192,9 +192,14 @@ async function verifyPublished(tag, repo, dir) {
 if (require.main === module) {
   const [mode, ...args] = process.argv.slice(2);
   if (mode === "check") console.log(checkVersions(args[0]));
+  else if (mode === "verify-updater") {
+    const pubkey = readJSON(path.join(ROOT, "offveil-ui/src-tauri/tauri.conf.json")).plugins.updater.pubkey;
+    verifyUpdaterSignature(fs.readFileSync(args[0]), fs.readFileSync(args[1], "utf8"), pubkey);
+    console.log(`Verified updater signature: ${path.basename(args[0])}`);
+  }
   else if (mode === "prepare") console.log(prepare(args[2], args[0], args[1], args[3]).join("\n"));
   else if (mode === "bridge") bridge(args[0], args[1]);
   else if (mode === "verify-published") verifyPublished(args[0], args[1], args[2]).catch((err) => { console.error(err.message); process.exitCode = 1; });
-  else throw new Error("usage: release.cjs check <tag> | prepare <tag> <repo> <dir> <body> | bridge <old-dir> <release-dir> | verify-published <tag> <repo> <dir>");
+  else throw new Error("usage: release.cjs check <tag> | verify-updater <payload> <signature> | prepare <tag> <repo> <dir> <body> | bridge <old-dir> <release-dir> | verify-published <tag> <repo> <dir>");
 }
 module.exports = { checkVersions, compareVersions, assetNames, verifyUpdaterSignature, prepare, bridge };
