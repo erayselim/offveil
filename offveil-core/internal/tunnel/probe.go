@@ -3,8 +3,10 @@ package tunnel
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"syscall"
@@ -15,6 +17,16 @@ import (
 
 // ProbeTLS connects to host:443 through the tunnel SOCKS and classifies the outcome.
 func (s *session) ProbeTLS(host string) FailSignal {
+	parent := s.cfg.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	sig := s.probeTLSContext(parent, host)
+	s.recordProbe(sig)
+	return sig
+}
+
+func (s *session) probeTLSContext(parent context.Context, host string) FailSignal {
 	at := time.Now().UTC()
 	sig := FailSignal{
 		Target:     host,
@@ -24,13 +36,11 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	if !s.isUp() {
 		sig.Class = FailDial
 		sig.Detail = "tunnel not up"
-		s.recordProbe(sig)
 		return sig
 	}
 	if host == "" {
-		sig.Class = FailTimeout
+		sig.Class = FailConfig
 		sig.Detail = "empty host"
-		s.recordProbe(sig)
 		return sig
 	}
 
@@ -38,7 +48,6 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	if timeout <= 0 {
 		timeout = 12 * time.Second
 	}
-	parent := s.cfg.Context
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -52,8 +61,7 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	if s.provider == ProviderDesync && s.cfg.Resolve != nil {
 		addr, err := s.cfg.Resolve(ctx, host)
 		if err != nil {
-			sig.Class, sig.Detail = FailTimeout, "resolve: "+err.Error()
-			s.recordProbe(sig)
+			sig.Class, sig.Detail = classifyDialErr(err), "resolve: "+err.Error()
 			return sig
 		}
 		dialHost = addr.String()
@@ -61,12 +69,10 @@ func (s *session) ProbeTLS(host string) FailSignal {
 	err := tlsViaSOCKS(ctx, s.socks, dialHost, host)
 	if err == nil {
 		sig.Class = FailOK
-		s.recordProbe(sig)
 		return sig
 	}
 	sig.Class = classifyDialErr(err)
 	sig.Detail = err.Error()
-	s.recordProbe(sig)
 	return sig
 }
 
@@ -116,18 +122,32 @@ func classifyDialErr(err error) FailClass {
 	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "timeout") || strings.Contains(msg, "i/o timeout") {
 		return FailTimeout
 	}
-	if strings.Contains(msg, "certificate") || strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:") {
-		return FailProbe
+	var certificate *tls.CertificateVerificationError
+	var authority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	if errors.As(err, &certificate) || errors.As(err, &authority) || errors.As(err, &hostname) || strings.Contains(msg, "certificate") || strings.Contains(msg, "x509:") {
+		return FailCertificate
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(msg, "unexpected eof") {
+		return FailEOF
 	}
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
 		case syscall.ECONNRESET:
-			return FailDial
+			return FailReset
+		case syscall.ECONNREFUSED:
+			return FailRefused
 		}
 	}
 	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "actively refused") {
-		return FailDial
+		return FailRefused
 	}
-	return FailTimeout
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "forcibly closed") {
+		return FailReset
+	}
+	if strings.Contains(msg, "tls:") {
+		return FailProbe
+	}
+	return FailDial
 }

@@ -5,7 +5,7 @@ credentials (`offveil-core/data/*.json`, `.secrets/`).
 
 ## Setup
 
-Go 1.26.9, Node 22, and a stable Rust toolchain. Then follow the Build
+Go 1.26.10, Node 22, and a stable Rust toolchain. Then follow the Build
 section in [README.md](README.md).
 
 ```powershell
@@ -29,5 +29,5 @@ Bump `contracts_version` on a breaking change.
 ## Issues
 
 - Bug: [.github/ISSUE_TEMPLATE/bug.yml](.github/ISSUE_TEMPLATE/bug.yml)
-- Beta (Discord within 2 minutes): [.github/ISSUE_TEMPLATE/beta.yml](.github/ISSUE_TEMPLATE/beta.yml)
+- Connection and beta feedback: [.github/ISSUE_TEMPLATE/beta.yml](.github/ISSUE_TEMPLATE/beta.yml)
 - Vulnerability: [SECURITY.md](SECURITY.md)

@@ -2,13 +2,12 @@ package tunnel
 
 import "github.com/erayselim/offveil/offveil-core/internal/ruleset"
 
-// DefaultTunnelDomains is the embedded selective allowlist (Discord).
-// Prefer ruleset snapshot from engine; this is the embedded fallback.
+// DefaultTunnelDomains reads explicit optional routes from the embedded policy.
 func DefaultTunnelDomains() []string {
 	return ruleset.MustLoadEmbedded().Doc.TunnelDomains()
 }
 
-// DefaultDirectDomains is the Steam / Riot / Epic / Faceit seed that must stay DIRECT.
+// DefaultDirectDomains reads explicit optional direct routes from the policy.
 func DefaultDirectDomains() []string {
 	return ruleset.MustLoadEmbedded().Doc.DirectDomains()
 }

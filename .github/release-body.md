@@ -1,20 +1,19 @@
 **Download / İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — Apple Silicon]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
 
-**BETA 3 — test release / test sürümü.**
+**BETA 4 — test release / test sürümü.**
 
-- More DPI bypass methods are tried in the background. Replacements must pass protected-connection checks before use; unsuccessful changes restore the previous method.
-- Discord updater, Gateway and download endpoints receive additional TLS checks. Windows DNS, adapter startup and core service recovery are improved.
-- Support reports retain more useful failure information when the service is unavailable. Existing UDP fixes remain included.
-- Updated certificate verification and root certificates for [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html) and [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383.html).
+- Protection now routes public TCP/UDP traffic through a verified general tunnel, with IPv4/IPv6 support and no built-in application list or process-name rules.
+- When no remote provider connects, the app shows **Limited Protection**: local IPv4 HTTP/TLS bypass remains available; other traffic stays direct.
+- A failed site no longer blocks checks for unrelated connections. Provider switching preserves the working path until a replacement is ready, with rollback on failure.
+- Support exports include general DNS/TCP/TLS/HTTP diagnostics and clearer provider/process failure facts. Old application-specific rules cannot return from cached updates.
+- Core and tunnel sidecar use the patched Go toolchain; the sidecar's locked dependencies are security updated. Its source archive and build recipe are public.
 
-DPI aşma ve otomatik kurtarma güçlendirildi. Discord’un güncelleme ve diğer bağlantıları için ek kontroller eklendi; Windows DNS, ağ arayüzü ve servis toparlanması iyileştirildi. Destek raporları servis kapandığında da daha fazla hata bilgisini koruyor.
+Koruma, uygulama listeleri yerine genel ağ trafiğini temel alacak şekilde yenilendi. Doğrulanmış tünel TCP/UDP bağlantılarını IPv4/IPv6 üzerinden taşır. Tünel kurulamazsa **Sınırlı Koruma** görünür; yerel IPv4 HTTP/TLS aşma devrede kalırken diğer trafik doğrudan gider. Tek bir sitenin hatası diğer bağlantıların denetimini durdurmaz; sağlayıcı geçişleri ve destek raporları iyileştirildi.
 
-TLS sertifika doğrulama ve kök sertifika bağımlılıkları güncel güvenlik yamalarıyla yenilendi.
+This is a broad networking change. Tunnel use may change latency; testing continues on restrictive ISPs and physical devices. / Bu geniş bir ağ mimarisi değişikliğidir. Tünel kullanımı gecikmeyi değiştirebilir; katı ISS hatlarında ve gerçek cihazlarda testler sürüyor.
 
-Testing continues across networks and devices. This beta does not claim to resolve every ISP or Discord issue. / Farklı ağ ve cihazlarda testler sürüyor; tüm ISS veya Discord sorunlarının çözüldüğü henüz doğrulanmadı.
-
-Existing users can use **Check for Updates / Güncellemeleri kontrol et**. Updating the Mac core may require administrator approval.
+Existing users can use **Check for Updates / Güncellemeleri kontrol et**. Updating the Mac core may require administrator approval. Windows and Apple Silicon Macs are supported; Intel Macs are not.
 
 Windows SmartScreen and macOS developer verification may show a warning. [Windows guidance](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac installation](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
 
-If something fails, share **Settings → Save support file / Ayarlar → Destek dosyası kaydet**. Verify downloads with `SHA256SUMS.txt`. Source, build workflows and third-party notices are available in this repository.
+If something fails, share **Settings → Save support file / Ayarlar → Destek dosyası kaydet**. Verify downloads with `SHA256SUMS.txt`. [Architecture and validation](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-architecture.md) · [Network diagnostics](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-diagnostics.md). Source, build workflows and third-party notices are public in this repository.

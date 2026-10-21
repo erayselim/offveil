@@ -11,6 +11,12 @@ without publishing a GitHub release or changing update pointers. Verified
 packages remain in the `verified-release-preflight` workflow artifact. Only
 a tag push enables publication steps.
 
+Both platforms build the pinned sing-box source with the patched Go toolchain
+and isolated dependency lock in `offveil-core/tools/singbox`. Its actual tagged
+source must pass govulncheck before packaging. The shared release includes the
+upstream source archive, covered by the same checksum file as the installers;
+the matching offveil tag includes the complete dependency lock and build recipe.
+
 The Windows job verifies the updater signatures before executing installers
 on its disposable runner. It checks a clean install, payload/license files,
 demand-start service and versioned IPC, then upgrades from the prior beta and
@@ -43,7 +49,7 @@ downloaded package signatures, ruleset signature and all published checksums.
 It does not simulate interactive installation or physical-device networking.
 
 The same bridge is used for beta releases. The published verification also
-checks the current stable client and Beta 1/Beta 2 on both supported platforms.
+checks the current stable client and Beta 1/Beta 2/Beta 3 on both supported platforms.
 Windows uses signed NSIS executables; Mac uses signed tar update archives.
 The updater's unused Windows ZIP feature is disabled, removing its ZIP
 extraction dependency while preserving these two update formats.

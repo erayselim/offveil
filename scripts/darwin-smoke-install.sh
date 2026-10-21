@@ -91,19 +91,24 @@ if ! "$INSTALLED" client -method start -timeout 120s > "$WORK/protection-start.j
   sudo tail -n 100 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
   exit 1
 fi
-assert_protection_active() {
+assert_protection_ready() {
 node - "$1" <<'NODE'
 const fs = require('node:fs');
 const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const s = reply.result;
-if (!reply.ok || !s?.protection || s.state !== 'active' ||
+const remote = s?.network?.mode === 'remote' && s.state === 'active' &&
+  s.network.coverage === 'public_tcp_udp_dual_stack' && s.network.udp_path === 'tunnel';
+const local = s?.network?.mode === 'local' && s.state === 'degraded' &&
+  s.network.coverage === 'tls_http_only' && s.network.udp_path === 'direct' &&
+  s.network.reason === 'remote_transport_unavailable' && !s.last_error;
+if (!reply.ok || !s?.protection || !(remote || local) || !s.network.healthy ||
     !s.tunnel?.up || !s.desync?.up || !s.dns?.stub_up) {
   throw new Error(`Real protection failed: ${JSON.stringify(reply)}`);
 }
-console.log('Real protection reports active with TUN, DNS and ByeDPI up.');
+console.log(`Real protection ready: ${s.network.mode}, ${s.network.coverage}; TUN, DNS and helper up.`);
 NODE
 }
-assert_protection_active "$WORK/protection-start.json"
+assert_protection_ready "$WORK/protection-start.json"
 /sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
 grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"
 /usr/bin/curl -4 --socks5 127.0.0.1:18080 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
@@ -123,7 +128,7 @@ for i in {1..30}; do
 const fs = require('node:fs');
 const before = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).result;
 const after = JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).result;
-if (after?.state !== 'active' || !after.desync?.up || after.desync.pid === before.desync.pid) process.exit(1);
+if (!after?.protection || !['active', 'degraded'].includes(after.state) || !after.desync?.up || after.desync.pid === before.desync.pid) process.exit(1);
 if (!after.tunnel?.up || after.tunnel.pid !== before.tunnel.pid) throw new Error('ByeDPI recovery replaced the healthy TUN');
 NODE
   then
@@ -183,7 +188,7 @@ echo "Managed stop and restart of an unresponsive daemon passed."
 # Repeat the UI's full daemon stop/start, with traffic after each restart.
 for cycle in 1 2; do
   "$INSTALLED" client -method start -timeout 120s > "$WORK/toggle-$cycle.json"
-  assert_protection_active "$WORK/toggle-$cycle.json"
+  assert_protection_ready "$WORK/toggle-$cycle.json"
   /sbin/route -n get 104.18.26.120 | grep -Eq 'interface: utun[0-9]+'
   /usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
   /usr/bin/sudo -n "$INSTALLED" stop

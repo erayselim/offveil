@@ -2,7 +2,7 @@ module github.com/erayselim/offveil/offveil-core/tests/tunudp
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/erayselim/offveil/offveil-core v0.0.0
@@ -30,6 +30,8 @@ require (
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
+	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
+	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 )
 
 replace github.com/erayselim/offveil/offveil-core => ../..

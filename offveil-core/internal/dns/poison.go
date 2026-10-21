@@ -6,7 +6,7 @@ import (
 
 // Known Turkish censorship / filtering DNS reply fingerprints (OONI).
 // Source: https://github.com/ooni/blocking-fingerprints fingerprints_dns.csv
-// Primary: 195.175.254.2 - national poison reply since ~2014 (Discord block 2024+).
+// Primary: 195.175.254.2 - observed national DNS blocking reply since ~2014.
 var defaultPoisonIPs = []string{
 	"195.175.254.2",  // ooni.tr_6 cl.dns_nat_tr_poison
 	"193.192.98.41",  // TurkNet family profile

@@ -7,17 +7,23 @@ import (
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/proc"
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 )
 
 // FailClass is reported when the selective tunnel path fails.
 type FailClass string
 
 const (
-	FailOK      FailClass = "ok"
-	FailTimeout FailClass = "timeout"
-	FailDial    FailClass = "dial"
-	FailAuth    FailClass = "auth" // register / handshake / config
-	FailProbe   FailClass = "probe"
+	FailOK          FailClass = "ok"
+	FailTimeout     FailClass = "timeout"
+	FailDial        FailClass = "dial"
+	FailAuth        FailClass = "auth" // register / handshake / config
+	FailProbe       FailClass = "probe"
+	FailEOF         FailClass = "eof"
+	FailReset       FailClass = "reset"
+	FailRefused     FailClass = "refused"
+	FailCertificate FailClass = "certificate"
+	FailConfig      FailClass = "config"
 )
 
 // FailSignal is reported to policy when tunnel path fails.
@@ -48,6 +54,18 @@ const (
 // Config controls the selective tunnel outbound.
 type Config struct {
 	Context context.Context
+	// NetworkMode routes public traffic by transport, without application identities.
+	NetworkMode   bool
+	NetworkRoutes []ruleset.RouteRule
+	// ControlHosts are independent TLS controls; at least two must pass.
+	ControlHosts  []string
+	ControlQuorum int
+	// ProviderListenPort is the private, TUN-free provider verification listener.
+	ProviderListenPort int
+	// providerOnly and upstreamSOCKS are internal parts of the single-gateway topology.
+	providerOnly   bool
+	upstreamSOCKS  string
+	startupContext context.Context
 	// BinaryPath is sing-box (sing-box.exe on Windows). Empty → Locate next to core.
 	BinaryPath string
 	// ListenIP defaults to 127.0.0.1.
@@ -68,15 +86,15 @@ type Config struct {
 	Sink Sink
 	// Resolve looks up host via DoH for probes / allowlist CIDRs.
 	Resolve func(ctx context.Context, host string) (netip.Addr, error)
-	// ProbeHost checked once after start (default discord.com). Empty skips.
+	// ProbeHost is a legacy explicit target check. NetworkMode uses ControlHosts instead.
 	ProbeHost string
 	// ProbeTimeout for TLS-via-SOCKS check.
 	ProbeTimeout time.Duration
-	// TunnelDomains are suffixes sent to WARP/Reality (empty on TUN = none; no Discord fallback).
+	// TunnelDomains are legacy explicit routing suffixes.
 	TunnelDomains []string
-	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
+	// SpecialDomains are legacy explicit UDP routing suffixes.
 	SpecialDomains []string
-	// DirectDomains override Steam/games DIRECT list (empty → DefaultDirectDomains).
+	// DirectDomains are legacy explicit direct routes.
 	DirectDomains    []string
 	ProtectedDomains []string
 	// SkipStart skips launching sing-box (unit tests / config-only).
@@ -89,7 +107,8 @@ type Config struct {
 	// Darwin omits it so sing-box selects utunN.
 	TUNInterface string
 	// TUNAddress is the TUN IPv4 prefix (default 10.87.0.1/30).
-	TUNAddress string
+	TUNAddress  string
+	TUNAddress6 string
 	// TUNMTU defaults to 1280.
 	TUNMTU int
 	// RouteCIDRs are TUN prefixes (never 0.0.0.0/0). Empty + EnableTUN → split-default.
@@ -112,7 +131,6 @@ func DefaultConfig() Config {
 	return Config{
 		ListenIP:      "127.0.0.1",
 		ListenPort:    18081,
-		ProbeHost:     "discord.com",
 		ProbeTimeout:  12 * time.Second,
 		TunnelDomains: DefaultTunnelDomains(),
 		DirectDomains: DefaultDirectDomains(),
@@ -121,14 +139,32 @@ func DefaultConfig() Config {
 
 // ProviderFailure retains allowlisted facts from an exhausted provider attempt.
 type ProviderFailure struct {
-	ProviderID ProviderID     `json:"provider_id"`
-	Class      FailClass      `json:"class"`
-	Reason     string         `json:"reason,omitempty"`
-	Exit       *proc.ExitInfo `json:"exit,omitempty"`
+	ProviderID ProviderID      `json:"provider_id"`
+	Class      FailClass       `json:"class"`
+	Reason     string          `json:"reason,omitempty"`
+	Exit       *proc.ExitInfo  `json:"exit,omitempty"`
+	Stage      string          `json:"stage,omitempty"`
+	Target     string          `json:"target,omitempty"`
+	ExitOrigin string          `json:"exit_origin,omitempty"`
+	Controls   []ControlResult `json:"controls,omitempty"`
+}
+
+// ControlResult is a certificate-verified TLS result, never an application probe.
+type ControlResult struct {
+	Target string    `json:"target"`
+	Class  FailClass `json:"class"`
+	At     string    `json:"at"`
 }
 
 // Info is runtime tunnel status for engine/status.
 type Info struct {
+	Mode            string            `json:"mode,omitempty"`
+	Coverage        string            `json:"coverage,omitempty"`
+	Healthy         bool              `json:"healthy"`
+	ControlQuorum   int               `json:"control_quorum,omitempty"`
+	Controls        []ControlResult   `json:"controls,omitempty"`
+	GatewayControls []ControlResult   `json:"gateway_controls,omitempty"`
+	ProviderPID     int               `json:"provider_pid,omitempty"`
 	SocksAddr       string            `json:"socks_addr"`
 	ProviderID      ProviderID        `json:"provider_id"`
 	BinaryPath      string            `json:"binary_path,omitempty"`

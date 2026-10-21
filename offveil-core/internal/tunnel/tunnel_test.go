@@ -12,22 +12,12 @@ import (
 
 func TestDefaultLists(t *testing.T) {
 	td := tunnel.DefaultTunnelDomains()
-	if len(td) < 4 {
-		t.Fatalf("tunnel domains too small: %v", td)
+	if len(td) != 0 {
+		t.Fatalf("default policy must not seed service routes: %v", td)
 	}
 	dd := tunnel.DefaultDirectDomains()
-	for _, h := range []string{
-		"store.steampowered.com",
-		"auth.riotgames.com",
-		"launcher.epicgames.com",
-		"ac-client-ws.faceit.com",
-	} {
-		if !tunnel.IsDirectHost(h, dd) {
-			t.Fatalf("expected %s DIRECT", h)
-		}
-	}
-	if tunnel.IsDirectHost("discord.com", dd) {
-		t.Fatal("discord must not be DIRECT")
+	if len(dd) != 0 || tunnel.IsDirectHost("service.example", dd) {
+		t.Fatal("default policy must not seed direct service exceptions")
 	}
 }
 
@@ -54,8 +44,8 @@ func TestBuildSingBoxWARPSelective(t *testing.T) {
 	build, err := tunnel.BuildSingBoxConfig(
 		tunnel.ProviderWARP, warp, nil,
 		"127.0.0.1", 18081,
-		tunnel.DefaultTunnelDomains(),
-		tunnel.DefaultDirectDomains(),
+		[]string{"service.example"},
+		[]string{"direct.example"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -71,11 +61,11 @@ func TestBuildSingBoxWARPSelective(t *testing.T) {
 	if !strings.Contains(raw, `"final": "direct"`) {
 		t.Fatal("expected final=direct")
 	}
-	if !strings.Contains(raw, "steampowered.com") {
-		t.Fatal("expected steam DIRECT rule")
+	if !strings.Contains(raw, "direct.example") {
+		t.Fatal("expected explicit DIRECT rule")
 	}
-	if !strings.Contains(raw, "discord.com") {
-		t.Fatal("expected discord tunnel rule")
+	if !strings.Contains(raw, "service.example") {
+		t.Fatal("expected explicit tunnel rule")
 	}
 	if !strings.Contains(raw, `"system": false`) {
 		t.Fatal("expected userspace wireguard (system:false)")
@@ -353,7 +343,7 @@ func TestBuildSingBoxProtocolSplit(t *testing.T) {
 		DesyncSOCKSHost: "127.0.0.1",
 		DesyncSOCKSPort: 18080,
 		SpecialDomains:  []string{"discord.com"},
-		DirectDomains:   tunnel.DefaultDirectDomains(),
+		DirectDomains:   []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"},
 	})
 	if err != nil {
 		t.Fatal(err)

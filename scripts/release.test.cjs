@@ -45,9 +45,11 @@ test("1.0.4 beta upgrades stable and can advance to the final release", () => {
   assert.ok(compareVersions("1.0.4-beta.1", "1.0.3") > 0);
   assert.ok(compareVersions("1.0.4-beta.2", "1.0.4-beta.1") > 0);
   assert.ok(compareVersions("1.0.4-beta.3", "1.0.4-beta.2") > 0);
+  assert.ok(compareVersions("1.0.4-beta.4", "1.0.4-beta.3") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.1") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.2") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.3") > 0);
+  assert.ok(compareVersions("1.0.4", "1.0.4-beta.4") > 0);
 });
 
 for (const prehashed of [true, false]) {
@@ -64,7 +66,8 @@ for (const prehashed of [true, false]) {
 
 test("only required public assets are selected", () => {
   const names = assetNames("1.0.0-rc.1");
-  assert.equal(new Set(names).size, 9);
+  assert.equal(new Set(names).size, 10);
+  assert.ok(names.includes("sing-box-1.13.14-source.zip"));
   assert.ok(names.includes("active.json.sig"));
   assert.ok(names.includes("latest-mac.json"));
   assert.ok(names.includes("offveil_1.0.0-rc.1_aarch64.app.tar.gz.sig"));

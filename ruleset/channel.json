@@ -6,6 +6,6 @@
   "signature_file": "active.json.sig",
   "public_key_hex": "cbec8bde20e58e0f31d8c6757d476c72b29b33d9665ceb0c81f1f21087d51fcc",
   "update_interval_hours": 24,
-  "min_ruleset_version": 1,
-  "notes": "Same files as the latest v* GitHub Release. Core verifies Ed25519 before applying. Offline → bundled/cache. Prod private key is CI-only."
+  "min_ruleset_version": 7,
+  "notes": "Network policy schema 2. Signed remote/cache updates must use ruleset version 7 or later; offline fallback is the embedded network policy."
 }

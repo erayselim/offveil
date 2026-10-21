@@ -63,8 +63,8 @@ func TestNativeOpaqueUDPDirectRoundTrip(t *testing.T) {
 	}
 	port := reservation.Addr().(*net.TCPAddr).Port
 	_ = reservation.Close()
-	build, err := BuildSingBox(BuildParams{Provider: ProviderDesync, EnableTUN: true, ListenPort: port,
-		SpecialDomains: []string{"discord.com", "imvu.com"}, EgressInterface: loopback, DesyncSOCKSPort: 1})
+	build, err := BuildSingBox(BuildParams{NetworkMode: true, Provider: ProviderDesync, EnableTUN: false, ListenPort: port,
+		EgressInterface: loopback, DesyncSOCKSPort: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,8 @@ func TestNativeOpaqueUDPDirectRoundTrip(t *testing.T) {
 	for _, raw := range route["rules"].([]any) {
 		// Substitute an owned loopback endpoint for an unrelated public peer.
 		// The packet must exercise the generic UDP rule, not the private rule.
-		if raw.(map[string]any)["ip_is_private"] != true {
+		rule := raw.(map[string]any)
+		if rule["ip_is_private"] != true && !(rule["ip_cidr"] != nil && rule["outbound"] == "direct") {
 			rules = append(rules, raw)
 		}
 	}

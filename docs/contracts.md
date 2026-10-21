@@ -1,454 +1,194 @@
 # Core contracts
 
-UI and core follow these schemas. Bump `contracts_version` on a breaking
-IPC change.
+This describes the application-independent 1.0.4-beta.4 version. Beta.3
+artifacts use the previous routing policy. IPC envelopes remain version 1;
+network policy files use schema 2. See [network architecture](network-architecture.md).
 
-Go orchestrator + sing-box + ByeDPI sidecar. UI is Tauri 2.
+## Process and privilege model
 
-## 1. Process model
+The unprivileged Tauri UI talks only to the local core service. Core owns DNS,
+capture and child processes. Windows uses `LOCAL SYSTEM` and a demand-start
+`offveil-core` service; macOS uses a root LaunchDaemon. Protection is started and
+stopped explicitly. The UI does not configure adapters, routes or DNS.
 
-```text
-[offveil-ui]  --IPC-->  [offveil-core service]
-                              |
-                              |- manages sing-box
-                              `- manages ciadpi (ByeDPI child)
-```
+Windows IPC is `\\.\pipe\offveil-core`, with LocalSystem and Authenticated Users
+access, no Anonymous/Everyone, and remote pipe clients rejected. On macOS the
+root socket is `/var/run/offveil/core.sock`; interactive use is under the temp
+directory, overridable with `OFFVEIL_IPC_SOCK`. Permissions are same-user or the
+authorized setup group. There is no remote control endpoint.
 
-Windows: named pipe `\\.\pipe\offveil-core` → `offveil-core` Windows Service.
-Darwin: unix socket `/var/run/offveil/core.sock` → root LaunchDaemon
-(`KeepAlive` false, `RunAtLoad` false).
+## IPC
 
-- The UI does not touch TUN, DNS, or routes.
-- Core runs as `LOCAL SYSTEM` (Windows) or root (Darwin), or an equivalently privileged service account.
-- IPC is localhost only. No remote clients.
-- Per-machine NSIS registers `offveil-core` (StartType=manual). The UI runs
-  `asInvoker`. After install the UI starts the service with `StartService`
-  (no UAC; Authenticated Users are granted `SERVICE_START`). Elevated
-  `offveil-core setup` is only a fallback if the SCM entry is missing or
-  its DACL rejects start. After that the UI talks over the pipe.
-- Darwin: `offveil-core setup` is one-time admin (`osascript` with
-  administrator privileges; not a Network Extension, not a `.pkg` for this
-  phase). It installs `/Library/LaunchDaemons/offveil-core.plist`, copies
-  the binary under `/Library/Application Support/offveil`, creates group
-  `offveil`, and writes `/etc/sudoers.d/offveil` so `%admin` may
-  `start`/`stop` without a password (SERVICE_START analogue). UI open:
-  `launchctl load` + `start`. UI `shutdown`: launchd `unload`. Boot does
-  not start the daemon.
-
-## 2. IPC (UI <-> core)
-
-Transport:
-- Windows: named pipe `\\.\pipe\offveil-core`. Protected DACL: LocalSystem + Authenticated Users. Remote clients rejected (`FILE_PIPE_REJECT_REMOTE_CLIENTS`).
-- Darwin: pathname unix socket `/var/run/offveil/core.sock` when running as root; interactive/CI uses `$TMPDIR/offveil-<uid>/core.sock`. Non-root clients dial the root socket when it exists. Override: `OFFVEIL_IPC_SOCK`. Mode `0600` (same-user) or `0660` owned by the setup user / group `offveil`. No abstract sockets; no remote.
-
-Encoding: request/response JSON. Envelope and methods are the same on both OS.
-
-### 2.1 Envelope
+Requests are line-delimited JSON:
 
 ```json
-{
-  "id": "uuid-or-monotonic",
-  "method": "status",
-  "params": {}
-}
+{"id":"request-id","method":"status","params":{}}
+```
+
+Responses preserve the request ID and return either a result or an RPC error:
+
+```json
+{"id":"request-id","ok":true,"result":{}}
 ```
 
 ```json
-{
-  "id": "uuid-or-monotonic",
-  "ok": true,
-  "result": {}
-}
+{"id":"request-id","ok":false,"error":{"code":"not_running","message":"Core protection is stopped"}}
 ```
 
-Error:
+| Method | Parameters | Result |
+|---|---|---|
+| ping / health | none | version, contracts_version, service |
+| start | optional mode: auto | Status |
+| stop | none | Status |
+| restart | none | Status after stop/start |
+| status | none | Status |
+| test | optional targets: hostname array | endpoint diagnostic report; never changes routes or policy |
+| diagnostics | none | DiagnosticsBundle |
+| repair | none | stopped Status plus best-effort restore steps |
+| shutdown | none | stops protection and the demand-start service |
+
+Error codes are `not_running`, `already_running`, `privilege`, `tun_failed`,
+`engine_failed`, `internal` and `bad_request`. `mode` accepts only `auto`.
+IPC readiness is part of service readiness. Unexpected listener loss cleans up
+owned network state and exits unsuccessfully for the supervisor to handle.
+
+### Status
 
 ```json
 {
-  "id": "uuid-or-monotonic",
-  "ok": false,
-  "error": {
-    "code": "not_running",
-    "message": "Core protection is stopped"
+  "state":"active",
+  "protection":true,
+  "summary":"Açık",
+  "outbound_hint":"tunnel",
+  "since":"2026-10-21T00:00:00Z",
+  "targets":[
+    {"id":"tcp","label":"TCP","outcome":"ok","path":"tunnel"},
+    {"id":"udp","label":"UDP","outcome":"ok","path":"tunnel"}
+  ],
+  "last_error":null,
+  "health":"ok",
+  "network":{
+    "mode":"remote",
+    "coverage":"public_tcp_udp_dual_stack",
+    "tcp_path":"tunnel",
+    "udp_path":"tunnel",
+    "ipv4":true,
+    "ipv6":true,
+    "healthy":true
   }
 }
 ```
 
-### 2.2 Methods
+States are `stopped`, `starting`, `active`, `degraded`, `stopping`. Protection
+means the owned protection session is enabled; coverage is a separate fact.
+Remote mode routes public TCP/UDP through a verified remote transport. Local
+fallback is `degraded`, summary `Sınırlı koruma`, coverage `tls_http_only`,
+TCP path `desync`, UDP path `direct`. A local provider retry is not itself a
+broken local process. A required component loss or repeated failed control
+quorum is a connection failure. The UI uses `network.reason` to distinguish it
+from limited coverage, and preserves legacy error handling when the field is absent.
 
-| Method | Params | Result | Notes |
-|--------|--------|--------|-------|
-| `ping` | | `{ "version", "contracts_version", "service" }` | Liveness |
-| `health` | | same as `ping` | Alias |
-| `start` | `{ "mode"?: "auto" }` | `Status` | Start cascade |
-| `stop` | | `Status` | Clean shutdown |
-| `restart` | | `Status` | Stop then start (UI "Yenile"; no `already_running`) |
-| `status` | | `Status` | Snapshot (includes `health`) |
-| `test` | `{ "targets"?: string[] }` | `TestReport` | Connection test |
-| `diagnostics` | | `DiagnosticsBundle` | PII-safe zip under the machine data dir; while busy, exports the last published snapshot with stage/time notes. The UI uses an independent `support` collector and a native save dialog, so export also works without this IPC method. |
-| `repair` | | `{ "status": Status, "steps": [...] }` | UI "Revert changes": stop protection, restore leftover DNS/NRPT/adapter, flush DNS cache, clear learned DPI policy. Best-effort; does not reset Winsock or other apps. |
-| `shutdown` | | `{ "ok": true }` | Stop protection and the demand-start service (UI exit; Windows SCM / Darwin launchd unload, no admin prompt) |
+Optional diagnostics fields include `capture`, `dns`, `desync`, `tunnel`,
+`ruleset`, `expand`, `udp`, `heal` and `network`. The IP family fields describe
+capture configuration, not proof that every destination in that family works.
+`targets` is an aggregate protocol view; individual failed site diagnostics do
+not change it. New fields remain optional for older IPC clients.
 
-Pipe (Windows): `\\.\pipe\offveil-core`. Protected DACL: LocalSystem + Authenticated
-Users. Remote clients rejected (`FILE_PIPE_REJECT_REMOTE_CLIENTS`).
+### Test and support results
 
-Socket (Darwin): see Transport above. JSON methods are unchanged.
+IPC `test` reports ASN/ISP metadata and rows with target, class, expected path and
+classification completion. `ok=true` does not mean the chosen bypass works.
+This request runs outside the lifecycle lock and cannot publish after its
+session has stopped or changed. It never changes network identity or routing.
 
-`mode` is `"auto"` only. No other modes are exposed.
+The support collector also works while the daemon is unavailable. The UI runs
+`support -check-network` with a bounded overall timeout. It includes public
+IPv4/IPv6 DNS/TCP/TLS/HTTP checks through current OS/TUN routes. Optional
+`-check-url` and `-check-tcp` endpoints are explicit; no application endpoint or
+download schema is built in. See [network diagnostics](network-diagnostics.md).
 
-### 2.3 `Status`
+A DiagnosticsBundle has path, created_at, sha256, version and optional note.
+The ZIP contains diagnostics.json, summary.md and manifest.json. The digest
+covers diagnostics.json. Exports preserve the last active session after Stop,
+but always state current protection separately. A new failed startup replaces
+an older successful snapshot so its error remains visible.
 
-```json
-{
-  "state": "stopped | starting | active | degraded | stopping",
-  "protection": false,
-  "summary": "Açık",
-  "outbound_hint": "desync",
-  "since": "2026-07-20T20:00:00Z",
-  "targets": [
-    {
-      "id": "discord",
-      "label": "Discord",
-      "outcome": "ok | probing | failed | unknown",
-      "path": "direct | desync | tunnel | none"
-    }
-  ],
-  "last_error": null
-}
-```
+## Routing and verification
 
-The UI shows `state`, `protection`, `summary`, `targets[].outcome`. `path`
-is for diagnostics.
+System DNS uses the local stub at `127.0.0.1:53`. Windows steers the resolver
+with catch-all NRPT; macOS snapshots and sets eligible physical-service DNS
+with `networksetup`. NIC rewrite/leak guard is disabled. The shared sing-box
+gateway delegates DNS to core's TCP loopback stub on Windows; standalone/macOS
+helpers retain their configured resolver transport. Core races multiple DoH
+upstreams and filters known poisoned replies. Stop/repair restores DNS state.
 
-Optional fields (UI may ignore; diagnostics uses them):
+Public IPv4 and IPv6 use split-default capture. Local/private/bootstrap traffic
+is excluded; the gateway has explicit owned-subnet loop guards. There are no
+built-in game, voice, updater or application exceptions. Exact and suffix DIRECT
+exceptions are optional user configuration.
 
-- `capture`: TUN (`adapter_name`, `routes_applied`, `egress`, ...)
-- `desync`: ByeDPI SOCKS
-- `tunnel`: selective WARP/Reality SOCKS (`retry_hint` maps to UI "Yenile")
-- `ruleset`: signed package (`version`, `source`, `sha256`)
-- `expand`: DNS-observed domain expand (half-loaded CDN)
-- `udp`: `voice_path` (`direct|desync|tunnel`) + `quic` (`drop`)
-- `heal`: network change / sleep-resume self-heal
+Remote provider attempts happen on a separate SOCKS listener with TUN disabled.
+At least two independent control hosts must pass certificate-verified TLS.
+Provider-only probes cannot inherit DIRECT exceptions. Runtime remote checks
+verify both provider and gateway quorums. A single control failure is tolerated;
+two failed rounds are required to degrade an accepted path.
 
-`start` runs a curated probe at session begin. `outbound_hint` and
-`targets[].path` come from cache. `test` returns `TestReport` (ASN + rows).
+Remote coverage includes opaque TCP, arbitrary ports, literal IPs and UDP/QUIC.
+When no provider works, local HTTP/TLS bypass is explicitly limited; other
+traffic is direct and sniffed QUIC is rejected for TCP fallback. A working relay
+is required to bypass transport/IP restrictions that local desync cannot fix.
 
-Main screen is `protection` + `summary` (plus tunnel `retry_hint`). Copy is
-`Açık` / `Kapalı` / `Bozuldu`. Broken state has one action, "Yenile"
-(`restart`). Close / Exit sends IPC `shutdown` (demand-start service).
+`network.bypass_families` is IPv4/IPv6 in remote mode and IPv4 in local mode.
+The current physical-source-bound local helper cannot proxy IPv6; these flows
+remain direct. Local QUIC fallback is therefore limited to IPv4 as well.
 
-### 2.4 Error codes
+Failure classes distinguish timeout, EOF, reset, refused, certificate,
+configuration and other dial/probe failures. Provider facts retain safe stage,
+control target and natural-versus-cleanup exit origin. `up` is process liveness;
+`healthy` is measured control quorum. Neither is universal endpoint success.
 
-| Code | Meaning |
-|------|---------|
-| `not_running` | `stop` / `test` while stopped |
-| `already_running` | `start` again |
-| `privilege` | Missing service/TUN rights |
-| `tun_failed` | TUN did not come up (Wintun / utun) |
-| `engine_failed` | sing-box or ByeDPI crashed |
-| `internal` | Unexpected |
-
-## 3. Policy model
-
-### 3.1 Outbound
-
-```text
-direct | desync | tunnel
-```
-
-| Value | Where it runs |
-|-------|----------------|
-| `direct` | sing-box `direct` outbound |
-| `desync` | sing-box -> `socks://127.0.0.1:<byedpi>` |
-| `tunnel` | sing-box selective WG / Reality (allowlist only) |
-
-### 3.2 Cascade
-
-```text
-start
-  -> DoH always (system DNS → local stub; not ISP)
-  -> ByeDPI + TUN always (TCP/443 → desync; UDP → direct; exclude/LAN excepted)
-  -> curated probe applies to special packages only (Discord/IMVU)
-       open?        -> that package UDP direct (HTTPS still desync)
-       sni/dpi?     -> that package UDP desync
-       ip/desync fail? -> that package suffix → selective tunnel
-  -> canary probe (background; youtube/instagram/x/tiktok/telegram)
-       throttle_suspect / ip_drop → those suffixes → selective tunnel
-       else stay on default HTTPS desync (no special UDP)
-  -> default HTTPS never follows Discord's path
-```
-
-While protection is on, system DNS queries go to `127.0.0.1:53`. Windows:
-catch-all NRPT namespace `.`. Darwin: `networksetup -setdnsservers <service>
-127.0.0.1` on Wi-Fi / Ethernet / Thunderbolt (not utun / VPN;
-`networksetup` does not list utun). `/etc/resolver/` is not used. The stub
-answers over DoH. TUN installs split-default (`0.0.0.0/1` + `128.0.0.0/1`)
-so unlisted TCP/443 hits local ByeDPI; this is not `0.0.0.0/0` WARP.
-Leak-guard (NIC `SetDNS`) is off. Stop, crash-cleanup, `repair`, and
-uninstall must undo that rewrite — leftover `127.0.0.1` blackholes DNS.
-Windows removes the NRPT rule. Darwin restores the snapshot or `empty`, then
-`killall -HUP mDNSResponder`. iCloud Private Relay / Limit IP tracking
-override manual DNS; diagnostics records them; core does not disable them.
-Split-default routes go away with the TUN.
-
-### 3.3 Cache record
+## Network policy format
 
 ```json
 {
-  "key": "asn:9121|discord.com",
-  "path": "desync",
-  "class": "dpi_reset",
-  "strategy_id": "byedpi:default-safe",
-  "updated_at": "2026-07-20T20:00:00Z",
-  "ttl_seconds": 86400
+  "schema_version":2,
+  "version":7,
+  "updated_at":"2026-10-21",
+  "network":{
+    "control_hosts":["www.cloudflare.com","www.microsoft.com","example.com"],
+    "routes":[]
+  }
 }
 ```
 
-- ISS/ASN change invalidates related cache.
-- TTL expiry triggers a silent re-probe.
-- TTL by class: `retry` 15 min, `dpi_reset`/`desync` 6 h, `direct`/`open` 24 h.
-- Tunnel: primary provider fail falls over to the other (WARP <-> Reality).
-  UI shows "Yenile" only after both are exhausted.
-- Desync fail goes to tunnel.
-- Desync probe fail runs a limited auto-strategy scan (~40s). The winner is
-  stored under the ASN in `desync-strategies.json`.
+`network.routes` supports explicit `path: direct` exceptions, using `domains`
+for exact names and `domain_suffix` for suffixes. Other paths and nonempty old
+packages are rejected. Schema/version checks apply to embedded, adjacent,
+cached and remote content. Remote/cache content requires a valid Ed25519
+signature. Missing or invalid remote content falls back to a valid local source.
+Release CI signs source policy; a stale signature must not accompany changed data.
 
-### 3.4 DIRECT (never tunnel/desync)
+Local strategy evidence is scoped to network ASN, fingerprint and transport
+profile in a new cache namespace. Old global application/ASN-only entries are
+not applied to network-wide routing.
 
-- Private / LAN
-- Steam / Riot / Epic / Faceit store+launcher suffixes (ruleset `path_force: direct`)
-- Generic UDP (game servers are not on the domain list; protocol split is the protection)
+## Lifecycle and cleanup
 
-After sniffing and DNS hijack, explicit DIRECT domain/private-IP exceptions
-take precedence over QUIC rejection. Their HTTP/3 traffic stays direct.
+Each protection session has a generation and cancellation context. Stop,
+replacement and self-heal invalidate background work. Status and diagnostics
+remain available from immutable snapshots during startup/repair. Slow probes,
+strategy verification and component/provider recovery run outside the lifecycle
+lock. Late sessions are closed rather than adopted.
 
-## 4. Probe protocol
+Core uses kill-on-close child ownership and one Wait per process. Cleanup is
+best-effort in reverse ownership order: gateway/provider, helper, resolver,
+capture, job. Recovery cleanup targets the current replacement session, not a
+captured old instance. Failed restoration prevents an overlapping replacement.
 
-Classify the block and pick an outbound. Raw socket detail does not go to
-the UI.
+The last 64 redacted failure/recovery events survive daemon exits. No credentials,
+public IPs, SSID, account data, raw provider responses or browsing DNS history
+enter support exports. DNS observation is bounded, counts demand, never guesses
+sibling hosts and never triggers probes for every system lookup.
 
-### 4.1 Classes
-
-| Class | Observation | Next path |
-|-------|-------------|-----------|
-| `open` | DoH IP + TLS handshake OK | `direct` |
-| `dns_poison` | Known censor IP / NXDOMAIN / inconsistent A | Force DoH, then try TLS |
-| `dpi_reset` | RST / early close after ClientHello | `desync` |
-| `ip_drop` | SYN timeout / blackhole | `tunnel` |
-| `timeout` | Unclear | desync, then tunnel |
-| `throttle_suspect` | Extremely slow TLS | prefer `tunnel` |
-
-### 4.2 Steps (per target)
-
-1. Resolve A/AAAA over DoH. Check poison fingerprints and NXDOMAIN/empty
-   (`195.175.254.2` and similar).
-2. Short TCP+TLS SNI probe (timeout ~3-5s). Try at most 2 A records.
-3. Control-host differential (default `www.microsoft.com`): control open +
-   target unclear raises DPI suspicion. If the control is also down, do not
-   pick aggressive tunnel.
-4. Write class, pick path, cache (`confidence` 0-1).
-5. Optional verify after the path is applied (HTTP HEAD / Discord API):
-   `VerifyHTTP`.
-6. Session `Chosen` is the most expensive path among results
-   (`tunnel` > `desync` > `direct`).
-
-### 4.3 `TestReport` (connection test)
-
-```json
-{
-  "asn": "9121",
-  "isp_hint": "Turk Telekom",
-  "results": [
-    {
-      "target": "discord.com",
-      "class": "dpi_reset",
-      "path": "desync",
-      "ok": true
-    }
-  ]
-}
-```
-
-## 5. Ruleset format
-
-File: `ruleset/active.json`. Signature: `active.json.sig` (Ed25519, base64).
-
-```json
-{
-  "version": 6,
-  "updated_at": "2026-09-01",
-  "packages": [
-    {
-      "id": "discord",
-      "label": "Discord",
-      "default_enabled": true,
-      "domains": [
-        "discord.com",
-        "discordapp.com",
-        "discord.gg",
-        "gateway.discord.gg",
-        "cdn.discordapp.com",
-        "media.discordapp.net"
-      ],
-      "domain_suffix": [
-        ".discord.com",
-        ".discordapp.com",
-        ".discord.gg",
-        ".discordapp.net",
-        ".discord.media"
-      ],
-      "resolve_hosts": ["discord.com", "gateway.discord.gg", "latency.discord.media"],
-      "probe_hosts": ["discord.com"],
-      "notes": "Voice: domain_suffix .discord.gg / .discord.media; UDP mirrors cascade; sniffed QUIC drop"
-    },
-    {
-      "id": "imvu",
-      "label": "IMVU",
-      "default_enabled": true,
-      "domains": [
-        "secure.imvu.com",
-        "api.imvu.com",
-        "webasset-akm.imvu.com",
-        "userimages-akm.imvu.com"
-      ],
-      "domain_suffix": [".imvu.com", ".im.vu"],
-      "resolve_hosts": [
-        "secure.imvu.com",
-        "webasset-akm.imvu.com",
-        "userimages-akm.imvu.com"
-      ],
-      "probe_hosts": ["secure.imvu.com"],
-      "notes": "legacy-cdn: Classic ignores system proxy; TUN + CDN expand"
-    }
-  ]
-}
-```
-
-Package tags: `discord`, `canary`, `legacy-cdn`, `direct-games`, ...
-`kind: "canary"` is not a status card; probe is background; only
-`throttle_suspect` / `ip_drop` send its suffixes to the selective tunnel.
-
-### 5.1 Update channel
-
-`ruleset/channel.json` plus the embedded copy:
-
-| Field | Meaning |
-|-------|---------|
-| `base_url` | GitHub Release / CDN prefix |
-| `ruleset_file` / `signature_file` | `active.json` + `active.json.sig` |
-| `public_key_hex` | Ed25519 public (32-byte hex) |
-| `update_interval_hours` | Default 24 |
-
-Load order: cache (`%ProgramData%\offveil\ruleset`) then beside-exe then
-embedded then optional remote. Remote is applied only after signature
-verify. `OFFVEIL_RULESET_URL` overrides `base_url`.
-`OFFVEIL_RULESET_SKIP_UPDATE=1` skips remote.
-
-Core turns enabled packages into capture resolve / probe / sing-box route
-lists.
-
-DNS stub query watch -> `MatchPackage` / `ExpandForHost` -> capture
-`AddPrefixes` (legacy CDN half-load). Discord voice UDP follows the special
-package path (`direct` / ByeDPI SOCKS5 UDP ASSOCIATE / sing-box SOCKS to
-tunnel). Generic UDP stays on the ISP path. Outside explicit DIRECT
-domain/private-IP exceptions, QUIC for protected domains and supported apps
-is rejected so HTTPS falls back to TCP TLS. Other QUIC and raw UDP/443 stay
-direct. Discord/IMVU process names and macOS app paths also identify raw UDP
-when no hostname is available.
-Network change or sleep triggers silent self-heal (Windows power notifications;
-Darwin `kern.waketime` / freeze-gap, no IOKit/CGO).
-
-## 6. Engine wiring
-
-### 6.1 sing-box
-
-- TUN inbound with split-default `route_address` (`0.0.0.0/1` + `128.0.0.0/1`, never `0.0.0.0/0`). `auto_route` on. Windows: Wintun `interface_name` `offveil`. Darwin: omit `interface_name` (sing-box picks `utunN`; `"offveil"` is a bad tun name). Go capture is snapshot-only (`SkipAdapter`).
-- DoH / DNS hijack
-- Route: TCP/443 → `desync`; UDP → `direct`; Steam/Riot/Epic/Faceit + LAN exclude; special suffixes may `tunnel`
-- After sniff and DNS hijack, explicit DIRECT exceptions precede protected-domain/app QUIC rejection. Other HTTP/3 stays direct.
-- Selective tunnel outbound(s) for special IP-drop and canary throttle/IP-drop suffixes
-- Sidecar: `sing-box.exe` (Windows) / `sing-box` (Darwin). Same release tag; Darwin asset `sing-box-*-darwin-arm64.tar.gz`.
-
-### 6.2 ByeDPI
-
-- Local SOCKS listener
-- Default safe strategy set. Windows: `byedpi:windows-safe` (fake+ttl via `--auto ssl_err`). Darwin: `byedpi:darwin-safe` (`--split 1 --disorder 3+s --mod-http=h,d --auto=torst --tlsrec 1+s`; no `--fake` / `--ttl`)
-- Auto-strategy: `ScanCandidates` (Windows) or `ScanCandidatesDarwin` (adds `--oob`; never fake/ttl) + ASN cache; no UI parameters
-- Sidecar: `ciadpi.exe` (Windows, official zip) / `ciadpi` (Darwin, `make` from the same tag). Linux aarch64 tarball is not used. Darwin builds are ad-hoc signed in CI. Installation copies to a new inode and verifies the embedded signature before replacement; it does not re-sign on the user's Mac.
-
-### 6.3 Not used
-
-- sing-box Windows WinDivert bridge / TLS-spoof paths
-- Full default-route VPN (`0.0.0.0/0` WARP). Catch-all NRPT is DNS-only.
-  TUN split-default feeds local ByeDPI; unlisted sites do not go to WARP.
-- Strategy knobs in the UI
-
-## 7. Privacy
-
-- No telemetry.
-- Diagnostics zip is a local file (`%ProgramData%\offveil\diagnostics` on
-  Windows, `/Library/Application Support/offveil/diagnostics` on Darwin);
-  the user shares it if they want.
-- Contents: ASN, ISP hint, fingerprint hash, cascade path, probe class,
-  scrubbed error_class. No public IP, SSID, MAC, user path, or credentials.
-- Anonymous probe sharing, if added, is opt-in.
-
-Additive diagnostics fields (contracts version stays 1):
-
-- `sidecars.desync_scan`: bounded candidate attempts, per-host TLS checks and
-  the result of real-helper/dataplane verification. One search runs at a time
-  per session. A newly confirmed secondary-endpoint failure can start another
-  discovery episode after an earlier path recovered. Canceled losing trials
-  have an explicit reason, separate from a measured network timeout.
-- `sidecars.tunnel_fallback`: the failed provider snapshot retained when a
-  local desync dataplane replaces it. `failures` contains provider/class,
-  allowlisted reason codes (such as `http_403`) and available exit facts;
-  provider response text is omitted from this snapshot.
-- `cascade.error_class=protected_path_unavailable`: a protected target has
-  no verified path. It does not imply a TUN adapter/driver failure.
-- `probe.results[].ok` indicates a completed classification; per-sidecar
-  TLS checks establish connectivity through a selected path. The support
-  summary distinguishes those two concepts.
-- `sidecars.tunnel.tun_stack`, `tun_mtu` and `egress_interface` describe the
-  generated capture stack and physical direct-traffic binding. Windows uses
-  `mixed` (system TCP, gVisor UDP); macOS uses `gvisor`. These fields describe
-  configuration, not a successful end-to-end UDP/game test.
-- `sidecars.tunnel.dns_mode`: `core_stub` when Windows delegates to the local
-  core resolver, otherwise `standalone_doh`. `startup_attempts` counts bounded
-  process starts, including retries for known transient TUN errors.
-- `failures`: up to 64 persistent events, with additive `target`, `provider`,
-  `strategy`, `reason`, `version` and per-process `generation` fields. Exit
-  `reason` is an allowlisted adapter condition, never a raw stderr excerpt.
-- `system.protection_state`: `on`, `off` or `unknown`. In offline collection,
-  the legacy boolean `cascade.protection` is not a measured current state.
-  Windows adds query-only `windows_service` state/PID/exit facts,
-  `offveil_adapter` presence/MTU and `wintun.dll` installation file facts.
-
-## 8. Versioning
-
-- This file's `contracts` major: bump on breaking IPC/field changes.
-- `contracts_version = 1` (carried in `ping` / `status`).
-
-## 9. Crash cleanup
-
-Protection rewrites system DNS so queries go to the local stub (`127.0.0.1:53`).
-If that rewrite survives the core process, every name lookup blackholes.
-
-The same LIFO registry (`internal/cleanup`) runs on:
-
-- IPC `stop` / `shutdown`
-- service manager stop (Windows SCM / Darwin launchd unload)
-- panic recovery (`crashlog.Guard`)
-- `repair` and `uninstall`
-
-Order: sidecars (ByeDPI, sing-box, process group / Job Object), routes,
-adapter, DNS restore. Errors are logged, not fatal.
-
-The undo file (`dns-restore.json` under the machine data dir) is written
-*before* DNS is rewritten. Stop / crash / repair / uninstall must apply it
-(Windows: catch-all NRPT; Darwin: `networksetup` snapshot or `empty`, then
-`killall -HUP mDNSResponder`). A leftover `127.0.0.1` resolver is treated
-as a defect, not as "protection still on". Darwin repair also drops leftover
-split-default routes that still point at `10.87.0.1/30`. Orphan `utun` without
-an owning FD cannot be destroyed (no Wintun `CloseOrphanAdapter`). Uninstall
-unlinks an idle `/var/run/offveil/core.sock`.
+Native fixtures use SOCKS-only configs; actual TUN/OS traffic and device cleanup
+require physical acceptance. See [engine reliability](engine-reliability.md).

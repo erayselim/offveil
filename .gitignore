@@ -65,6 +65,7 @@ offveil-core/third_party/byedpi/ciadpi
 offveil-core/third_party/sing-box/sing-box.exe
 offveil-core/third_party/sing-box/sing-box
 offveil-core/third_party/sing-box/README.darwin.md
+offveil-core/third_party/sing-box/*-source.zip
 offveil-core/third_party/wintun/wintun.dll
 offveil-core/ciadpi
 offveil-core/sing-box

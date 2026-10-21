@@ -1,5 +1,9 @@
 # Discord web works, Windows updater stalls
 
+Historical investigation for the previous architecture. The application-specific
+diagnostic flag below has been replaced by [generic network diagnostics](network-diagnostics.md).
+Current development routing is documented in [network architecture](network-architecture.md).
+
 Investigation date: 2026-10-18. This is a support investigation, not a confirmed
 ISP-specific workaround or a claim that the reported issue has been fixed.
 

@@ -74,7 +74,8 @@ function assetNames(version) {
   const prefix = `offveil_${version}`;
   return [`${prefix}_x64-setup.exe`, `${prefix}_x64-setup.exe.sig`, `${prefix}_aarch64.dmg`,
     `${prefix}_aarch64.app.tar.gz`, `${prefix}_aarch64.app.tar.gz.sig`,
-    "latest.json", "latest-mac.json", "active.json", "active.json.sig"];
+    "latest.json", "latest-mac.json", "active.json", "active.json.sig",
+    "sing-box-1.13.14-source.zip"];
 }
 
 function verifyPayloads(dir, tag, repo, pubkey) {
@@ -168,7 +169,7 @@ async function verifyPublished(tag, repo, dir) {
   const releases = JSON.parse(await fetchBytes(`https://api.github.com/repos/${repo}/releases?per_page=100`)).filter((r) => {
     try { releaseVersion(r.tag_name); return true; } catch { return false; }
   });
-  const sharedPriorVersions = ["v1.0.3", "v1.0.4-beta.1", "v1.0.4-beta.2"];
+  const sharedPriorVersions = ["v1.0.3", "v1.0.4-beta.1", "v1.0.4-beta.2", "v1.0.4-beta.3"];
   for (const prior of ["v1.0.0-b4", "v1.0.0-b5", "v1.0.0-mac.3", "v1.0.0-mac.4", "v1.0.0", ...sharedPriorVersions]) {
     const old = JSON.parse(execFileSync("git", ["show", `${prior}:offveil-ui/src-tauri/tauri.conf.json`], { cwd: ROOT, encoding: "utf8" }));
     if (old.plugins.updater.pubkey !== currentKey || compareVersions(version, prior) <= 0) throw new Error(`Incompatible prior client ${prior}`);

@@ -1,60 +1,83 @@
 package ruleset_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 )
 
-func TestParseBundled(t *testing.T) {
+func TestParseBundledNetworkPolicy(t *testing.T) {
 	doc, err := ruleset.ParseDocument(ruleset.BundledActive())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version < 6 {
-		t.Fatalf("version %d", doc.Version)
+	if doc.SchemaVersion != ruleset.SchemaVersion || doc.Version != ruleset.MinVersion {
+		t.Fatalf("unexpected policy: %+v", doc)
 	}
-	tun := doc.TunnelDomains()
-	if !contains(tun, "discord.com") || !contains(tun, "discord.gg") || !contains(tun, "discord.media") {
-		t.Fatalf("tunnel domains incomplete: %v", tun)
+	if len(doc.Packages) != 0 || len(doc.EnabledPackages()) != 0 || len(doc.TargetSeeds()) != 0 {
+		t.Fatal("default policy contains destination groups")
 	}
-	if !contains(tun, "imvu.com") {
-		t.Fatalf("tunnel missing imvu: %v", tun)
+	if len(doc.Network.Routes) != 0 || len(doc.TunnelDomains()) != 0 || len(doc.DirectDomains()) != 0 || len(doc.ProtectedDomains()) != 0 {
+		t.Fatal("default policy contains routing exceptions")
 	}
-	dir := doc.DirectDomains()
-	for _, want := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
-		if !contains(dir, want) {
-			t.Fatalf("direct missing %s: %v", want, dir)
-		}
+	if !reflect.DeepEqual(doc.ProbeHosts(), ruleset.DefaultControlHosts()) || len(doc.CanaryProbeHosts()) != 0 {
+		t.Fatalf("controls: %v", doc.ProbeHosts())
 	}
-	rh := doc.ResolveHosts()
-	if !contains(rh, "gateway.discord.gg") || !contains(rh, "webasset-akm.imvu.com") {
-		t.Fatalf("resolve hosts: %v", rh)
+	if !reflect.DeepEqual(doc.ResolveHosts(), doc.ProbeHosts()) {
+		t.Fatalf("resolve seeds: %v", doc.ResolveHosts())
 	}
-	ph := doc.ProbeHosts()
-	if len(ph) < 2 || ph[0] != "discord.com" {
-		t.Fatalf("probe hosts: %v", ph)
+	hosts := doc.ProbeHosts()
+	hosts[0] = "changed.test"
+	if doc.ProbeHosts()[0] == "changed.test" {
+		t.Fatal("caller mutated document controls")
 	}
-	if contains(ph, "www.youtube.com") {
-		t.Fatalf("canary must not be in session ProbeHosts: %v", ph)
+}
+
+func TestParseRejectsObsoleteAndInvalidNetworkPolicies(t *testing.T) {
+	for name, raw := range map[string]string{
+		"obsolete schema":          `{"version":6,"packages":[{"id":"old","default_enabled":true,"domains":["old.test"]}]}`,
+		"obsolete version":         `{"schema_version":2,"version":6,"network":{"control_hosts":["one.test","two.test"]}}`,
+		"missing controls":         `{"schema_version":2,"version":7,"packages":[]}`,
+		"restored packages":        `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"]},"packages":[{"id":"obsolete","default_enabled":true,"domains":["obsolete.test"]}]}`,
+		"duplicate controls":       `{"schema_version":2,"version":7,"network":{"control_hosts":["ONE.test","one.test"]}}`,
+		"url as control":           `{"schema_version":2,"version":7,"network":{"control_hosts":["https://one.test","two.test"]}}`,
+		"unknown route":            `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"unknown"}]}}`,
+		"unsupported tunnel route": `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"tunnel"}]}}`,
+		"unsupported desync route": `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"desync"}]}}`,
+		"empty route":              `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"path":"direct"}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ruleset.ParseDocument([]byte(raw)); err == nil {
+				t.Fatal("invalid policy accepted")
+			}
+		})
 	}
-	ch := doc.CanaryProbeHosts()
-	if !contains(ch, "www.youtube.com") || !contains(ch, "web.telegram.org") {
-		t.Fatalf("canary probe hosts: %v", ch)
+}
+
+func TestExplicitRoutesAndControlsAreIndependent(t *testing.T) {
+	doc, err := ruleset.ParseDocument([]byte(`{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test","three.test"],"routes":[{"domains":["EXACT.user.test"],"domain_suffix":[".local.test"],"path":"direct"}]},"packages":[]}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []string{"steampowered.com", "riotgames.com", "epicgames.com", "faceit.com"} {
-		if contains(ph, bad) || contains(rh, bad) {
-			t.Fatalf("exclude host leaked into probe/resolve: %s probe=%v resolve=%v", bad, ph, rh)
-		}
+	if !reflect.DeepEqual(doc.DirectDomains(), []string{"exact.user.test", "local.test"}) {
+		t.Fatalf("direct: %v", doc.DirectDomains())
+	}
+	if len(doc.Network.Routes) != 1 || !reflect.DeepEqual(doc.Network.Routes[0].Domains, []string{"exact.user.test"}) || !reflect.DeepEqual(doc.Network.Routes[0].DomainSuffix, []string{"local.test"}) {
+		t.Fatalf("exact and suffix route boundaries were lost: %+v", doc.Network.Routes)
+	}
+	if !reflect.DeepEqual(doc.ProbeHosts(), []string{"one.test", "two.test", "three.test"}) {
+		t.Fatalf("routing destination became health control: %v", doc.ProbeHosts())
 	}
 }
 
@@ -69,13 +92,33 @@ func TestSignVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := ruleset.Verify(pub, raw, "AAAA"); err == nil {
-		t.Fatal("expected verify fail")
+		t.Fatal("invalid signature accepted")
 	}
 	tampered := append([]byte{}, raw...)
 	tampered[len(tampered)-2] ^= 0xff
 	if err := ruleset.Verify(pub, tampered, sig); err == nil {
-		t.Fatal("expected tamper fail")
+		t.Fatal("tampered policy accepted")
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func updateClient(t *testing.T, body []byte, priv ed25519.PrivateKey) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var content string
+		switch req.URL.Path {
+		case "/active.json":
+			content = string(body)
+		case "/active.json.sig":
+			content = ruleset.Sign(priv, body) + "\n"
+		default:
+			t.Errorf("unexpected update path %s", req.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(content)), Header: make(http.Header), Request: req}, nil
+	})}
 }
 
 func TestRemoteUpdate(t *testing.T) {
@@ -83,100 +126,119 @@ func TestRemoteUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := ruleset.BundledActive()
-	remoteBody := []byte(strings.Replace(string(body), `"version": 6`, `"version": 99`, 1))
-	sig := ruleset.Sign(priv, remoteBody)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/active.json", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(remoteBody)
-	})
-	mux.HandleFunc("/active.json.sig", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(sig + "\n"))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	cache := t.TempDir()
-	t.Setenv("OFFVEIL_RULESET_CACHE", cache)
-	t.Setenv("OFFVEIL_RULESET_URL", srv.URL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	snap, err := ruleset.Load(ctx, ruleset.LoadOptions{
-		PublicKeyHex: hex.EncodeToString(pub),
-	})
+	doc, err := ruleset.ParseDocument(ruleset.BundledActive())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Doc.Version != 99 {
-		t.Fatalf("want remote v99, got %d source=%s", snap.Doc.Version, snap.Source)
-	}
-	if snap.Source != "remote" {
-		t.Fatalf("source %s", snap.Source)
-	}
-	cached := filepath.Join(cache, "active.json")
-	if _, err := os.Stat(cached); err != nil {
+	doc.Version = 99
+	body, err := json.Marshal(doc)
+	if err != nil {
 		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	t.Setenv("OFFVEIL_RULESET_CACHE", cache)
+	t.Setenv("OFFVEIL_RULESET_URL", "https://updates.example.test")
+	snap, err := ruleset.Load(context.Background(), ruleset.LoadOptions{PublicKeyHex: hex.EncodeToString(pub), HTTPClient: updateClient(t, body, priv)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Doc.Version != 99 || snap.Source != "remote" {
+		t.Fatalf("remote update was not selected: %+v", snap)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "active.json")); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := ruleset.Load(context.Background(), ruleset.LoadOptions{PublicKeyHex: hex.EncodeToString(pub), SkipRemote: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.Source != "cache" || cached.Doc.Version != 99 {
+		t.Fatalf("verified cache unavailable: %+v", cached)
 	}
 }
 
-func TestLoadEmbeddedSkipRemote(t *testing.T) {
+func TestSignedObsoletePolicyCannotReturnThroughAnySource(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubHex := hex.EncodeToString(pub)
+	for name, raw := range map[string]string{
+		"schema1":          `{"version":6,"packages":[{"id":"obsolete","default_enabled":true,"domains":["obsolete.test"]}]}`,
+		"version6":         `{"schema_version":2,"version":6,"network":{"control_hosts":["one.test","two.test"]},"packages":[]}`,
+		"schema2 packages": `{"schema_version":2,"version":99,"network":{"control_hosts":["one.test","two.test"]},"packages":[{"id":"obsolete","default_enabled":true,"domains":["obsolete.test"]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cache := t.TempDir()
+			body := []byte(raw)
+			jp := filepath.Join(cache, "active.json")
+			sp := jp + ".sig"
+			if err := os.WriteFile(jp, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(sp, []byte(ruleset.Sign(priv, body)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ruleset.LoadFile(jp, sp, pubHex, true); err == nil {
+				t.Fatal("signed obsolete local policy accepted")
+			}
+			if _, err := ruleset.LoadFile(jp, "", pubHex, false); err == nil {
+				t.Fatal("unsigned obsolete local policy accepted")
+			}
+			t.Setenv("OFFVEIL_RULESET_CACHE", cache)
+			t.Setenv("OFFVEIL_RULESET_URL", "https://updates.example.test")
+			for _, remote := range []bool{false, true} {
+				snap, err := ruleset.Load(context.Background(), ruleset.LoadOptions{PublicKeyHex: pubHex, SkipRemote: !remote, HTTPClient: updateClient(t, body, priv)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if snap.Doc.SchemaVersion != 2 || snap.Doc.Version < 7 || snap.Source == "cache" || snap.Source == "remote" || len(snap.Doc.Packages) > 0 {
+					t.Fatalf("obsolete policy restored: %+v", snap)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadSkipRemoteAndChannelMinimum(t *testing.T) {
+	t.Setenv("OFFVEIL_RULESET_CACHE", t.TempDir())
 	snap, err := ruleset.Load(context.Background(), ruleset.LoadOptions{SkipRemote: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Doc.Version < 2 {
-		t.Fatalf("version %d", snap.Doc.Version)
+	if snap.Doc.SchemaVersion != 2 || snap.Doc.Version < 7 {
+		t.Fatalf("unexpected policy: %+v", snap)
 	}
-}
-
-func TestDefaultPublicKeyMatchesChannel(t *testing.T) {
 	ch, err := ruleset.ParseChannel(ruleset.BundledChannel())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ch.PublicKeyHex != ruleset.DefaultPublicKeyHex {
-		t.Fatalf("channel public key != DefaultPublicKeyHex")
+	if ch.PublicKeyHex != ruleset.DefaultPublicKeyHex || ch.MinRulesetVersion < 7 {
+		t.Fatalf("invalid channel: %+v", ch)
 	}
 	if _, err := ruleset.ParsePublicKeyHex(ch.PublicKeyHex); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCommittedRulesetSignature(t *testing.T) {
-	paths := []string{
-		filepath.Join("..", "..", "..", "ruleset", "active.json"),
-		filepath.Join("..", "..", "..", "..", "ruleset", "active.json"),
-	}
-	var jsonPath string
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			jsonPath = p
-			break
-		}
-	}
-	if jsonPath == "" {
-		t.Skip("ruleset/active.json not in this checkout layout")
-	}
-	raw, err := os.ReadFile(jsonPath)
+func TestSourceAndEmbeddedPolicyMatch(t *testing.T) {
+	jp := filepath.Join("..", "..", "..", "ruleset", "active.json")
+	raw, err := os.ReadFile(jp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig, err := os.ReadFile(jsonPath + ".sig")
+	if !bytes.Equal(raw, ruleset.BundledActive()) {
+		t.Fatal("repository source and embedded policy differ")
+	}
+	sig, err := os.ReadFile(jp + ".sig")
+	if os.IsNotExist(err) {
+		t.Log("release CI supplies the signature for the current source")
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := ruleset.VerifyHexKey(ruleset.DefaultPublicKeyHex, raw, string(sig)); err != nil {
-		t.Fatalf("committed active.json.sig: %v", err)
+		t.Fatalf("source signature: %v", err)
 	}
-}
-
-func contains(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }

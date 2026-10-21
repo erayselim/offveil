@@ -53,6 +53,11 @@ import {
 } from "./app-icon";
 import { Lockup } from "./brand";
 import {
+  isBrokenStatus as isBroken,
+  isLimitedStatus,
+  type NetworkStatus,
+} from "./connection-status";
+import {
   detectLocale,
   formatDiagLine,
   formatTestLine,
@@ -105,6 +110,7 @@ type Status = {
   targets: TargetStatus[];
   last_error?: string | null;
   tunnel?: { retry_hint?: boolean } | null;
+  network?: NetworkStatus | null;
 };
 
 type TestReport = {
@@ -126,14 +132,6 @@ type Panel = "home" | "settings" | "appearance";
 type BusyKind = "connect" | "disconnect" | "refresh" | "reset" | null;
 
 const PANEL_EASE = [0.22, 1, 0.36, 1] as const;
-
-function isBroken(status: Status | null): boolean {
-  if (!status?.protection) return false;
-  if (status.state === "degraded") return true;
-  if (status.last_error) return true;
-  if (!status.tunnel || typeof status.tunnel !== "object") return false;
-  return Boolean((status.tunnel as { retry_hint?: boolean }).retry_hint);
-}
 
 function copyFor(
   locale: Locale,
@@ -166,6 +164,9 @@ function copyFor(
   }
   if (isBroken(status)) {
     return { title: m.broken, hint: m.brokenHint };
+  }
+  if (isLimitedStatus(status)) {
+    return { title: m.limited, hint: m.limitedHint };
   }
   if (status?.protection) {
     return { title: m.protected, hint: m.protectedHint };

@@ -1,7 +1,7 @@
 package version
 
 // Version is the core daemon semver. Mac releases set it from the tag with -X.
-var Version = "1.0.4-beta.3"
+var Version = "1.0.4-beta.4"
 
 const (
 	// ContractsVersion matches docs/contracts.md major.

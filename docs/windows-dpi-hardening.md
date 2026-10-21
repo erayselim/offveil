@@ -1,5 +1,9 @@
 # Windows DPI recovery and Discord endpoint coverage
 
+Historical beta.3 investigation. The development version now uses
+[application-independent network routing](network-architecture.md); the package
+and endpoint selection below is retained as release history.
+
 The 1.0.4-beta.2 support report contained repeated protected-path failures,
 two sing-box exits classified as TUN setup errors and an offline export with
 no core IPC listener. It did not contain the underlying Windows error or a

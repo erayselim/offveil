@@ -13,6 +13,7 @@ const (
 	AdapterName = "offveil"
 	TunnelType  = "offveil"
 	TunIPv4     = "10.87.0.1/30"
+	TunIPv6     = "fd87:6f66:7665::1/126"
 	DefaultMTU  = 1280
 )
 
@@ -32,24 +33,17 @@ type Config struct {
 	// SkipAdapter leaves the TUN to sing-box (contracts.md §6.1). Snapshot + resolve only.
 	// Darwin always behaves as SkipAdapter (no Wintun).
 	SkipAdapter bool
-	// SplitDefault means the external dataplane already captures public IPv4;
-	// seed /32 routes and later prefix expansion are unnecessary.
+	// SplitDefault means the external dataplane already captures public traffic;
+	// seed host routes and later prefix expansion are unnecessary.
 	SplitDefault bool
 	MTU          int
 }
 
 // DefaultConfig returns capture defaults. Engine fills resolve hosts from the ruleset.
 func DefaultConfig() Config {
-	hosts := []string{
-		"discord.com",
-		"gateway.discord.gg",
-		"cdn.discordapp.com",
-		"media.discordapp.net",
-		"discord.gg",
-	}
 	return Config{
 		Allowlist:    nil, // filled by resolve + optional seed
-		ResolveHosts: hosts,
+		ResolveHosts: nil,
 		ApplyRoutes:  true,
 		MTU:          DefaultMTU,
 	}
@@ -120,7 +114,7 @@ func NeedsPrefixExpansion(s Session) bool {
 	return true
 }
 
-// ResolveHostsToPrefixes looks up A records and returns /32 prefixes (IPv4).
+// ResolveHostsToPrefixes returns /32 IPv4 and /128 IPv6 destination prefixes.
 // If resolve is nil, falls back to net.LookupIP (system DNS - avoid in production).
 // Lookups run in parallel; overall budget is 12s so a hung resolver cannot stall engine start.
 func ResolveHostsToPrefixes(hosts []string, resolve ResolveFunc) ([]netip.Prefix, error) {
@@ -147,7 +141,7 @@ func ResolveHostsToPrefixes(hosts []string, resolve ResolveFunc) ([]netip.Prefix
 			if resolve != nil {
 				addrs, err = resolve(ctx, h)
 			} else {
-				addrs, err = systemLookupA(h)
+				addrs, err = systemLookup(ctx, h)
 			}
 			ch <- one{addrs: addrs, err: err}
 		}()
@@ -166,10 +160,11 @@ func ResolveHostsToPrefixes(hosts []string, resolve ResolveFunc) ([]netip.Prefix
 			continue
 		}
 		for _, addr := range r.addrs {
-			if !addr.Is4() {
+			if !addr.IsValid() {
 				continue
 			}
-			out = append(out, netip.PrefixFrom(addr, 32))
+			addr = addr.Unmap()
+			out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
 		}
 	}
 	if len(out) == 0 && firstErr != nil {
@@ -178,16 +173,15 @@ func ResolveHostsToPrefixes(hosts []string, resolve ResolveFunc) ([]netip.Prefix
 	return out, nil
 }
 
-func systemLookupA(host string) ([]netip.Addr, error) {
-	ips, err := net.LookupIP(host)
+func systemLookup(ctx context.Context, host string) ([]netip.Addr, error) {
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
 		return nil, err
 	}
 	var out []netip.Addr
 	for _, ip := range ips {
-		addr, ok := netip.AddrFromSlice(ip.To4())
-		if ok {
-			out = append(out, addr)
+		if ip.IsValid() {
+			out = append(out, ip.Unmap())
 		}
 	}
 	return out, nil

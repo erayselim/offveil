@@ -1,15 +1,16 @@
 # Third-party components
 
 offveil (Apache-2.0) redistributes the following sidecar binaries in the
-Windows installer. They run as separate processes (or a signed DLL loaded
+Windows and Mac installers. They run as separate processes (or a signed DLL loaded
 via the Permitted API). This is aggregation, not a combined work.
 
-Corresponding source for GPL components is the pinned upstream tag, not a
-fork. Hashes below are fail-closed in `offveil-core/scripts/fetch-*.ps1`.
+The sing-box source archive is included in each shared release. Its upstream
+source is unchanged; `offveil-core/tools/singbox` contains the dependency lock
+and build recipe used for both platforms. Source and dependency checksums are
+verified before building, and a source vulnerability scan must pass.
 
 Darwin sidecars are **not** in the Windows installer. Same tags, different
-assets: `sing-box-1.13.14-darwin-arm64.tar.gz` (SHA in
-`fetch-sing-box-darwin-arm64.sh`) and ByeDPI `v0.17.3` built with `make`
+builds: sing-box from the same pinned source and ByeDPI `v0.17.3` with `make`
 (`build-byedpi-darwin.sh`). The Linux `*-aarch64.tar.gz` ByeDPI release is
 not used. The Darwin ByeDPI build applies the Apple-only outbound interface
 binding patch in `offveil-core/patches/byedpi-darwin-bind-interface.patch`.
@@ -22,9 +23,10 @@ are preserved. The Windows binary is unmodified.
 |---|---|
 | Upstream | https://github.com/SagerNet/sing-box |
 | Tag | `v1.13.14` |
-| Asset | `sing-box-1.13.14-windows-amd64.zip` |
-| ZIP SHA-256 | `f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341` |
-| Binary | `sing-box.exe` (SOCKS selective tunnel) |
+| Release source asset | `sing-box-1.13.14-source.zip` |
+| Source module checksum | `h1:p9/eqwilCgzyR/DpKM8hq7ppvzPIq1QMLgZWT3Cbg10=` |
+| Binary | `sing-box.exe` / `sing-box` (general network tunnel) |
+| Build | Go 1.26.10; security-updated dependency lock in `offveil-core/tools/singbox` |
 | License files | `offveil-core/third_party/sing-box/LICENSE`, `COPYING` (GNU GPL-3.0) |
 | Source | https://github.com/SagerNet/sing-box/tree/v1.13.14 |
 

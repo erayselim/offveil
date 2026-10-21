@@ -80,8 +80,16 @@ func main() {
 		supportFlags := flag.NewFlagSet("support", flag.ExitOnError)
 		output := supportFlags.String("output", "", "ZIP destination (default: Downloads)")
 		uiError := supportFlags.String("ui-error", "", "last UI operation error")
-		checkDiscord := supportFlags.Bool("check-discord", false, "check Discord endpoints and Windows update download (adds up to 26 seconds)")
+		checkNetwork := supportFlags.Bool("check-network", false, "check public DNS/TCP/TLS/HTTP over OS routes (up to 24 seconds)")
+		var checkURLs, checkTCP networkTargetFlags
+		supportFlags.Var(&checkURLs, "check-url", "additional public HTTPS URL; repeatable, URL path/query are not saved")
+		supportFlags.Var(&checkTCP, "check-tcp", "additional public host:port TCP connect check; repeatable")
 		_ = supportFlags.Parse(os.Args[2:])
+		networkOptions := support.NetworkOptions{URLs: checkURLs, TCP: checkTCP}
+		if err := support.ValidateNetworkOptions(networkOptions); err != nil {
+			fmt.Fprintf(os.Stderr, "support: %v\n", err)
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "Collecting support information; a stopped or unreachable daemon is supported.")
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		in := support.Collect(ctx, requestRPC)
@@ -92,10 +100,10 @@ func main() {
 			in.System["last_ui_error"] = support.RedactLocalError(*uiError)
 		}
 		cancel()
-		if *checkDiscord {
-			fmt.Fprintln(os.Stderr, "Checking public Discord endpoints over current OS routes (IPv4 and IPv6; no account required).")
-			checkCtx, checkCancel := context.WithTimeout(context.Background(), support.DiscordCheckBudget)
-			in.System["discord_connectivity"] = support.CheckDiscord(checkCtx)
+		if *checkNetwork || len(checkURLs)+len(checkTCP) > 0 {
+			fmt.Fprintln(os.Stderr, "Checking public endpoints over current OS routes (IPv4 and IPv6; no account required).")
+			checkCtx, checkCancel := context.WithTimeout(context.Background(), support.NetworkCheckBudget)
+			in.System["network_connectivity"] = support.CheckNetwork(checkCtx, networkOptions)
 			checkCancel()
 		}
 		meta, err := support.Write(in, *output)
@@ -127,6 +135,19 @@ func main() {
 	}
 }
 
+// Flag errors and help never echo a supplied URL or query token.
+type networkTargetFlags []string
+
+func (targets *networkTargetFlags) String() string { return fmt.Sprintf("%d targets", len(*targets)) }
+
+func (targets *networkTargetFlags) Set(value string) error {
+	if len(*targets) >= 6 || len(value) > 4096 {
+		return fmt.Errorf("at most six additional targets, each at most 4096 bytes, are supported")
+	}
+	*targets = append(*targets, value)
+	return nil
+}
+
 func printHelp() {
 	fmt.Fprintf(os.Stderr, `offveil-core - offveil protection daemon
 
@@ -141,7 +162,8 @@ Usage:
   offveil-core status          Query service status
   offveil-core client -method ping|status|start|stop|restart|health|test|repair
   offveil-core support [-output /path/to/support.zip]  Save a ZIP without requiring the daemon
-    [-check-discord]           Include public Discord and Windows updater checks
+    [-check-network]           Include public DNS/TCP/TLS/HTTP checks over OS routes
+    [-check-url https://host/path] [-check-tcp host:port]  Additional explicit public targets
   offveil-core check-payload   Validate native strategy arguments with the bundled sidecar
   offveil-core version
 

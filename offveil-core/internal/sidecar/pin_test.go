@@ -30,20 +30,22 @@ func TestDarwinFetchScriptsPinWindowsVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(winBox), `$Version = "1.13.14"`) {
-		t.Fatal("windows sing-box version drifted")
+	// Both native entry points share one source/dependency lock. This prevents
+	// one platform silently returning to a prebuilt binary with an older Go.
+	for _, script := range [][]byte{winBox, darBox} {
+		if !strings.Contains(string(script), "go run build.go") || !strings.Contains(string(script), "tools/singbox") {
+			t.Fatal("sing-box entry points must use the shared verified source build")
+		}
+		if strings.Contains(string(script), "releases/download") {
+			t.Fatal("sing-box must not use an unpatched upstream binary")
+		}
 	}
-	if !strings.Contains(string(darBox), `VERSION="1.13.14"`) {
-		t.Fatal("darwin sing-box must stay on 1.13.14")
+	lock, err := os.ReadFile(filepath.Join("..", "..", "tools", "singbox", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(darBox), "darwin-arm64.tar.gz") {
-		t.Fatal("darwin asset name")
-	}
-	if !strings.Contains(string(darBox), "73e8967b0fc08e17bce4263ca56ebc394822401a16497a1c4e02316c888202ab") {
-		t.Fatal("darwin sing-box SHA pin missing")
-	}
-	if strings.Contains(string(darBox), "sing-box-${VERSION}-linux") {
-		t.Fatal("must not fetch linux sing-box")
+	if !strings.Contains(string(lock), "require github.com/sagernet/sing-box v1.13.14") {
+		t.Fatal("shared sing-box source version drifted")
 	}
 
 	if !strings.Contains(string(winDPI), `$Version = "0.17.3"`) {

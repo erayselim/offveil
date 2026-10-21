@@ -59,7 +59,7 @@ type Config struct {
 	Sink Sink
 	// Resolve looks up host via DoH (required when strategy uses --no-domain).
 	Resolve func(ctx context.Context, host string) (netip.Addr, error)
-	// ProbeHost is checked once after start (default discord.com). Empty skips.
+	// ProbeHost is an optional explicit endpoint check. Empty skips.
 	ProbeHost string
 	// ProbeTimeout for TLS-via-SOCKS check.
 	ProbeTimeout time.Duration
@@ -78,7 +78,7 @@ func DefaultConfig() Config {
 		ListenIP:     "127.0.0.1",
 		ListenPort:   18080,
 		Strategy:     NativeSafeStrategy(),
-		ProbeHost:    "discord.com",
+		ProbeHost:    "",
 		ProbeTimeout: 8 * time.Second,
 	}
 }

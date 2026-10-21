@@ -1,5 +1,6 @@
 *.sh text eol=lf
 ruleset/*.json text eol=lf
+offveil-core/internal/ruleset/bundled/*.json text eol=lf
 ruleset/*.sig binary
 
 # Unified patches contain single-space context lines and must retain LF endings.

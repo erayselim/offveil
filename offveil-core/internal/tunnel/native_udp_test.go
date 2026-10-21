@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -103,8 +102,9 @@ func TestNativeUDPClient(t *testing.T) {
 	}
 }
 
-// Exercise sing-box's real process lookup and raw UDP routing; no TUN or public traffic.
-func TestNativeApplicationUDPRouting(t *testing.T) {
+// Exercise raw UDP through a remote gateway without DNS or process metadata.
+// All destinations are owned loopback fixtures and the TUN inbound is removed.
+func TestNativeNetworkUDPRouting(t *testing.T) {
 	bin := os.Getenv("OFFVEIL_SINGBOX_TEST")
 	if bin == "" {
 		t.Skip("set OFFVEIL_SINGBOX_TEST to the pinned sing-box binary")
@@ -162,8 +162,8 @@ func TestNativeApplicationUDPRouting(t *testing.T) {
 	}
 	port := reservation.Addr().(*net.TCPAddr).Port
 	_ = reservation.Close()
-	build, err := BuildSingBox(BuildParams{Provider: ProviderDesync, EnableTUN: true, ListenPort: port,
-		SpecialDomains: []string{"discord.com"}, DesyncSOCKSHost: "127.0.0.1", DesyncSOCKSPort: socks.Addr().(*net.TCPAddr).Port})
+	build, err := BuildSingBox(BuildParams{NetworkMode: true, Provider: ProviderWARP, EnableTUN: false, ListenPort: port,
+		UpstreamSOCKS: socks.Addr().String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,8 @@ func TestNativeApplicationUDPRouting(t *testing.T) {
 	route["auto_detect_interface"] = false // This test substitutes loopback for public destinations.
 	var rules []any
 	for _, raw := range route["rules"].([]any) {
-		if raw.(map[string]any)["ip_is_private"] != true {
+		rule := raw.(map[string]any)
+		if rule["ip_is_private"] != true && !(rule["ip_cidr"] != nil && rule["outbound"] == "direct") {
 			rules = append(rules, raw)
 		}
 	}
@@ -208,51 +209,14 @@ func TestNativeApplicationUDPRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientPath := filepath.Join(dir, "Discord")
-	if runtime.GOOS == "windows" {
-		clientPath += ".exe"
-	}
-	client, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(clientPath, client, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	helper := exec.CommandContext(ctx, clientPath, "-test.run=^TestNativeUDPClient$")
+	helper := exec.CommandContext(ctx, self, "-test.run=^TestNativeUDPClient$")
 	helper.Env = append(os.Environ(), "OFFVEIL_UDP_TEST_PROXY="+proxy)
 	if out, err := helper.CombinedOutput(); err != nil {
 		t.Fatalf("UDP client: %v\n%s\n%s", err, out, tail.String())
 	}
 	if err := <-seen; err != nil {
 		t.Fatal(err)
-	}
-	// An unrelated game's UDP must reach its destination without visiting ByeDPI.
-	direct, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer direct.Close()
-	go func() {
-		var packet [512]byte
-		_ = direct.SetDeadline(time.Now().Add(5 * time.Second))
-		n, peer, err := direct.ReadFromUDP(packet[:])
-		if err == nil {
-			_, _ = direct.WriteToUDP(packet[:n], peer)
-		}
-	}()
-	gamePath := filepath.Join(dir, "RobloxPlayer")
-	if runtime.GOOS == "windows" {
-		gamePath += ".exe"
-	}
-	if err := os.WriteFile(gamePath, client, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	game := exec.CommandContext(ctx, gamePath, "-test.run=^TestNativeUDPClient$")
-	game.Env = append(os.Environ(), "OFFVEIL_UDP_TEST_PROXY="+proxy, "OFFVEIL_UDP_TEST_PORT="+strconv.Itoa(direct.LocalAddr().(*net.UDPAddr).Port))
-	if out, err := game.CombinedOutput(); err != nil {
-		t.Fatalf("game UDP: %v\n%s\n%s", err, out, tail.String())
 	}
 }

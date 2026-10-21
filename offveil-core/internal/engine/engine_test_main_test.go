@@ -14,7 +14,7 @@ func TestMain(m *testing.M) {
 	}
 	_ = os.Setenv("OFFVEIL_POLICY_CACHE", dir)
 	_ = os.Setenv("OFFVEIL_DIAG_DIR", filepath.Join(dir, "diagnostics"))
-	_ = os.Setenv("OFFVEIL_CANARY_BG", "0")
+	_ = os.Setenv("OFFVEIL_NETWORK_BG", "0")
 	_ = os.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
 	_ = os.Setenv("OFFVEIL_RULESET_CACHE", filepath.Join(dir, "ruleset-cache"))
 	code := m.Run()
@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// uniquePolicyCache forces a fresh ASN path file for tests that share ASN 9121.
+// uniquePolicyCache isolates network cache files between fixtures.
 func uniquePolicyCache(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()

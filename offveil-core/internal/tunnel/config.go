@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/udp"
 )
 
@@ -57,6 +58,11 @@ type SingBoxBuild struct {
 
 // BuildParams is the full sing-box generator input (SOCKS + optional TUN dataplane).
 type BuildParams struct {
+	NetworkMode   bool
+	ProviderOnly  bool
+	NetworkRoutes []ruleset.RouteRule
+	// UpstreamSOCKS is the already verified remote provider, never a public endpoint.
+	UpstreamSOCKS    string
 	Provider         ProviderID
 	WARP             *WARPProfile
 	Reality          *RealityCredentials
@@ -68,6 +74,7 @@ type BuildParams struct {
 	EnableTUN        bool
 	TUNInterface     string
 	TUNAddress       string
+	TUNAddress6      string
 	TUNMTU           int
 	RouteCIDRs       []string
 	ExcludeCIDRs     []string
@@ -78,7 +85,7 @@ type BuildParams struct {
 	AllowlistOutbound string
 	DesyncSOCKSHost   string
 	DesyncSOCKSPort   int
-	// SpecialDomains are suffixes whose UDP goes to ByeDPI (Discord/IMVU voice).
+	// SpecialDomains are legacy explicit UDP routes.
 	SpecialDomains []string
 	DNSAddress     string
 }
@@ -101,6 +108,9 @@ func BuildSingBoxConfig(provider ProviderID, warp *WARPProfile, reality *Reality
 // route_address only (never 0.0.0.0/0). Empty TUN CIDRs become split-default
 // (0.0.0.0/1 + 128.0.0.0/1) for local HTTPS desync — not full WARP.
 func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
+	if p.NetworkMode {
+		return buildNetworkConfig(p)
+	}
 	if p.ListenIP == "" {
 		p.ListenIP = "127.0.0.1"
 	}
@@ -251,9 +261,6 @@ func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
 		map[string]any{"domain_suffix": p.DirectDomains, "outbound": "direct"},
 		map[string]any{"ip_is_private": true, "outbound": "direct"},
 	)
-	if p.EnableTUN {
-		rules = append(rules, applicationUDPRules(p, true)...)
-	}
 	quic := udp.QuicRejectRule()
 	quic["domain_suffix"] = p.ProtectedDomains
 	route["rules"] = append(rules, quic)
@@ -379,14 +386,14 @@ func prependDesyncOutbound(cfg map[string]any, p BuildParams) {
 func appendPolicyRules(cfg map[string]any, p BuildParams, socksOutbound string) {
 	rules := cfg["route"].(map[string]any)["rules"].([]any)
 	if p.EnableTUN {
-		// Special tunnel suffixes (Discord IP-drop) — TCP + UDP.
+		// Legacy explicit tunnel suffixes apply to both TCP and UDP.
 		if len(p.TunnelDomains) > 0 && (p.Provider == ProviderWARP || p.Provider == ProviderReality) {
 			rules = append(rules, map[string]any{
 				"domain_suffix": p.TunnelDomains,
 				"outbound":      "tunnel",
 			})
 		}
-		// Discord/IMVU voice UDP via ByeDPI; everything else UDP stays ISS.
+		// Legacy explicit UDP suffix routes; all other datagrams stay direct.
 		if len(p.SpecialDomains) > 0 {
 			rules = append(rules, map[string]any{
 				"domain_suffix": p.SpecialDomains,
@@ -394,7 +401,6 @@ func appendPolicyRules(cfg map[string]any, p BuildParams, socksOutbound string) 
 				"outbound":      "desync",
 			})
 		}
-		rules = append(rules, applicationUDPRules(p, false)...)
 		rules = append(rules, map[string]any{
 			"network":  "udp",
 			"outbound": "direct",

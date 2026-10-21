@@ -23,10 +23,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: |
             offveil-core/go.sum
             offveil-core/tests/tunudp/go.sum
+            offveil-core/tools/singbox/go.sum
       - name: Test
         working-directory: offveil-core
         env:
@@ -47,7 +48,7 @@ jobs:
       - name: Packet-level UDP reassembly regression
         working-directory: offveil-core/tests/tunudp
         run: go test -tags=with_gvisor -timeout=60s ./...
-      - name: Fetch sing-box darwin-arm64
+      - name: Build pinned sing-box darwin-arm64
         working-directory: offveil-core
         run: bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
       - name: Build ByeDPI from pinned tag
@@ -57,7 +58,7 @@ jobs:
         run: python3 scripts/byedpi-darwin-resource-test.py offveil-core/dist/ciadpi
       - name: Validate generated sing-box routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|NetworkUDPRouting|NetworkOpaqueTCPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
       - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
         working-directory: offveil-core
         run: |
@@ -175,7 +176,7 @@ jobs:
         run: |
           npm ci
           npm run typecheck
-          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs ../scripts/connection-status.test.cjs
       - name: Stage real Darwin sidecars
         run: bash ./scripts/stage-bundle-darwin.sh
       - name: Cargo test (unix socket, launchd, LaunchAgent)

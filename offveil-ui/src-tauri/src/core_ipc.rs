@@ -64,6 +64,8 @@ pub struct Status {
     pub health: Option<String>,
     #[serde(default)]
     pub tunnel: Option<Value>,
+    #[serde(default)]
+    pub network: Option<Value>,
 }
 
 impl Status {
@@ -79,6 +81,7 @@ impl Status {
             last_error: None,
             health: None,
             tunnel: None,
+            network: None,
         }
     }
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/probe"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
+	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
 func activeBackgroundEngine(t *testing.T) *Engine {
@@ -26,6 +27,7 @@ func activeBackgroundEngine(t *testing.T) *Engine {
 	rs := ruleset.MustLoadEmbedded()
 	e.rulesetSnap = &rs
 	e.policy.ObserveNetwork(netinfo.Info{ASN: "9121", Fingerprint: "network-a"})
+	e.tun = tunnel.NewFakeSession(tunnel.Info{Up: true, Healthy: true, Mode: "remote", ProviderID: tunnel.ProviderWARP})
 	t.Cleanup(func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
@@ -51,54 +53,12 @@ func replaceBackgroundSession(e *Engine) {
 	e.policy.ObserveNetwork(netinfo.Info{ASN: "13335", Fingerprint: "network-b"})
 }
 
-func TestCanaryKeepsLatestResultPerHost(t *testing.T) {
-	e := activeBackgroundEngine(t)
-	previous := &probe.Report{Results: []probe.Result{
-		{Target: "discord.com", Class: probe.ClassDPIReset},
-		{Target: "youtube.com", At: time.Unix(0, 0)},
-	}}
-	e.lastProbe = previous
-	rounds := 0
-	e.runProbe = func(context.Context, *offdns.DoHClient, []string) probe.Report {
-		rounds++
-		return probe.Report{Results: []probe.Result{{Target: "youtube.com", Class: probe.ClassOpen, At: time.Unix(int64(rounds), 0)}}}
-	}
-	for range 20 {
-		e.probeCanary()
-	}
-	if len(e.lastProbe.Results) != 2 || e.lastProbe.Results[0].Target != "discord.com" || e.lastProbe.Results[1].At.Unix() != 20 {
-		t.Fatalf("latest canary and special results not retained: %+v", e.lastProbe.Results)
-	}
-	if previous.Results[1].At.Unix() != 0 {
-		t.Fatal("canary mutated a previously published probe report")
-	}
-}
-
-func TestCanaryDiscardsPreviousSessionResult(t *testing.T) {
-	e := activeBackgroundEngine(t)
-	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	e.runProbe = func(context.Context, *offdns.DoHClient, []string) probe.Report {
-		close(entered)
-		<-release // Deliberately ignore cancellation to exercise the result guard.
-		return probe.Report{Results: []probe.Result{{Target: "youtube.com", Class: probe.ClassOpen}}}
-	}
-	go func() { defer close(done); e.probeCanary() }()
-	releaseProbe := sync.OnceFunc(func() { close(release); <-done })
-	defer releaseProbe()
-	awaitBackground(t, entered)
-	replaceBackgroundSession(e)
-	releaseProbe()
-	if _, ok := e.policy.Lookup("youtube.com"); ok || e.lastProbe != nil {
-		t.Fatal("old canary result reached the new session")
-	}
-}
-
 func TestReprobeDiscardsPreviousSessionNetworkAndProbe(t *testing.T) {
 	for _, stage := range []string{"network", "probe"} {
 		t.Run(stage, func(t *testing.T) {
 			e := activeBackgroundEngine(t)
 			e.policy.OnDesyncFail(desync.FailSignal{
-				Target: "discord.com", Class: desync.FailReset,
+				Target: "blocked.test", Class: desync.FailReset,
 				At: time.Now().Add(-24 * time.Hour),
 			})
 			entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -112,7 +72,7 @@ func TestReprobeDiscardsPreviousSessionNetworkAndProbe(t *testing.T) {
 			e.runProbe = func(context.Context, *offdns.DoHClient, []string) probe.Report {
 				close(entered)
 				<-release
-				return probe.Report{Results: []probe.Result{{Target: "discord.com", Class: probe.ClassDPIReset}}}
+				return probe.Report{Results: []probe.Result{{Target: "blocked.test", Class: probe.ClassDPIReset}}}
 			}
 			go func() { defer close(done); e.silentReprobe() }()
 			releaseWork := sync.OnceFunc(func() { close(release); <-done })
@@ -123,7 +83,7 @@ func TestReprobeDiscardsPreviousSessionNetworkAndProbe(t *testing.T) {
 			if e.policy.ASN() != "13335" || e.policy.Fingerprint() != "network-b" {
 				t.Fatal("old network lookup replaced new network identity")
 			}
-			if _, ok := e.policy.Lookup("discord.com"); ok {
+			if _, ok := e.policy.Lookup("blocked.test"); ok {
 				t.Fatal("old probe wrote a policy decision into the new session")
 			}
 		})
@@ -182,30 +142,14 @@ func TestRepairSerializesStartAndKeepsStatusReadable(t *testing.T) {
 	awaitBackground(t, started)
 }
 
-func TestStatusReportsExitedSidecarAsDegraded(t *testing.T) {
+func TestStatusReportsRequiredGatewayExitAsDegraded(t *testing.T) {
 	e := activeBackgroundEngine(t)
-	des := desync.NewFakeSession(desync.Info{})
-	e.des = des
 	if e.Status().Health != "ok" {
 		t.Fatal("healthy sidecar reported degraded")
 	}
-	_ = des.Close()
+	_ = e.tun.Close()
 	st := e.Status()
 	if st.State != StateDegraded || st.Health != "degraded" || st.LastError == nil {
 		t.Fatalf("sidecar exit not reflected: %+v", st)
 	}
-}
-
-func TestSessionCancellationStopsCanaryWork(t *testing.T) {
-	e := activeBackgroundEngine(t)
-	entered, done := make(chan struct{}), make(chan struct{})
-	e.runProbe = func(ctx context.Context, _ *offdns.DoHClient, _ []string) probe.Report {
-		close(entered)
-		<-ctx.Done()
-		return probe.Report{}
-	}
-	go func() { defer close(done); e.probeCanary() }()
-	awaitBackground(t, entered)
-	replaceBackgroundSession(e)
-	awaitBackground(t, done)
 }

@@ -8,7 +8,7 @@ const NRPTCatchAll = "."
 
 // NRPTNamespaces turns domains into Windows NRPT namespace entries.
 // Catch-all (".", "*", "any") is kept as ".". Other names emit apex plus
-// leading-dot suffix (discord.com + .discord.com) so the registrable domain
+// leading-dot suffix (example.test + .example.test) so the registrable domain
 // and its subdomains both match.
 func NRPTNamespaces(domains []string) []string {
 	seen := map[string]struct{}{}

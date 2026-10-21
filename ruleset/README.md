@@ -1,67 +1,60 @@
-# Ruleset
+# Network policy
 
-Allowlist and DIRECT packages. Format: [docs/contracts.md](../docs/contracts.md)
-section 5.
+`active.json` version 7 uses schema 2. The default policy applies to public
+network traffic and contains no built-in destination packages or exceptions.
 
-| File | |
-|------|--|
-| `active.json` | Discord + IMVU + crisis canary + Steam/Riot/Epic/Faceit DIRECT (v6) |
-| `active.json.sig` | Ed25519 signature (base64) |
-| `channel.json` | Update channel (`releases/latest/download`) |
-| `keys/` | Public key. Private key is a CI secret only (`REVOKED.md`) |
+```json
+{
+  "schema_version": 2,
+  "version": 7,
+  "updated_at": "2026-10-21",
+  "network": {
+    "control_hosts": [
+      "www.cloudflare.com",
+      "www.microsoft.com",
+      "example.com"
+    ],
+    "routes": []
+  },
+  "packages": []
+}
+```
 
-## Discord
+`control_hosts` are independent network-health checks. They do not define which
+applications receive protection. The engine evaluates the aggregate result;
+a failed destination alone is not evidence that the whole network path failed.
+The parser requires at least two distinct hostnames.
 
-- **domains / resolve_hosts:** web, API, gateway, CDN, media, plus
-  `latency.discord.media`
-- **domain_suffix:** `.discord.gg` / `.discord.media` for voice and stream
-  hosts that rotate
-- **probe_hosts:** `discord.com`
-- Voice UDP follows the TCP cascade (desync uses ByeDPI UDP ASSOCIATE,
-  tunnel uses sing-box SOCKS UDP). Sniffed QUIC is dropped so the
-  client falls back to TCP TLS. Raw game UDP on port 443 is not QUIC.
+Optional `network.routes` entries select `direct` for explicit `domains` or
+`domain_suffix` destinations. Other route paths are rejected. These are user choices;
+the distributed policy starts with no routing exceptions. For example:
 
-No IP ranges. Discord RTC hosts change often; `domain_suffix` is enough
-for the selective tunnel.
+```json
+{
+  "domains": ["internal.example.test"],
+  "domain_suffix": ["example.test"],
+  "path": "direct"
+}
+```
 
-## IMVU / legacy-cdn
+`packages` is optional and must be empty. Nonempty legacy package lists are
+rejected with a migration error; they cannot silently restore destination-based
+behavior. DNS observation counts actual requests; no related hostnames are
+inferred from names or bundled seed lists.
 
-Classic (`IMVUClient.exe`) ignores the system proxy. Domain expand records
-CDN siblings when the stub sees a lookup under `.imvu.com`.
+## Signed updates and migration
 
-- **resolve_hosts:** `secure` / `api` / `chat` plus Akamai CDN
-  (`webasset-akm`, `static-akm`, `userimages-akm`, `asset-server-akm`)
-- **domain_suffix:** `.imvu.com`
-- **probe_hosts:** `secure.imvu.com`
+- `channel.json` and its embedded copy require ruleset version 7 or later.
+- Every cache, local-file, and remote document must use schema 2. A valid
+  signature on an older schema cannot restore the obsolete policy.
+- Remote and cached files require a valid Ed25519 signature. Failed validation
+  keeps the accepted local policy or falls back to the embedded network policy.
+- The repository source and embedded `active.json` are identical. Release CI
+  creates `active.json.sig` with its private signing secret. The old source
+  signature was removed because it signed different content; no replacement
+  development key or placeholder signature is supplied.
+- The private key remains a CI secret. `keys/` contains the public verification
+  key and key history.
 
-## Games (always direct)
-
-`path_force: direct` for store and launcher HTTPS. Match UDP is not listed —
-the TUN protocol split (`UDP → direct`) keeps it on the ISP path.
-
-- Steam/Valve suffixes
-- Riot: `riotgames.com`, `riotcdn.net`, `pvp.net`, `playvalorant.com`,
-  `leagueoflegends.com`
-- Epic: `epicgames.com`, `unrealengine.com` (no `*.akamaized.net`)
-- Faceit: `faceit.com`
-
-Skipped by `MatchPackage`, expand, and probe.
-
-## Canary (crisis throttle)
-
-`kind: canary`. Not a status card. Session-start probe stays Discord/IMVU.
-
-Background TLS probe of `www.youtube.com`, `www.instagram.com`, `x.com`,
-`www.tiktok.com`, `web.telegram.org`. `throttle_suspect` or `ip_drop` sends
-the package suffixes (YouTube/Meta/X/TikTok/Telegram/Signal) to the selective
-tunnel. Open / DPI stay on default HTTPS desync. Control-host slow path does
-not promote to tunnel.
-
-## Updates
-
-1. Core starts from the bundled or beside-exe `active.json`.
-2. `channel.json` `base_url` plus `active.json` (and `.sig`) are fetched.
-3. Failed Ed25519 verify drops the download; cache or bundled stays.
-4. A verified file is written under `%ProgramData%\offveil\ruleset\`.
-
-`OFFVEIL_RULESET_URL` overrides `base_url` for tests.
+`OFFVEIL_RULESET_URL` overrides the update URL for controlled tests. Production
+signature verification remains required for downloaded and cached updates.

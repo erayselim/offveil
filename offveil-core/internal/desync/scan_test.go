@@ -24,11 +24,11 @@ func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
 	var trials []*desync.FakeSession
 	var hosts []string
 	res := desync.Scan(context.Background(), desync.ScanConfig{
-		Host: "secure.imvu.com", VerifyHosts: []string{"discord.com", "secure.imvu.com"},
+		Host: "legacy.example.test", VerifyHosts: []string{"modern.example.test", "legacy.example.test"},
 		Concurrency: 1,
 		ConnIP:      "192.0.2.10", BindInterface: "Wi-Fi",
 		Candidates: []desync.Strategy{
-			{ID: "imvu-only", Args: []string{"--split", "1"}},
+			{ID: "one-target", Args: []string{"--split", "1"}},
 			{ID: "both", Args: []string{"--split", "2"}},
 		},
 		Start: func(cfg desync.Config) (desync.Session, error) {
@@ -45,7 +45,7 @@ func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
 				hosts = append(hosts, host)
 				mu.Unlock()
 				class := desync.FailOK
-				if cfg.Strategy.ID == "imvu-only" && host == "discord.com" {
+				if cfg.Strategy.ID == "one-target" && host == "modern.example.test" {
 					class = desync.FailReset
 				}
 				return desync.FailSignal{Target: host, Class: class}
@@ -62,12 +62,32 @@ func TestScanRejectsStrategyThatBreaksAnAlreadyWorkingTarget(t *testing.T) {
 	}
 }
 
+func TestScanIndependentQuorumSurvivesOneStalledControl(t *testing.T) {
+	result := desync.Scan(context.Background(), desync.ScanConfig{
+		Host: "a.control.test", VerifyHosts: []string{"a.control.test", "b.control.test", "unavailable.control.test"}, VerifyQuorum: 2,
+		Timeout: time.Second, PerStrategy: 40 * time.Millisecond, Candidates: []desync.Strategy{{ID: "fixture", Args: []string{"--split", "1"}}},
+		Start: func(cfg desync.Config) (desync.Session, error) {
+			return &hostTrialSession{desync.NewFakeSession(desync.Info{Up: true}), func(host string) desync.FailSignal {
+				class := desync.FailOK
+				if host == "unavailable.control.test" {
+					<-cfg.Context.Done()
+					class = desync.FailTimeout
+				}
+				return desync.FailSignal{Target: host, Class: class}
+			}}, nil
+		},
+	})
+	if !result.OK || len(result.Tried) != 1 || result.Tried[0].Class != desync.FailOK || len(result.Tried[0].Checks) != 3 {
+		t.Fatalf("one unavailable host vetoed a verified quorum: %+v", result)
+	}
+}
+
 func TestScanSlowFirstCandidateCannotStarveWorkingAlternative(t *testing.T) {
 	blocked := make(chan struct{})
 	var active, peak atomic.Int32
 	var trials sync.Map
 	res := desync.Scan(context.Background(), desync.ScanConfig{
-		Host: "discord.com", Timeout: time.Second, PerStrategy: time.Second,
+		Host: "modern.example.test", Timeout: time.Second, PerStrategy: time.Second,
 		Candidates: []desync.Strategy{{ID: "slow", Args: []string{"--split", "1"}}, {ID: "works", Args: []string{"--tlsrec", "1+s"}}},
 		Start: func(cfg desync.Config) (desync.Session, error) {
 			n := active.Add(1)
@@ -102,7 +122,7 @@ func TestScanSharesDeadlineAcrossConcurrentTargetChecks(t *testing.T) {
 	var entered atomic.Int32
 	all := make(chan struct{})
 	res := desync.Scan(context.Background(), desync.ScanConfig{
-		Host: "discord.com", VerifyHosts: []string{"updates.discord.com", "gateway.discord.gg"},
+		Host: "modern.example.test", VerifyHosts: []string{"updates.modern.example.test", "gateway.discord.gg"},
 		Timeout: time.Second, PerStrategy: time.Second,
 		Candidates: []desync.Strategy{{ID: "all", Args: []string{"--split", "1"}}},
 		Start: func(cfg desync.Config) (desync.Session, error) {
@@ -129,7 +149,7 @@ func TestScanCancellationRejectsLateSuccess(t *testing.T) {
 	defer cancel()
 	base := desync.NewFakeSession(desync.Info{})
 	res := desync.Scan(ctx, desync.ScanConfig{
-		Host: "discord.com", Candidates: []desync.Strategy{{ID: "late", Args: []string{"--split", "1"}}},
+		Host: "modern.example.test", Candidates: []desync.Strategy{{ID: "late", Args: []string{"--split", "1"}}},
 		Start: func(cfg desync.Config) (desync.Session, error) {
 			return &hostTrialSession{base, func(host string) desync.FailSignal {
 				cancel()
@@ -191,7 +211,7 @@ func TestScanFindsWorkingStrategy(t *testing.T) {
 	}
 
 	res := desync.Scan(context.Background(), desync.ScanConfig{
-		Host:        "discord.com",
+		Host:        "modern.example.test",
 		Concurrency: 1,
 		Timeout:     5 * time.Second,
 		PerStrategy: 500 * time.Millisecond,
@@ -220,7 +240,7 @@ func TestScanTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	res := desync.Scan(ctx, desync.ScanConfig{
-		Host:        "discord.com",
+		Host:        "modern.example.test",
 		Timeout:     80 * time.Millisecond,
 		PerStrategy: 50 * time.Millisecond,
 		Start:       start,
@@ -249,7 +269,7 @@ func TestStrategyStoreRoundTrip(t *testing.T) {
 		ID:   "byedpi:disorder-fake",
 		Args: []string{"--no-domain", "--fake", "-1"},
 	}
-	if err := store.Put("9121", s, "discord.com"); err != nil {
+	if err := store.Put("9121", s, "modern.example.test"); err != nil {
 		t.Fatal(err)
 	}
 	got, ok := store.Lookup("9121")
