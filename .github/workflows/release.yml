@@ -21,7 +21,7 @@ jobs:
     if: ${{ !contains(github.ref_name, '-mac') }}
     runs-on: windows-latest
     env:
-      GO_VERSION: "1.26.9"
+      GO_VERSION: "1.26.10"
       NODE_VERSION: "22"
     steps:
       - name: Checkout
@@ -34,6 +34,7 @@ jobs:
           cache-dependency-path: |
             offveil-core/go.sum
             offveil-core/tests/tunudp/go.sum
+            offveil-core/tools/singbox/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -60,7 +61,7 @@ jobs:
           workspaces: offveil-ui/src-tauri -> target
           shared-key: windows-release
 
-      - name: Fetch sidecars (SHA fail-closed)
+      - name: Fetch or build verified sidecars
         working-directory: offveil-core
         run: |
           ./scripts/fetch-wintun.ps1
@@ -126,6 +127,7 @@ jobs:
           if (Test-Path "$($nsis.FullName).sig") { Copy-Item "$($nsis.FullName).sig" $out }
           Copy-Item ruleset/active.json $out
           Copy-Item ruleset/active.json.sig $out
+          Copy-Item offveil-core/third_party/sing-box/sing-box-1.13.14-source.zip $out
           $ver = $env:TAG.TrimStart("v")
           $base = "https://github.com/${{ github.repository }}/releases/download/$($env:TAG)"
           # Windows-only platforms. Do not pass -DarwinDir here.
@@ -162,6 +164,7 @@ jobs:
             dist-release/latest.json
             dist-release/active.json
             dist-release/active.json.sig
+            dist-release/sing-box-1.13.14-source.zip
 
   macos:
     if: ${{ !contains(github.ref_name, '-mac') }}

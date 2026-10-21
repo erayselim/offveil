@@ -66,7 +66,8 @@ for (const prehashed of [true, false]) {
 
 test("only required public assets are selected", () => {
   const names = assetNames("1.0.0-rc.1");
-  assert.equal(new Set(names).size, 9);
+  assert.equal(new Set(names).size, 10);
+  assert.ok(names.includes("sing-box-1.13.14-source.zip"));
   assert.ok(names.includes("active.json.sig"));
   assert.ok(names.includes("latest-mac.json"));
   assert.ok(names.includes("offveil_1.0.0-rc.1_aarch64.app.tar.gz.sig"));

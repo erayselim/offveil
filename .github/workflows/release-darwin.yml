@@ -22,7 +22,7 @@ jobs:
   macos:
     runs-on: macos-latest
     env:
-      GO_VERSION: "1.26.9"
+      GO_VERSION: "1.26.10"
       NODE_VERSION: "22"
     steps:
       - name: Checkout
@@ -47,6 +47,7 @@ jobs:
           cache-dependency-path: |
             offveil-core/go.sum
             offveil-core/tests/tunudp/go.sum
+            offveil-core/tools/singbox/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -77,7 +78,7 @@ jobs:
           go test ./...
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X github.com/erayselim/offveil/offveil-core/internal/version.Version=${MAC_VERSION}" -o dist/offveil-core ./cmd/offveil-core
 
-      - name: Fetch sidecars (SHA fail-closed)
+      - name: Fetch or build verified sidecars
         working-directory: offveil-core
         run: |
           set -euo pipefail

@@ -74,7 +74,8 @@ function assetNames(version) {
   const prefix = `offveil_${version}`;
   return [`${prefix}_x64-setup.exe`, `${prefix}_x64-setup.exe.sig`, `${prefix}_aarch64.dmg`,
     `${prefix}_aarch64.app.tar.gz`, `${prefix}_aarch64.app.tar.gz.sig`,
-    "latest.json", "latest-mac.json", "active.json", "active.json.sig"];
+    "latest.json", "latest-mac.json", "active.json", "active.json.sig",
+    "sing-box-1.13.14-source.zip"];
 }
 
 function verifyPayloads(dir, tag, repo, pubkey) {

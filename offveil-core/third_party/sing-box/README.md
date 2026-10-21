@@ -1,9 +1,12 @@
 # sing-box 1.13.14 (Windows amd64)
 
-Fetched by `scripts/fetch-sing-box.ps1`.
+Built from pinned source by `scripts/fetch-sing-box.ps1` (Windows) or
+`scripts/fetch-sing-box-darwin-arm64.sh` (Mac).
 
 - Upstream: https://github.com/SagerNet/sing-box
 - Release: v1.13.14
-- ZIP SHA256: f580782c6dd10f7691c66cea1d7c421813c5fbf7e305d1ee7ce0c3a40d196341
+- Source checksum: `h1:p9/eqwilCgzyR/DpKM8hq7ppvzPIq1QMLgZWT3Cbg10=`
+- Toolchain: Go 1.26.10; locked dependencies and build instructions in
+  `../../tools/singbox/`.
 
-Used as selective tunnel sidecar (WARP WireGuard endpoint or VLESS Reality).
+Used as the general network tunnel sidecar (WARP WireGuard or VLESS Reality).

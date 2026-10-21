@@ -2,7 +2,7 @@ module github.com/erayselim/offveil/offveil-core/tests/tunudp
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/erayselim/offveil/offveil-core v0.0.0

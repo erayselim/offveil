@@ -23,10 +23,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache-dependency-path: |
             offveil-core/go.sum
             offveil-core/tests/tunudp/go.sum
+            offveil-core/tools/singbox/go.sum
       - name: Test
         working-directory: offveil-core
         env:
@@ -47,7 +48,7 @@ jobs:
       - name: Packet-level UDP reassembly regression
         working-directory: offveil-core/tests/tunudp
         run: go test -tags=with_gvisor -timeout=60s ./...
-      - name: Fetch sing-box darwin-arm64
+      - name: Build pinned sing-box darwin-arm64
         working-directory: offveil-core
         run: bash ./scripts/fetch-sing-box-darwin-arm64.sh dist
       - name: Build ByeDPI from pinned tag

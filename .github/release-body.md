@@ -6,6 +6,7 @@
 - When no remote provider connects, the app shows **Limited Protection**: local IPv4 HTTP/TLS bypass remains available; other traffic stays direct.
 - A failed site no longer blocks checks for unrelated connections. Provider switching preserves the working path until a replacement is ready, with rollback on failure.
 - Support exports include general DNS/TCP/TLS/HTTP diagnostics and clearer provider/process failure facts. Old application-specific rules cannot return from cached updates.
+- Core and tunnel sidecar use the patched Go toolchain; the sidecar's locked dependencies are security updated. Its source archive and build recipe are public.
 
 Koruma, uygulama listeleri yerine genel ağ trafiğini temel alacak şekilde yenilendi. Doğrulanmış tünel TCP/UDP bağlantılarını IPv4/IPv6 üzerinden taşır. Tünel kurulamazsa **Sınırlı Koruma** görünür; yerel IPv4 HTTP/TLS aşma devrede kalırken diğer trafik doğrudan gider. Tek bir sitenin hatası diğer bağlantıların denetimini durdurmaz; sağlayıcı geçişleri ve destek raporları iyileştirildi.
 
