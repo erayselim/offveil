@@ -45,9 +45,11 @@ test("1.0.4 beta upgrades stable and can advance to the final release", () => {
   assert.ok(compareVersions("1.0.4-beta.1", "1.0.3") > 0);
   assert.ok(compareVersions("1.0.4-beta.2", "1.0.4-beta.1") > 0);
   assert.ok(compareVersions("1.0.4-beta.3", "1.0.4-beta.2") > 0);
+  assert.ok(compareVersions("1.0.4-beta.4", "1.0.4-beta.3") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.1") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.2") > 0);
   assert.ok(compareVersions("1.0.4", "1.0.4-beta.3") > 0);
+  assert.ok(compareVersions("1.0.4", "1.0.4-beta.4") > 0);
 });
 
 for (const prehashed of [true, false]) {

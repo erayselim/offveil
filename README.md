@@ -1,7 +1,11 @@
 <img src="https://cdn.gtaup.com/_-GYV5he.svg" alt="offveil" width="360" />
 
-<b>Windows and macOS client for services ISPs in Türkiye interfere with.</b><br>
-One switch. Local DoH, DPI desync, and a selective tunnel when that is not enough.
+<b>Windows and macOS client for open network access.</b><br>
+One switch. Local DoH, verified network tunnels, and a limited local DPI fallback.
+
+Protection uses application-independent TCP/UDP routing. See
+[the network architecture](docs/network-architecture.md) for coverage, provider
+requirements and validation.
 
 <a href="https://github.com/erayselim/offveil/releases"><img src="https://img.shields.io/github/v/release/erayselim/offveil?include_prereleases&style=flat-square&color=2CC295" alt="Release" /></a>
 <a href="LICENSE"><img src="https://img.shields.io/github/license/erayselim/offveil?style=flat-square&color=2CC295" alt="License" /></a>
@@ -15,9 +19,9 @@ One switch. Local DoH, DPI desync, and a selective tunnel when that is not enoug
 
 ## Download
 
-**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.3/offveil_1.0.4-beta.3_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.3/offveil_1.0.4-beta.3_aarch64.dmg)**
+**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.4/offveil_1.0.4-beta.4_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.4/offveil_1.0.4-beta.4_aarch64.dmg)**
 
-**1.0.4-beta.3 — test release.** Expands automatic DPI fallback and Discord endpoint checks, improves Windows DNS and service/adapter recovery, and retains more useful support diagnostics. Testing continues across networks and devices. Available for Windows and Apple Silicon Macs; Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.4-beta.3).
+**1.0.4-beta.4 — test release.** Replaces application-specific routing with a verified general TCP/UDP tunnel and an explicitly limited local fallback. Improves provider recovery and general network diagnostics. Tunnel use may change latency. Testing continues across networks and devices. Available for Windows and Apple Silicon Macs; Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.4-beta.4).
 
 Existing users can use **Check for Updates**. Verify downloads against `SHA256SUMS.txt` on the same release:
 
@@ -44,12 +48,13 @@ If something breaks, export a support file from Settings and use the [issue form
 ```text
 offveil-core/   Windows Service, policy, probe, sidecars
 offveil-ui/     Tauri 2 + React client
-ruleset/        Ed25519-signed domain packages
+ruleset/        Signed network controls and optional DIRECT exceptions
 docs/           IPC contract, threat model, AV notes
 ```
 
 IPC: [docs/contracts.md](docs/contracts.md).
 Engine lifecycle and recovery: [docs/engine-reliability.md](docs/engine-reliability.md).
+Network routing: [docs/network-architecture.md](docs/network-architecture.md).
 
 ## Build
 

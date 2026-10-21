@@ -258,6 +258,19 @@ mod tests {
     }
 
     #[test]
+    fn beta_four_is_discovered_from_beta_three() {
+        let releases = vec![
+            release("v1.0.4-beta.3", false, true),
+            release("v1.0.4-beta.4", false, true),
+        ];
+        let current = semver::Version::parse("1.0.4-beta.3").unwrap();
+        assert_eq!(
+            newest_manifest(&releases, &current).unwrap().0.to_string(),
+            "1.0.4-beta.4"
+        );
+    }
+
+    #[test]
     fn skips_releases_while_payloads_are_still_uploading() {
         let mut release = release("v1.0.1", false, true);
         release.assets[1].state = "open".into();
