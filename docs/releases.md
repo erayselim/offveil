@@ -43,7 +43,7 @@ downloaded package signatures, ruleset signature and all published checksums.
 It does not simulate interactive installation or physical-device networking.
 
 The same bridge is used for beta releases. The published verification also
-checks the current stable client and Beta 1/Beta 2 on both supported platforms.
+checks the current stable client and Beta 1/Beta 2/Beta 3 on both supported platforms.
 Windows uses signed NSIS executables; Mac uses signed tar update archives.
 The updater's unused Windows ZIP feature is disabled, removing its ZIP
 extraction dependency while preserving these two update formats.

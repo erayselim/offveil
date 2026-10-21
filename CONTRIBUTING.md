@@ -29,5 +29,5 @@ Bump `contracts_version` on a breaking change.
 ## Issues
 
 - Bug: [.github/ISSUE_TEMPLATE/bug.yml](.github/ISSUE_TEMPLATE/bug.yml)
-- Beta (Discord within 2 minutes): [.github/ISSUE_TEMPLATE/beta.yml](.github/ISSUE_TEMPLATE/beta.yml)
+- Connection and beta feedback: [.github/ISSUE_TEMPLATE/beta.yml](.github/ISSUE_TEMPLATE/beta.yml)
 - Vulnerability: [SECURITY.md](SECURITY.md)
