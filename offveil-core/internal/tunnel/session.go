@@ -39,6 +39,10 @@ type session struct {
 	providersTried  []ProviderID
 	failures        []ProviderFailure
 	startupAttempts int
+	peerExclusions  []string
+	controls        []ControlResult
+	controlHealthy  bool
+	exitOrigin      string
 }
 
 // Start brings up selective tunnel with WARP↔Reality failover.
@@ -53,7 +57,7 @@ func Start(cfg Config) (Session, error) {
 	if cfg.ProbeTimeout <= 0 {
 		cfg.ProbeTimeout = 12 * time.Second
 	}
-	if !cfg.EnableTUN && len(cfg.TunnelDomains) == 0 {
+	if !cfg.NetworkMode && !cfg.EnableTUN && len(cfg.TunnelDomains) == 0 {
 		cfg.TunnelDomains = DefaultTunnelDomains()
 	}
 	if len(cfg.DirectDomains) == 0 {
@@ -65,6 +69,9 @@ func Start(cfg Config) (Session, error) {
 		return nil, err
 	}
 	cfg.DataDir = dataDir
+	if cfg.NetworkMode {
+		return startNetwork(cfg)
+	}
 
 	if strings.EqualFold(strings.TrimSpace(cfg.AllowlistOutbound), "desync") {
 		return startDesyncDataplane(cfg)
@@ -104,10 +111,7 @@ func Start(cfg Config) (Session, error) {
 			return s, nil
 		}
 		prevFailed = attempt.ID
-		failure := ProviderFailure{ProviderID: attempt.ID, Class: failClass, Reason: providerFailureReason(failErr)}
-		if s != nil {
-			failure.Exit = s.child.Exit()
-		}
+		failure := providerFailure(s, attempt.ID, failClass, failErr)
 		failures = append(failures, failure)
 		slog.Warn("tunnel: provider failed, trying next",
 			"provider", attempt.ID,
@@ -165,18 +169,22 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startup := cfg.startupContext
+	if startup == nil {
+		startup = ctx
+	}
 
 	var warp *WARPProfile
-	if provider == ProviderWARP {
-		_, warp, err = loadOrRegisterWARP(ctx, cfg.DataDir, nil)
+	if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
+		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, nil)
 		if err != nil {
-			return nil, false, FailAuth, fmt.Errorf("warp: %w", err)
+			return nil, false, FailAuth, stageError("registration", "", err)
 		}
 	}
 
 	build, err := BuildSingBox(buildParamsFrom(cfg, provider, warp, reality))
 	if err != nil {
-		return nil, false, FailAuth, err
+		return nil, false, FailConfig, stageError("configuration", "", err)
 	}
 
 	// Background provider changes may finish after Stop/new Start. Each launch
@@ -205,10 +213,11 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	}
 
 	s = &session{
-		cfg:        cfg,
-		socks:      net.JoinHostPort(cfg.ListenIP, strconv.Itoa(cfg.ListenPort)),
-		provider:   provider,
-		configPath: cfgPath,
+		cfg:            cfg,
+		socks:          net.JoinHostPort(cfg.ListenIP, strconv.Itoa(cfg.ListenPort)),
+		provider:       provider,
+		configPath:     cfgPath,
+		peerExclusions: networkPeerExclusions(warp, reality),
 	}
 	s.lastProbe.Store(FailClass(""))
 	s.lastProbeAt.Store("")
@@ -223,17 +232,17 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 
 	bin, err := resolveBinary(cfg.BinaryPath)
 	if err != nil {
-		return nil, false, FailDial, fmt.Errorf("sing-box: %w", err)
+		return nil, false, FailDial, stageError("binary", "", err)
 	}
 	s.binPath = bin
 
 	if cfg.EnableTUN {
 		if err := ensureWintunBeside(bin); err != nil {
-			return nil, false, FailDial, fmt.Errorf("wintun staging: %w", err)
+			return nil, false, FailDial, stageError("adapter", "", err)
 		}
 	}
 
-	s.child, s.startupAttempts, err = startWithTUNRetry(ctx, cfg.EnableTUN && runtime.GOOS == "windows", func(readiness context.Context) (*proc.Child, error) {
+	s.child, s.startupAttempts, err = startWithTUNRetry(startup, cfg.EnableTUN && runtime.GOOS == "windows", func(readiness context.Context) (*proc.Child, error) {
 		// The process belongs to the protection session, not the readiness deadline.
 		cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
 		stderr := &proc.TailBuffer{}
@@ -252,13 +261,17 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		}
 		child := proc.WatchChild(cmd)
 		if err := proc.WaitTCPContext(readiness, s.socks, 8*time.Second, child); err != nil {
+			s.exitOrigin = "cleanup"
+			if !child.Running() {
+				s.exitOrigin = "natural"
+			}
 			child.Close()
 			return child, fmt.Errorf("socks not ready: %w; stderr: %s", err, stderr.String())
 		}
 		return child, nil
 	})
 	if err != nil {
-		return s, false, FailDial, err
+		return s, false, FailDial, stageError("startup", "", err)
 	}
 	s.up.Store(true)
 	keepConfig = true
@@ -269,7 +282,26 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		"selective", true,
 	)
 
-	if cfg.ProbeHost != "" {
+	if cfg.NetworkMode && cfg.providerOnly {
+		results, healthy := checkControls(startup, cfg.ControlHosts, cfg.ControlQuorum, s.probeTLSContext)
+		s.controls, s.controlHealthy = results, healthy
+		if !healthy {
+			s.exitOrigin = "cleanup"
+			if !s.child.Running() {
+				s.exitOrigin = "natural"
+			}
+			_ = s.Close()
+			class, target := FailProbe, ""
+			for _, result := range results {
+				if result.Class != FailOK {
+					class, target = result.Class, result.Target
+					break
+				}
+			}
+			return s, false, class, stageError("control_tls", target, fmt.Errorf("control quorum unavailable"))
+		}
+		s.lastProbe.Store(FailOK)
+	} else if cfg.ProbeHost != "" && !cfg.NetworkMode {
 		if IsDirectHost(cfg.ProbeHost, cfg.DirectDomains) {
 			slog.Warn("tunnel: probe host is on DIRECT list; skipping", "host", cfg.ProbeHost)
 			s.lastProbe.Store(FailOK)
@@ -278,8 +310,12 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		sig := s.ProbeTLS(cfg.ProbeHost)
 		if sig.Class != FailOK {
 			detail := sig.Detail
+			s.exitOrigin = "cleanup"
+			if !s.child.Running() {
+				s.exitOrigin = "natural"
+			}
 			_ = s.Close()
-			return s, false, sig.Class, fmt.Errorf("probe: %s", detail)
+			return s, false, sig.Class, stageError("target_tls", cfg.ProbeHost, fmt.Errorf("probe: %s", detail))
 		}
 		s.lastProbe.Store(FailOK)
 	} else {
@@ -341,6 +377,9 @@ func failSession(cfg Config, provider ProviderID, class FailClass, err error, tr
 
 func (s *session) Info() Info {
 	info := Info{
+		Healthy:         s.controlHealthy,
+		Controls:        append([]ControlResult(nil), s.controls...),
+		ControlQuorum:   s.cfg.ControlQuorum,
 		SocksAddr:       s.socks,
 		ProviderID:      s.provider,
 		BinaryPath:      s.binPath,
@@ -447,6 +486,10 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		addr = defaultTUNAddress
 	}
 	return BuildParams{
+		NetworkMode:       cfg.NetworkMode,
+		ProviderOnly:      cfg.providerOnly,
+		NetworkRoutes:     cfg.NetworkRoutes,
+		UpstreamSOCKS:     cfg.upstreamSOCKS,
 		Provider:          provider,
 		WARP:              warp,
 		Reality:           reality,
@@ -459,6 +502,7 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		EnableTUN:         cfg.EnableTUN,
 		TUNInterface:      iface,
 		TUNAddress:        addr,
+		TUNAddress6:       cfg.TUNAddress6,
 		TUNMTU:            cfg.TUNMTU,
 		RouteCIDRs:        append([]string{}, cfg.RouteCIDRs...),
 		ExcludeCIDRs:      append([]string{}, cfg.ExcludeCIDRs...),

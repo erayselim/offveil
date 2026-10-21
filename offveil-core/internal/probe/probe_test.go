@@ -56,7 +56,7 @@ func TestPathFor(t *testing.T) {
 }
 
 func TestTargetOpen(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Timeout:      2 * time.Second,
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
@@ -71,7 +71,7 @@ func TestTargetOpen(t *testing.T) {
 }
 
 func TestTargetDPIReset(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
 		DialTLS: func(context.Context, string, string) error {
@@ -84,7 +84,7 @@ func TestTargetDPIReset(t *testing.T) {
 }
 
 func TestTargetIPDropOnDialTimeout(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
 		DialTLS: func(context.Context, string, string) error {
@@ -97,7 +97,7 @@ func TestTargetIPDropOnDialTimeout(t *testing.T) {
 }
 
 func TestTargetSystemPoisonThenOpen(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Resolve: fixedResolve,
 		LookupSystem: func(context.Context, string, *offdns.PoisonSet) ([]netip.Addr, string, error) {
 			return []netip.Addr{netip.MustParseAddr("195.175.254.2")}, "ooni.tr_6", nil
@@ -110,7 +110,7 @@ func TestTargetSystemPoisonThenOpen(t *testing.T) {
 }
 
 func TestTargetConnRefused(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
 		DialTLS: func(context.Context, string, string) error {
@@ -123,7 +123,7 @@ func TestTargetConnRefused(t *testing.T) {
 }
 
 func TestTargetThrottle(t *testing.T) {
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
 		DialTLS: func(context.Context, string, string) error {
@@ -142,8 +142,8 @@ func (timeoutErr) Error() string   { return "i/o timeout" }
 func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
-func TestCuratedAndSession(t *testing.T) {
-	if h := probe.CuratedHosts(); h[0] != "discord.com" {
+func TestDefaultControlsAndSession(t *testing.T) {
+	if h := probe.ControlHosts(); len(h) != 3 || h[0] != "www.cloudflare.com" {
 		t.Fatal(h)
 	}
 	rep := probe.Session(context.Background(), nil, probe.Options{
@@ -152,7 +152,7 @@ func TestCuratedAndSession(t *testing.T) {
 		DialTLS:      func(context.Context, string, string) error { return nil },
 		SkipControl:  true,
 	})
-	if len(rep.Results) != 1 || rep.Results[0].Class != probe.ClassOpen {
+	if len(rep.Results) != 3 || rep.Results[0].Class != probe.ClassOpen {
 		t.Fatalf("%+v", rep)
 	}
 	if rep.Chosen != "direct" {
@@ -161,12 +161,12 @@ func TestCuratedAndSession(t *testing.T) {
 }
 
 func TestSessionControlOpenStrengthensDPI(t *testing.T) {
-	rep := probe.Session(context.Background(), []string{"discord.com"}, probe.Options{
+	rep := probe.Session(context.Background(), []string{"requested.example.test"}, probe.Options{
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
-		ControlHost:  "www.microsoft.com",
+		ControlHost:  "control.example.test",
 		DialTLS: func(_ context.Context, _, serverName string) error {
-			if serverName == "www.microsoft.com" {
+			if serverName == "control.example.test" {
 				return nil
 			}
 			return errors.New("i/o timeout")
@@ -185,7 +185,7 @@ func TestSessionControlOpenStrengthensDPI(t *testing.T) {
 
 func TestMultiIPPrefersWorking(t *testing.T) {
 	n := 0
-	res := probe.Target(context.Background(), "discord.com", probe.Options{
+	res := probe.Target(context.Background(), "requested.example.test", probe.Options{
 		LookupSystem: noSystemPoison,
 		Resolve: func(context.Context, string) ([]netip.Addr, error) {
 			return []netip.Addr{
@@ -235,7 +235,7 @@ func TestSessionControlThrottleDoesNotPromote(t *testing.T) {
 		Timeout:      8 * time.Second,
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
-		ControlHost:  "www.microsoft.com",
+		ControlHost:  "control.example.test",
 		DialTLS: func(_ context.Context, _, serverName string) error {
 			time.Sleep(probe.ThrottleThreshold + 40*time.Millisecond)
 			return nil
@@ -257,9 +257,9 @@ func TestSessionRelativeThrottle(t *testing.T) {
 		Timeout:      8 * time.Second,
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
-		ControlHost:  "www.microsoft.com",
+		ControlHost:  "control.example.test",
 		DialTLS: func(_ context.Context, _, serverName string) error {
-			if serverName == "www.microsoft.com" {
+			if serverName == "control.example.test" {
 				return nil
 			}
 			time.Sleep(probe.ThrottleThreshold + 40*time.Millisecond)
@@ -276,9 +276,9 @@ func TestSessionRelativeThrottleDemote(t *testing.T) {
 		Timeout:      10 * time.Second,
 		Resolve:      fixedResolve,
 		LookupSystem: noSystemPoison,
-		ControlHost:  "www.microsoft.com",
+		ControlHost:  "control.example.test",
 		DialTLS: func(_ context.Context, _, serverName string) error {
-			if serverName == "www.microsoft.com" {
+			if serverName == "control.example.test" {
 				time.Sleep(1200 * time.Millisecond)
 				return nil
 			}

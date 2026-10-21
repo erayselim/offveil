@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,9 +31,10 @@ type ScanFunc func(ctx context.Context, cfg ScanConfig) ScanResult
 // ScanConfig controls a limited auto-strategy pass.
 type ScanConfig struct {
 	Host string
-	// VerifyHosts must also pass before changing the shared strategy. A fix for
-	// IMVU must not break an already-working Discord connection.
+	// VerifyHosts are explicit targets or independent connectivity controls.
 	VerifyHosts []string
+	// VerifyQuorum is the required number of successes; zero requires all hosts.
+	VerifyQuorum int
 	// Timeout caps the whole scan (default ScanDefaultTimeout).
 	Timeout time.Duration
 	// PerStrategy caps each candidate probe (default ScanPerStrategyTimeout).
@@ -81,7 +83,10 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 	out := ScanResult{}
 
 	if cfg.Host == "" {
-		cfg.Host = "discord.com"
+		if len(cfg.VerifyHosts) == 0 {
+			return ScanResult{Reason: "missing_targets"}
+		}
+		cfg.Host = cfg.VerifyHosts[0]
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = ScanDefaultTimeout
@@ -110,6 +115,9 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 			hosts = append(hosts, host)
 			seen[host] = true
 		}
+	}
+	if cfg.VerifyQuorum < 0 || cfg.VerifyQuorum > len(hosts) {
+		return ScanResult{Reason: "invalid_quorum"}
 	}
 
 	type candidate struct {
@@ -238,6 +246,7 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 	// At most four probes run per helper, each using the same trial deadline.
 	checks := make([]FailSignal, len(hosts))
 	var probes sync.WaitGroup
+	var timelySuccess atomic.Int32
 	slots := make(chan struct{}, 4)
 	for i, host := range hosts {
 		probes.Go(func() {
@@ -249,21 +258,38 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 				return
 			}
 			checks[i] = sess.ProbeTLS(host)
+			if checks[i].Class == FailOK && trialCtx.Err() == nil {
+				timelySuccess.Add(1)
+			}
 		})
 	}
 	probes.Wait()
 	class := FailOK
 	detail := ""
+	passed := 0
 	for _, sig := range checks {
-		if sig.Class != FailOK {
-			class, detail = sig.Class, sig.Detail
-			break
+		if sig.Class == FailOK {
+			passed++
 		}
+		if sig.Class != FailOK && class == FailOK {
+			class, detail = sig.Class, sig.Detail
+		}
+	}
+	quorum := cfg.VerifyQuorum
+	if quorum <= 0 {
+		quorum = len(hosts)
+	}
+	if passed >= quorum {
+		class, detail = FailOK, ""
 	}
 	// A cancelled/expired trial cannot win even if an injected probe
 	// ignores its context and returns success late.
 	if trialCtx.Err() != nil {
 		class = FailTimeout
+	}
+	quorumPassed := cfg.VerifyQuorum > 0 && int(timelySuccess.Load()) >= cfg.VerifyQuorum && ctx.Err() == nil
+	if quorumPassed {
+		class, detail = FailOK, ""
 	}
 	took := time.Since(t0).Round(time.Millisecond).String()
 	tried := Tried{
@@ -273,10 +299,10 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 		Took:       took,
 		Checks:     checks,
 	}
-	if trialCtx.Err() == context.Canceled {
+	if trialCtx.Err() == context.Canceled && !quorumPassed {
 		tried.Reason = "canceled"
 	}
-	if trialCtx.Err() == context.DeadlineExceeded {
+	if trialCtx.Err() == context.DeadlineExceeded && !quorumPassed {
 		tried.Reason = "timeout"
 	}
 	slog.Info("desync scan: candidate",

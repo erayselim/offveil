@@ -1,14 +1,11 @@
 package engine_test
 
 import (
-	"archive/zip"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/capture"
 	"github.com/erayselim/offveil/offveil-core/internal/cleanup"
@@ -19,143 +16,100 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/netinfo"
 	"github.com/erayselim/offveil/offveil-core/internal/probe"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
-func fakeDesyncProbe(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
+func fakeDiagnosticProbe(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
 	if len(hosts) == 0 {
-		hosts = probe.CuratedHosts()
+		hosts = probe.ControlHosts()
 	}
-	rep := probe.Report{Results: make([]probe.Result, 0, len(hosts))}
-	for _, h := range hosts {
-		rep.Results = append(rep.Results, probe.Result{
-			Target: h,
-			Class:  probe.ClassDPIReset,
-			Path:   "desync",
-			OK:     true,
-		})
+	rep := probe.Report{}
+	for _, host := range hosts {
+		rep.Results = append(rep.Results, probe.Result{Target: host, Class: probe.ClassOpen, Path: "direct", OK: true})
 	}
 	return rep
 }
 
-func fakeNet(_ context.Context) netinfo.Info {
-	return netinfo.Info{ASN: "9121", ISPHint: "Turk Telekom", Fingerprint: "testfp"}
+func fakeNet(context.Context) netinfo.Info {
+	return netinfo.Info{ASN: "64512", ISPHint: "Fixture network", Fingerprint: "testfp"}
 }
 
-type hostProbeSession struct {
-	desync.Session
-	probe func(string) desync.FailSignal
+func remoteSession() *tunnel.FakeSession {
+	return tunnel.NewFakeSession(tunnel.Info{SocksAddr: "127.0.0.1:18081", ProviderID: tunnel.ProviderWARP, Mode: "remote", Coverage: "public_tcp_udp_dual_stack", Up: true, Healthy: true, LastProbe: tunnel.FailOK})
 }
-
-func (s *hostProbeSession) ProbeTLS(host string) desync.FailSignal { return s.probe(host) }
 
 func newTestEngine(t *testing.T) *engine.Engine {
 	t.Helper()
 	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
 	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	t.Setenv("OFFVEIL_CANARY_BG", "0")
+	t.Setenv("OFFVEIL_NETWORK_BG", "0")
 	uniquePolicyCache(t)
-	store, err := desync.OpenStrategyStore("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := cleanup.NewRegistry()
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			return desync.ScanResult{OK: false, Reason: "test-skip"}
-		}).
+	eng := engine.New(cleanup.NewRegistry()).
 		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{
-				AdapterName:   capture.AdapterName,
-				RoutesApplied: 2,
-				RoutePrefixes: []string{"1.2.3.4/32", "5.6.7.8/32"},
-				Egress:        &capture.EgressInfo{Name: "Ethernet", IfIndex: 12},
-			}), nil
+			return capture.NewFakeSession(capture.Info{AdapterName: capture.AdapterName, Egress: &capture.EgressInfo{Name: "Ethernet", IfIndex: 12, IPv4: "192.0.2.10"}}), nil
 		}).
 		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{
-				ListenAddr: cfg.ListenAddr,
-				LeakGuard:  false,
-			}), nil
+			return offdns.NewFakeSession(offdns.Info{ListenAddr: cfg.ListenAddr, LeakGuard: false}), nil
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			id := desync.NativeSafeStrategy().ID
-			if cfg.Strategy.ID != "" {
-				id = cfg.Strategy.ID
-			}
-			return desync.NewFakeSession(desync.Info{
-				SocksAddr:  "127.0.0.1:18080",
-				StrategyID: id,
-				Up:         true,
-				LastProbe:  desync.FailOK,
-			}), nil
+			return desync.NewFakeSession(desync.Info{SocksAddr: "127.0.0.1:18080", StrategyID: cfg.Strategy.ID, Up: true}), nil
 		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			pid := tunnel.ProviderWARP
-			if cfg.AllowlistOutbound == "desync" {
-				pid = tunnel.ProviderDesync
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				SocksAddr:  "127.0.0.1:18081",
-				ProviderID: pid,
-				Up:         true,
-				LastProbe:  tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(fakeDesyncProbe).
-		WithNetInfo(fakeNet)
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return remoteSession(), nil }).
+		WithProbe(fakeDiagnosticProbe).WithNetInfo(fakeNet)
 	t.Cleanup(func() { _, _ = eng.Stop() })
 	return eng
 }
 
+func requireNetworkTargets(t *testing.T, st *ipc.Status, tcp, udp string) {
+	t.Helper()
+	if len(st.Targets) != 2 {
+		t.Fatalf("network status targets: %+v", st.Targets)
+	}
+	for _, want := range []struct{ id, path string }{{"tcp", tcp}, {"udp", udp}} {
+		found := false
+		for _, target := range st.Targets {
+			if target.ID == want.id {
+				found = true
+				if target.Path != want.path {
+					t.Fatalf("%s path=%s want %s", want.id, target.Path, want.path)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s target: %+v", want.id, st.Targets)
+		}
+	}
+}
+
 func TestStartStopStatus(t *testing.T) {
 	eng := newTestEngine(t)
-
-	st := eng.Status()
-	if st.State != engine.StateStopped || st.Protection {
+	if st := eng.Status(); st.State != engine.StateStopped || st.Protection {
 		t.Fatalf("initial: %+v", st)
 	}
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatalf("start: %v", err)
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	if st.State != engine.StateActive || !st.Protection {
-		t.Fatalf("after start: %+v", st)
+	if st.State != engine.StateActive || !st.Protection || st.OutboundHint != "tunnel" || eng.Health() != "ok" {
+		t.Fatalf("active network: %+v", st)
 	}
-	if st.Capture == nil {
-		t.Fatal("expected capture info on status")
+	if st.Capture == nil || st.DNS == nil || st.Tunnel == nil || st.Network == nil {
+		t.Fatalf("missing infrastructure status: %+v", st)
 	}
-	if st.DNS == nil {
-		t.Fatal("expected dns info on status")
+	requireNetworkTargets(t, st, "tunnel", "tunnel")
+	if _, rpcErr := eng.Start("auto"); rpcErr == nil || rpcErr.Code != ipc.CodeAlreadyRunning {
+		t.Fatalf("already_running: %v", rpcErr)
 	}
-	if st.Desync == nil {
-		t.Fatal("expected desync info on status")
-	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("outbound_hint=%q want desync", st.OutboundHint)
-	}
-	if eng.Health() != "ok" {
-		t.Fatalf("health=%s", eng.Health())
-	}
-
-	_, err = eng.Start("auto")
-	if err == nil || err.Code != ipc.CodeAlreadyRunning {
-		t.Fatalf("expected already_running, got %v", err)
-	}
-
-	st, err = eng.Stop()
-	if err != nil {
-		t.Fatalf("stop: %v", err)
+	st, rpcErr = eng.Stop()
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
 	if st.State != engine.StateStopped || st.Protection {
-		t.Fatalf("after stop: %+v", st)
+		t.Fatalf("stopped: %+v", st)
 	}
-
-	_, err = eng.Stop()
-	if err == nil || err.Code != ipc.CodeNotRunning {
-		t.Fatalf("expected not_running, got %v", err)
+	if _, rpcErr := eng.Stop(); rpcErr == nil || rpcErr.Code != ipc.CodeNotRunning {
+		t.Fatalf("not_running: %v", rpcErr)
 	}
 }
 
@@ -163,91 +117,76 @@ func TestStartUsesCatchAllNRPT(t *testing.T) {
 	var got offdns.Config
 	eng := newTestEngine(t).WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
 		got = cfg
-		return offdns.NewFakeSession(offdns.Info{
-			ListenAddr: cfg.ListenAddr,
-			LeakGuard:  cfg.ApplyLeakGuard,
-			NRPT:       len(cfg.NRPTSuffixes) > 0,
-		}), nil
+		return offdns.NewFakeSession(offdns.Info{ListenAddr: cfg.ListenAddr, NRPT: true}), nil
 	})
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatalf("start: %v", err)
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	t.Cleanup(func() { _, _ = eng.Stop() })
-
-	if got.ApplyLeakGuard {
-		t.Fatal("leak-guard must stay off; catch-all NRPT is the steering path")
+	if got.ApplyLeakGuard || !reflect.DeepEqual(got.NRPTSuffixes, []string{offdns.NRPTCatchAll}) {
+		t.Fatalf("resolver steering: %+v", got)
 	}
-	if len(got.NRPTSuffixes) != 1 || got.NRPTSuffixes[0] != offdns.NRPTCatchAll {
-		t.Fatalf("NRPTSuffixes=%v want [%q]", got.NRPTSuffixes, offdns.NRPTCatchAll)
-	}
-	ns := offdns.NRPTNamespaces(got.NRPTSuffixes)
-	if len(ns) != 1 || ns[0] != "." {
-		t.Fatalf("NRPTNamespaces(%v)=%v want [.]", got.NRPTSuffixes, ns)
+	if !reflect.DeepEqual(offdns.NRPTNamespaces(got.NRPTSuffixes), []string{"."}) {
+		t.Fatal("catch-all namespace missing")
 	}
 	if got.OnQuery == nil {
-		t.Fatal("expected OnQuery for package expand")
+		t.Fatal("DNS observation hook missing")
 	}
-	// Non-package hosts must not panic; expandCandidate returns before goroutine.
-	got.OnQuery("youtube.com")
+	got.OnQuery("requested.example.test")
 	got.OnQuery("1.2.3.4.in-addr.arpa")
 }
 
-func TestStartBindsDesyncAndSplitDefault(t *testing.T) {
+func TestStartupUsesDualStackTransportAndIndependentControls(t *testing.T) {
+	var capCfg capture.Config
 	var desCfg desync.Config
 	var tunCfg tunnel.Config
+	probeCalls := 0
 	eng := newTestEngine(t).
 		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			if !cfg.SkipAdapter {
-				t.Fatal("engine must leave TUN to sing-box (SkipAdapter)")
-			}
-			if !cfg.SplitDefault || cfg.ApplyRoutes {
-				t.Fatal("split-default dataplane must not prepare unused per-host routes")
-			}
-			return capture.NewFakeSession(capture.Info{
-				RoutesApplied: 1,
-				Egress:        &capture.EgressInfo{Name: "Ethernet", IPv4: "192.168.0.10"},
-			}), nil
+			capCfg = cfg
+			return capture.NewFakeSession(capture.Info{Egress: &capture.EgressInfo{Name: "Ethernet", IPv4: "192.0.2.10"}}), nil
 		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
 			desCfg = cfg
-			return desync.NewFakeSession(desync.Info{
-				SocksAddr: "127.0.0.1:18080", Up: true, LastProbe: desync.FailOK,
-			}), nil
+			return desync.NewFakeSession(desync.Info{}), nil
 		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			tunCfg = cfg
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderDesync, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		})
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
+		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) { tunCfg = cfg; return remoteSession(), nil }).
+		WithProbe(func(context.Context, *offdns.DoHClient, []string) probe.Report { probeCalls++; return probe.Report{} })
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	t.Cleanup(func() { _, _ = eng.Stop() })
-	if desCfg.ConnIP != "192.168.0.10" {
-		t.Fatalf("ConnIP=%q want egress IPv4", desCfg.ConnIP)
+	if !capCfg.SkipAdapter || !capCfg.SplitDefault || capCfg.ApplyRoutes {
+		t.Fatalf("capture ownership: %+v", capCfg)
 	}
-	if desCfg.BindInterface != "Ethernet" {
-		t.Fatalf("BindInterface=%q", desCfg.BindInterface)
+	if !tunCfg.NetworkMode || !tunCfg.EnableTUN || tunCfg.TUNAddress != capture.TunIPv4 || tunCfg.TUNAddress6 != capture.TunIPv6 {
+		t.Fatalf("network TUN: %+v", tunCfg)
 	}
-	if tunCfg.EgressInterface != "Ethernet" {
-		t.Fatalf("dataplane egress=%q, want the same physical NIC as ByeDPI", tunCfg.EgressInterface)
+	for _, prefix := range []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"} {
+		if !strings.Contains(strings.Join(tunCfg.RouteCIDRs, ","), prefix) {
+			t.Fatalf("missing public route %s: %v", prefix, tunCfg.RouteCIDRs)
+		}
 	}
-	got := strings.Join(tunCfg.RouteCIDRs, ",")
-	if !strings.Contains(got, "0.0.0.0/1") || !strings.Contains(got, "128.0.0.0/1") {
-		t.Fatalf("RouteCIDRs=%v want split-default", tunCfg.RouteCIDRs)
+	if desCfg.ConnIP != "192.0.2.10" || desCfg.BindInterface != "Ethernet" || tunCfg.EgressInterface != "Ethernet" {
+		t.Fatal("physical egress bindings differ")
+	}
+	if probeCalls != 0 || desCfg.ProbeHost != "" || tunCfg.ProbeHost != "" {
+		t.Fatal("arbitrary destination classification affected startup")
+	}
+	if !reflect.DeepEqual(tunCfg.ControlHosts, ruleset.DefaultControlHosts()) || tunCfg.ControlQuorum != 2 {
+		t.Fatalf("network controls: %v quorum=%d", tunCfg.ControlHosts, tunCfg.ControlQuorum)
+	}
+	if len(tunCfg.TunnelDomains)+len(tunCfg.SpecialDomains)+len(tunCfg.DirectDomains)+len(tunCfg.ProtectedDomains) > 0 {
+		t.Fatal("default transport contains destination-specific rules")
 	}
 }
 
 func TestCrashCleanup(t *testing.T) {
 	eng := newTestEngine(t)
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	eng.CrashCleanup("test")
-	st := eng.Status()
-	if st.State != engine.StateStopped || st.Protection {
-		t.Fatalf("after crash cleanup: %+v", st)
+	eng.CrashCleanup("fixture")
+	if st := eng.Status(); st.State != engine.StateStopped || st.Protection {
+		t.Fatalf("crash cleanup: %+v", st)
 	}
 }
 
@@ -255,849 +194,186 @@ func TestRepairStopsProtection(t *testing.T) {
 	eng := newTestEngine(t).WithRepair(func() repair.Result {
 		return repair.Result{Steps: []repair.Step{{Name: "policy", OK: true, Detail: "cleared"}}}
 	})
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	res, err := eng.Repair()
-	if err != nil {
-		t.Fatalf("repair: %v", err)
-	}
-	if res.Status == nil || res.Status.Protection || res.Status.State != engine.StateStopped {
-		t.Fatalf("after repair: %+v", res.Status)
-	}
-	if len(res.Steps) != 1 || res.Steps[0].Name != "policy" || !res.Steps[0].OK {
-		t.Fatalf("steps=%+v", res.Steps)
-	}
-
-	res, err = eng.Repair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Status.Protection {
-		t.Fatal("idempotent repair should stay stopped")
+	for range 2 {
+		result, rpcErr := eng.Repair()
+		if rpcErr != nil {
+			t.Fatal(rpcErr)
+		}
+		if result.Status == nil || result.Status.Protection || result.Status.State != engine.StateStopped {
+			t.Fatalf("repair: %+v", result)
+		}
+		if len(result.Steps) != 1 || result.Steps[0].Name != "policy" || !result.Steps[0].OK {
+			t.Fatalf("repair steps: %+v", result.Steps)
+		}
 	}
 }
 
 func TestBadMode(t *testing.T) {
-	eng := newTestEngine(t)
-	_, err := eng.Start("manual")
-	if err == nil || err.Code != ipc.CodeBadRequest {
-		t.Fatalf("expected bad_request, got %v", err)
+	if _, rpcErr := newTestEngine(t).Start("manual"); rpcErr == nil || rpcErr.Code != ipc.CodeBadRequest {
+		t.Fatalf("bad_request: %v", rpcErr)
 	}
 }
 
 func TestStartPrivilegeAndTunFailed(t *testing.T) {
-	eng := newTestEngine(t).WithCaptureStart(func(capture.Config) (capture.Session, error) {
-		return nil, errors.New("privilege: TUN requires root")
-	})
-	_, err := eng.Start("auto")
-	if err == nil || err.Code != ipc.CodePrivilege {
-		t.Fatalf("privilege: %v", err)
-	}
-
-	eng = newTestEngine(t).WithCaptureStart(func(capture.Config) (capture.Session, error) {
-		return nil, errors.New("configure tun interface: failed")
-	})
-	_, err = eng.Start("auto")
-	if err == nil || err.Code != ipc.CodeTunFailed {
-		t.Fatalf("tun_failed: %v", err)
-	}
-}
-
-func TestDesyncFailDegraded(t *testing.T) {
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	uniquePolicyCache(t)
-	store, serr := desync.OpenStrategyStore("")
-	if serr != nil {
-		t.Fatal(serr)
-	}
-	reg := cleanup.NewRegistry()
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			return desync.ScanResult{OK: false, Reason: "exhausted", Tried: []desync.Tried{{StrategyID: "byedpi:windows-safe", Class: desync.FailReset}}}
-		}).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			if cfg.Sink != nil {
-				cfg.Sink.OnDesyncFail(desync.FailSignal{
-					Target:     "discord.com",
-					Class:      desync.FailReset,
-					StrategyID: "byedpi:windows-safe",
-				})
-			}
-			return desync.NewFakeSession(desync.Info{
-				SocksAddr:  "127.0.0.1:18080",
-				StrategyID: "byedpi:windows-safe",
-				LastProbe:  desync.FailReset,
-			}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			if cfg.Sink != nil {
-				cfg.Sink.OnTunnelOK("discord.com", string(tunnel.ProviderWARP))
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				SocksAddr:  "127.0.0.1:18081",
-				ProviderID: tunnel.ProviderWARP,
-				Up:         true,
-				LastProbe:  tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(fakeDesyncProbe).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.State != engine.StateActive {
-		t.Fatalf("state=%s want active (tunnel recovered)", st.State)
-	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync (default HTTPS)", st.OutboundHint)
-	}
-	if st.Tunnel == nil {
-		t.Fatal("expected tunnel info")
-	}
-	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
-		t.Fatalf("discord target=%+v want tunnel", st.Targets[0])
-	}
-	if st.Desync == nil {
-		t.Fatal("ByeDPI must stay up; Discord tunnel is special-only")
-	}
-}
-
-func TestDesyncSuccessStartsDataplane(t *testing.T) {
-	eng := newTestEngine(t)
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync", st.OutboundHint)
-	}
-	if st.Desync == nil {
-		t.Fatal("expected ByeDPI to stay up")
-	}
-	if st.Tunnel == nil {
-		t.Fatal("expected sing-box TUN dataplane")
-	}
-	ti, ok := st.Tunnel.(*tunnel.Info)
-	if !ok || ti.ProviderID != tunnel.ProviderDesync {
-		t.Fatalf("dataplane=%+v", st.Tunnel)
-	}
-}
-
-func TestDesyncFailEscalatesWithoutScan(t *testing.T) {
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	uniquePolicyCache(t)
-	store, serr := desync.OpenStrategyStore("")
-	if serr != nil {
-		t.Fatal(serr)
-	}
-	reg := cleanup.NewRegistry()
-	scanCalls := 0
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			scanCalls++
-			return desync.ScanResult{OK: true, Reason: "should-not-run"}
-		}).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{
-				RoutesApplied: 1,
-				RoutePrefixes: []string{"162.159.128.233/32"},
-			}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			if cfg.Sink != nil {
-				cfg.Sink.OnDesyncFail(desync.FailSignal{
-					Target: "discord.com", Class: desync.FailReset, StrategyID: "byedpi:windows-safe",
-				})
-			}
-			return desync.NewFakeSession(desync.Info{
-				SocksAddr: "127.0.0.1:18080", LastProbe: desync.FailReset,
-			}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			if cfg.AllowlistOutbound != "tunnel" {
-				t.Fatalf("outbound=%q want tunnel", cfg.AllowlistOutbound)
-			}
-			if cfg.DesyncSOCKS == "" {
-				t.Fatal("mixed dataplane needs ByeDPI SOCKS")
-			}
-			if !cfg.EnableTUN {
-				t.Fatal("expected EnableTUN")
-			}
-			if cfg.Sink != nil {
-				cfg.Sink.OnTunnelOK("discord.com", string(tunnel.ProviderWARP))
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				SocksAddr: "127.0.0.1:18081", ProviderID: tunnel.ProviderWARP,
-				Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(fakeDesyncProbe).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanCalls != 0 {
-		t.Fatalf("scan should not block start, calls=%d", scanCalls)
-	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync (default HTTPS)", st.OutboundHint)
-	}
-	if st.Desync == nil {
-		t.Fatal("ByeDPI must stay up after Discord-only tunnel escalate")
-	}
-}
-
-func TestTunnelFailRetryHint(t *testing.T) {
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	uniquePolicyCache(t)
-	store, _ := desync.OpenStrategyStore("")
-	reg := cleanup.NewRegistry()
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			return desync.ScanResult{OK: false, Reason: "exhausted"}
-		}).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			if cfg.Sink != nil {
-				cfg.Sink.OnDesyncFail(desync.FailSignal{
-					Target: "discord.com", Class: desync.FailTimeout, StrategyID: "byedpi:windows-safe",
-				})
-			}
-			return desync.NewFakeSession(desync.Info{LastProbe: desync.FailTimeout}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			if cfg.Sink != nil {
-				cfg.Sink.OnTunnelFail(tunnel.FailSignal{
-					Target: "discord.com", Class: tunnel.FailAuth, ProviderID: string(tunnel.ProviderWARP), Detail: "register failed",
-				})
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderWARP,
-				Up:         false,
-				RetryHint:  true,
-				LastProbe:  tunnel.FailAuth,
-				FailDetail: "register failed",
-			}), nil
-		}).
-		WithProbe(fakeDesyncProbe).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.State != engine.StateDegraded {
-		t.Fatalf("state=%s want degraded", st.State)
-	}
-	if st.Summary != "Bozuldu" {
-		t.Fatalf("summary=%q", st.Summary)
-	}
-	if len(st.Targets) == 0 || st.Targets[0].Outcome != "retry" {
-		t.Fatalf("targets=%+v", st.Targets)
-	}
-}
-
-func TestProbeDirectStillStartsDesync(t *testing.T) {
-	uniquePolicyCache(t)
-	reg := cleanup.NewRegistry()
-	desyncStarted := false
-	tunnelStarted := false
-	eng := engine.New(reg).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			desyncStarted = true
-			return desync.NewFakeSession(desync.Info{Up: true}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			tunnelStarted = true
-			return tunnel.NewFakeSession(tunnel.Info{Up: true}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			return probe.Report{Results: []probe.Result{{
-				Target: hosts[0], Class: probe.ClassOpen, Path: "direct", OK: true,
-			}}}
-		}).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !desyncStarted || !tunnelStarted {
-		t.Fatalf("sidecars must start even when Discord is open (desync=%v tun=%v)", desyncStarted, tunnelStarted)
-	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync", st.OutboundHint)
-	}
-	if st.Summary != "Açık" {
-		t.Fatalf("summary=%q", st.Summary)
-	}
-	if path := ""; len(st.Targets) > 0 {
-		for _, tg := range st.Targets {
-			if tg.ID == "discord" {
-				path = tg.Path
-			}
+	for _, tc := range []struct{ message, code string }{{"privilege: TUN requires root", ipc.CodePrivilege}, {"configure tun interface: failed", ipc.CodeTunFailed}} {
+		eng := newTestEngine(t).WithCaptureStart(func(capture.Config) (capture.Session, error) { return nil, errors.New(tc.message) })
+		if _, rpcErr := eng.Start("auto"); rpcErr == nil || rpcErr.Code != tc.code {
+			t.Fatalf("%s: %v", tc.code, rpcErr)
 		}
-		if path != "direct" {
-			t.Fatalf("discord path=%q want direct", path)
+		if st := eng.Status(); st.Protection || st.State != engine.StateStopped {
+			t.Fatalf("failed startup retained resources: %+v", st)
 		}
 	}
 }
 
-func TestTunnelEscalateDiscordOnly(t *testing.T) {
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	uniquePolicyCache(t)
-
-	reg := cleanup.NewRegistry()
-	store, err := desync.OpenStrategyStore("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	desyncCalls := 0
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			return desync.ScanResult{OK: false, Reason: "test-skip"}
-		}).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			desyncCalls++
-			return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{
-				SocksAddr: "127.0.0.1:18080", StrategyID: cfg.Strategy.ID,
-				LastProbe: desync.FailTimeout, Up: true,
-			}), probe: func(host string) desync.FailSignal {
-				return desync.FailSignal{Target: host, Class: desync.FailOK}
-			}}, nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderWARP, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			var results []probe.Result
-			for _, h := range hosts {
-				results = append(results, probe.Result{
-					Target: h, Class: probe.ClassTimeout, Path: "desync", OK: false,
-				})
-			}
-			return probe.Report{Results: results, Chosen: "desync"}
-		}).
-		WithNetInfo(fakeNet)
-
+func TestOptionalHelperStartupFailureKeepsRemoteProtection(t *testing.T) {
+	eng := newTestEngine(t).WithDesyncStart(func(desync.Config) (desync.Session, error) { return nil, errors.New("optional helper failed") })
 	st, rpcErr := eng.Start("auto")
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync", st.OutboundHint)
+	if st.State != engine.StateActive || st.OutboundHint != "tunnel" || st.LastError != nil {
+		t.Fatalf("optional helper broke transport: %+v", st)
 	}
-	var discord, imvu ipc.TargetStatus
-	for _, tg := range st.Targets {
-		switch tg.ID {
-		case "discord":
-			discord = tg
-		case "imvu":
-			imvu = tg
-		}
-	}
-	if discord.Path != "tunnel" {
-		t.Fatalf("discord=%+v want tunnel", discord)
-	}
-	if imvu.Path == "tunnel" {
-		t.Fatalf("IMVU must not inherit Discord tunnel: %+v", imvu)
-	}
-	if _, err := eng.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	requireNetworkTargets(t, st, "tunnel", "tunnel")
+}
 
-	st2, rpcErr := eng.Start("auto")
+func TestOptionalHelperExitDoesNotRewriteRemoteStatus(t *testing.T) {
+	helper := desync.NewFakeSession(desync.Info{})
+	eng := newTestEngine(t).WithDesyncStart(func(desync.Config) (desync.Session, error) { return helper, nil })
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	_ = helper.Close()
+	st := eng.Status()
+	if st.State != engine.StateActive || st.OutboundHint != "tunnel" || st.LastError != nil {
+		t.Fatalf("remote transport depended on exited helper: %+v", st)
+	}
+}
+
+func TestLocalFallbackReportsLimitedCoverage(t *testing.T) {
+	eng := newTestEngine(t).WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
+		return tunnel.NewFakeSession(tunnel.Info{Mode: "local", ProviderID: tunnel.ProviderDesync, Up: true, Healthy: true, LastProbe: tunnel.FailOK}), nil
+	})
+	st, rpcErr := eng.Start("auto")
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if st2.OutboundHint != "desync" {
-		t.Fatalf("2nd hint=%q", st2.OutboundHint)
+	if st.State != engine.StateDegraded || st.Summary != "Sınırlı koruma" || st.OutboundHint != "desync" {
+		t.Fatalf("local fallback claimed complete coverage: %+v", st)
 	}
-	if desyncCalls != 2 {
-		t.Fatalf("desyncCalls=%d want 2 (ASN cache must not skip default desync)", desyncCalls)
-	}
-}
-
-func TestIMVUFailureEscalatesItsOwnPackage(t *testing.T) {
-	eng := newTestEngine(t)
-	store, openErr := desync.OpenStrategyStore(t.TempDir() + "/strategies.json")
-	if openErr != nil {
-		t.Fatal(openErr)
-	}
-	if err := store.Put("9121", desync.NativeSafeStrategy(), "discord.com"); err != nil {
-		t.Fatal(err)
-	}
-	eng.WithStrategyStore(store)
-	checked := 0
-	eng.WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-		if cfg.ProbeHost != "discord.com" {
-			t.Fatalf("primary probe=%s", cfg.ProbeHost)
-		}
-		return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{LastProbe: desync.FailOK}), probe: func(host string) desync.FailSignal {
-			if host != "secure.imvu.com" {
-				t.Fatalf("unexpected extra probe=%s", host)
-			}
-			checked++
-			return desync.FailSignal{Target: host, Class: desync.FailReset}
-		}}, nil
-	})
-	eng.WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-		if cfg.AllowlistOutbound != "tunnel" || cfg.ProbeHost != "secure.imvu.com" {
-			t.Fatalf("wrong IMVU fallback: %+v", cfg)
-		}
-		for _, host := range cfg.TunnelDomains {
-			if strings.Contains(host, "discord") {
-				t.Fatal("IMVU failure rerouted Discord")
-			}
-		}
-		return tunnel.NewFakeSession(tunnel.Info{ProviderID: tunnel.ProviderWARP, Up: true, LastProbe: tunnel.FailOK}), nil
-	})
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eng.Stop()
-	if checked != 1 {
-		t.Fatalf("IMVU checked %d times", checked)
-	}
-	if _, cached := store.Lookup("9121"); cached {
-		t.Fatal("strategy failing IMVU remained cached after Discord success")
-	}
-	for _, target := range st.Targets {
-		if target.ID == "imvu" && target.Path != "tunnel" || target.ID == "discord" && target.Path != "desync" {
-			t.Fatalf("target=%+v", target)
-		}
+	requireNetworkTargets(t, st, "desync", "direct")
+	health, ok := st.Network.(*engine.NetworkHealth)
+	if !ok || health.Mode != "local" || health.Coverage != "tls_http_only" {
+		t.Fatalf("coverage: %+v", st.Network)
 	}
 }
 
-func TestFailedIMVUFallbackIsNotReportedHealthy(t *testing.T) {
-	eng := newTestEngine(t)
-	scanned := make(chan desync.ScanConfig, 1)
-	eng.WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-		scanned <- cfg
-		return desync.ScanResult{Reason: "exhausted"}
-	})
-	eng.WithDesyncStart(func(desync.Config) (desync.Session, error) {
-		return &hostProbeSession{Session: desync.NewFakeSession(desync.Info{LastProbe: desync.FailOK}), probe: func(host string) desync.FailSignal {
-			return desync.FailSignal{Target: host, Class: desync.FailReset}
-		}}, nil
-	})
-	eng.WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-		if cfg.AllowlistOutbound == "tunnel" {
-			return tunnel.NewFakeSession(tunnel.Info{Up: false, RetryHint: true, LastProbe: tunnel.FailAuth,
-				FailDetail: "private-provider-response", ProvidersTried: []tunnel.ProviderID{tunnel.ProviderWARP},
-				Failures: []tunnel.ProviderFailure{{ProviderID: tunnel.ProviderWARP, Class: tunnel.FailAuth, Reason: "http_403"}},
-			}), nil
-		}
-		return tunnel.NewFakeSession(tunnel.Info{ProviderID: tunnel.ProviderDesync, Up: true}), nil
-	})
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
+func TestUnavailableNetworkCleansUpStartupResources(t *testing.T) {
+	capSession := capture.NewFakeSession(capture.Info{})
+	dnsSession := offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"})
+	helper := desync.NewFakeSession(desync.Info{})
+	eng := newTestEngine(t).
+		WithCaptureStart(func(capture.Config) (capture.Session, error) { return capSession, nil }).
+		WithDNSStart(func(offdns.Config) (offdns.Session, error) { return dnsSession, nil }).
+		WithDesyncStart(func(desync.Config) (desync.Session, error) { return helper, nil }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return nil, errors.New("gateway unavailable") })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr == nil || rpcErr.Code != ipc.CodeTunFailed || st.Protection || st.State != engine.StateStopped {
+		t.Fatalf("failed gateway: status=%+v error=%v", st, rpcErr)
 	}
-	defer eng.Stop()
-	info, ok := st.Tunnel.(*tunnel.Info)
-	if st.State != engine.StateDegraded || st.LastError == nil || !ok || !info.Up {
-		t.Fatalf("failed protected path with a working local dataplane: %+v", st)
-	}
-	select {
-	case cfg := <-scanned:
-		if cfg.Host != "secure.imvu.com" || len(cfg.VerifyHosts) != 2 {
-			t.Fatalf("failed target did not trigger multi-target recovery: %+v", cfg)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("exhausted fallback did not schedule strategy recovery")
-	}
-	meta, diagErr := eng.Diagnostics()
-	if diagErr != nil {
-		t.Fatal(diagErr)
-	}
-	zr, diagErr := zip.OpenReader(meta.Path)
-	if diagErr != nil {
-		t.Fatal(diagErr)
-	}
-	defer zr.Close()
-	for _, f := range zr.File {
-		if f.Name != "diagnostics.json" {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer rc.Close()
-		raw, err := io.ReadAll(rc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var bundle struct {
-			Sidecars map[string]json.RawMessage `json:"sidecars"`
-		}
-		if err := json.Unmarshal(raw, &bundle); err != nil {
-			t.Fatal(err)
-		}
-		fallback := string(bundle.Sidecars["tunnel_fallback"])
-		if !strings.Contains(fallback, "http_403") || !strings.Contains(fallback, "warp") || strings.Contains(string(raw), "private-provider-response") {
-			t.Fatalf("provider failure discarded or response leaked: %s", fallback)
-		}
-		return
-	}
-	t.Fatal("diagnostics.json missing")
-}
-
-func TestProbeIPDropStartsTunnel(t *testing.T) {
-	uniquePolicyCache(t)
-	reg := cleanup.NewRegistry()
-	eng := engine.New(reg).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderWARP, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			return probe.Report{Results: []probe.Result{{
-				Target: hosts[0], Class: probe.ClassIPDrop, Path: "tunnel", OK: true,
-			}}}
-		}).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.OutboundHint != "desync" || st.Tunnel == nil {
-		t.Fatalf("%+v", st)
-	}
-	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
-		t.Fatalf("discord want tunnel, got %+v", st.Targets)
+	if !capSession.Closed() || dnsSession.Info().StubUp || !helper.Closed() {
+		t.Fatal("failed startup left capture, DNS, or helper alive")
 	}
 }
 
-func TestTunnelFailoverUsesSecondProvider(t *testing.T) {
-	uniquePolicyCache(t)
-	reg := cleanup.NewRegistry()
+func TestRunningProcessWithoutVerifiedNetworkCannotBecomeActive(t *testing.T) {
+	eng := newTestEngine(t).WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
+		return tunnel.NewFakeSession(tunnel.Info{Mode: "remote", ProviderID: tunnel.ProviderWARP, Up: true, Healthy: false, LastProbe: tunnel.FailTimeout}), nil
+	})
+	status, rpcErr := eng.Start("auto")
+	if rpcErr == nil || status.Protection || status.State != engine.StateStopped {
+		t.Fatalf("process liveness was mistaken for verified connectivity: status=%+v error=%v", status, rpcErr)
+	}
+}
+
+func TestLocalFallbackRequiresItsHelper(t *testing.T) {
+	eng := newTestEngine(t).
+		WithDesyncStart(func(desync.Config) (desync.Session, error) { return nil, errors.New("helper unavailable") }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
+			return tunnel.NewFakeSession(tunnel.Info{Mode: "local", ProviderID: tunnel.ProviderDesync, Up: true, Healthy: true}), nil
+		})
+	st, rpcErr := eng.Start("auto")
+	if rpcErr == nil || st.Protection || st.State != engine.StateStopped {
+		t.Fatalf("unusable local fallback accepted: status=%+v error=%v", st, rpcErr)
+	}
+}
+
+func TestProviderFailoverAppliesToWholeNetwork(t *testing.T) {
 	calls := 0
-	eng := engine.New(reg).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			calls++
-			// Simulate tunnel.Start failover result: Reality after WARP failed.
-			if cfg.Sink != nil {
-				cfg.Sink.OnTunnelOK("discord.com", string(tunnel.ProviderReality))
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID:     tunnel.ProviderReality,
-				Up:             true,
-				LastProbe:      tunnel.FailOK,
-				FailoverFrom:   tunnel.ProviderWARP,
-				ProvidersTried: []tunnel.ProviderID{tunnel.ProviderWARP, tunnel.ProviderReality},
-			}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			return probe.Report{Results: []probe.Result{{
-				Target: hosts[0], Class: probe.ClassIPDrop, Path: "tunnel", OK: true,
-			}}, Chosen: "tunnel"}
-		}).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 {
-		t.Fatalf("calls=%d", calls)
-	}
-	if st.State != engine.StateActive {
-		t.Fatalf("state=%s", st.State)
-	}
-	if st.OutboundHint != "desync" || st.Tunnel == nil {
-		t.Fatalf("want desync default in outbound_hint, got summary=%q hint=%q", st.Summary, st.OutboundHint)
-	}
-	if st.Summary != "Açık" {
-		t.Fatalf("summary=%q", st.Summary)
-	}
-}
-
-func TestConnectionTest(t *testing.T) {
-	eng := newTestEngine(t)
-	_, err := eng.Test(nil)
-	if err == nil || err.Code != ipc.CodeNotRunning {
-		t.Fatalf("expected not_running, got %v", err)
-	}
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
-	}
-	stBefore := eng.Status()
-	rep, err := eng.Test([]string{"discord.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.ASN != "9121" || len(rep.Results) != 1 {
-		t.Fatalf("%+v", rep)
-	}
-	stAfter := eng.Status()
-	if stAfter.Summary != stBefore.Summary {
-		t.Fatalf("test must not rewrite summary: before=%q after=%q", stBefore.Summary, stAfter.Summary)
-	}
-	if stAfter.OutboundHint != stBefore.OutboundHint {
-		t.Fatalf("test must not demote hint: before=%q after=%q", stBefore.OutboundHint, stAfter.OutboundHint)
-	}
-	if len(stAfter.Targets) > 0 && stAfter.Targets[0].Path != stBefore.Targets[0].Path {
-		t.Fatalf("test must not rewrite targets: before=%+v after=%+v", stBefore.Targets[0], stAfter.Targets[0])
-	}
-}
-
-func TestConnectionTestDoesNotDemoteTunnel(t *testing.T) {
-	uniquePolicyCache(t)
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	reg := cleanup.NewRegistry()
-	store, _ := desync.OpenStrategyStore("")
-	eng := engine.New(reg).
-		WithStrategyStore(store).
-		WithDesyncScan(func(ctx context.Context, cfg desync.ScanConfig) desync.ScanResult {
-			return desync.ScanResult{OK: false, Reason: "skip"}
-		}).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			return desync.NewFakeSession(desync.Info{LastProbe: desync.FailTimeout, Up: true}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderWARP, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			var results []probe.Result
-			for _, h := range hosts {
-				results = append(results, probe.Result{
-					Target: h, Class: probe.ClassTimeout, Path: "desync", OK: false,
-				})
-			}
-			return probe.Report{Results: results, Chosen: "desync"}
-		}).
-		WithNetInfo(fakeNet)
-
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
-	}
-	st := eng.Status()
-	if st.OutboundHint != "desync" {
-		t.Fatalf("hint=%q want desync", st.OutboundHint)
-	}
-	if len(st.Targets) == 0 || st.Targets[0].Path != "tunnel" {
-		t.Fatalf("discord path=%+v want tunnel", st.Targets)
-	}
-	// Probe would say desync; must not rewrite Discord target off tunnel.
-	eng.WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-		return probe.Report{Results: []probe.Result{{
-			Target: hosts[0], Class: probe.ClassDPIReset, Path: "desync", OK: true,
-		}}, Chosen: "desync"}
+	eng := newTestEngine(t).WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
+		calls++
+		if !cfg.NetworkMode || len(cfg.TunnelDomains) > 0 {
+			t.Fatal("provider failover remained destination-selective")
+		}
+		return tunnel.NewFakeSession(tunnel.Info{Mode: "remote", ProviderID: tunnel.ProviderReality, Up: true, Healthy: true, LastProbe: tunnel.FailOK, FailoverFrom: tunnel.ProviderWARP, ProvidersTried: []tunnel.ProviderID{tunnel.ProviderWARP, tunnel.ProviderReality}}), nil
 	})
-	if _, err := eng.Test([]string{"discord.com"}); err != nil {
-		t.Fatal(err)
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	st2 := eng.Status()
-	if st2.OutboundHint != "desync" {
-		t.Fatalf("hint=%q", st2.OutboundHint)
+	if calls != 1 || st.State != engine.StateActive || st.OutboundHint != "tunnel" {
+		t.Fatalf("provider failover: %+v", st)
 	}
-	if len(st2.Targets) == 0 || st2.Targets[0].Path != "tunnel" {
-		t.Fatalf("discord demoted to %+v", st2.Targets)
-	}
-	if st2.Summary != "Açık" {
-		t.Fatalf("summary=%q", st2.Summary)
-	}
+	requireNetworkTargets(t, st, "tunnel", "tunnel")
 }
 
-func TestCanaryThrottleStartsTunnelNotDiscord(t *testing.T) {
-	uniquePolicyCache(t)
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	t.Setenv("OFFVEIL_CANARY_BG", "0")
-
-	reg := cleanup.NewRegistry()
-	var tunCfgs []tunnel.Config
-	eng := engine.New(reg).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			tunCfgs = append(tunCfgs, cfg)
-			pid := tunnel.ProviderWARP
-			if cfg.AllowlistOutbound == "desync" {
-				pid = tunnel.ProviderDesync
-			}
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: pid, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
-			rep := probe.Report{Results: make([]probe.Result, 0, len(hosts))}
-			for _, h := range hosts {
-				r := probe.Result{Target: h, OK: true, Class: probe.ClassDPIReset, Path: "desync"}
-				if strings.Contains(h, "youtube") || strings.Contains(h, "instagram") ||
-					h == "x.com" || strings.Contains(h, "tiktok") || strings.Contains(h, "telegram") {
-					r.Class = probe.ClassThrottleSuspect
-					r.Path = "tunnel"
-				}
-				rep.Results = append(rep.Results, r)
-			}
-			return rep
-		}).
-		WithNetInfo(fakeNet)
-
-	st, err := eng.Start("auto")
-	if err != nil {
-		t.Fatal(err)
+func TestConnectionTestIsDiagnosticOnly(t *testing.T) {
+	eng := newTestEngine(t)
+	if _, rpcErr := eng.Test(nil); rpcErr == nil || rpcErr.Code != ipc.CodeNotRunning {
+		t.Fatalf("not_running: %v", rpcErr)
 	}
-	if len(tunCfgs) == 0 || tunCfgs[0].AllowlistOutbound != "desync" {
-		t.Fatalf("session start must stay desync dataplane, got %+v", tunCfgs)
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	var discord ipc.TargetStatus
-	for _, tg := range st.Targets {
-		if tg.ID == "discord" {
-			discord = tg
+	before := eng.Status()
+	for _, class := range []probe.Class{probe.ClassOpen, probe.ClassDPIReset, probe.ClassIPDrop, probe.ClassTimeout} {
+		var got []string
+		eng.WithProbe(func(_ context.Context, _ *offdns.DoHClient, hosts []string) probe.Report {
+			got = append([]string(nil), hosts...)
+			return probe.Report{Results: []probe.Result{{Target: hosts[0], Class: class, Path: probe.PathFor(class), OK: true}}}
+		})
+		report, rpcErr := eng.Test([]string{"requested.example.test"})
+		if rpcErr != nil {
+			t.Fatal(rpcErr)
 		}
-		if tg.ID == "canary" {
-			t.Fatal("canary must not appear in status targets")
+		if report.ASN != "64512" || len(report.Results) != 1 || !reflect.DeepEqual(got, []string{"requested.example.test"}) {
+			t.Fatalf("diagnostic result: %+v hosts=%v", report, got)
 		}
-	}
-	if discord.Path == "tunnel" {
-		t.Fatalf("discord must not follow canary: %+v", discord)
-	}
-
-	eng.ProbeCanaryForTest()
-	st2 := eng.Status()
-	if len(tunCfgs) < 2 {
-		t.Fatalf("canary heal should rebuild dataplane, starts=%d", len(tunCfgs))
-	}
-	last := tunCfgs[len(tunCfgs)-1]
-	if last.AllowlistOutbound != "tunnel" {
-		t.Fatalf("outbound=%q want tunnel", last.AllowlistOutbound)
-	}
-	joined := strings.Join(last.TunnelDomains, ",")
-	if !strings.Contains(joined, "youtube.com") {
-		t.Fatalf("TunnelDomains missing youtube: %v", last.TunnelDomains)
-	}
-	spec := strings.Join(last.SpecialDomains, ",")
-	if !strings.Contains(spec, "discord.com") {
-		t.Fatalf("Discord should stay desync UDP special, got %v", last.SpecialDomains)
-	}
-	if strings.Contains(spec, "youtube.com") {
-		t.Fatalf("canary must not be desyncUDP: %v", last.SpecialDomains)
-	}
-	for _, tg := range st2.Targets {
-		if tg.ID == "discord" && tg.Path == "tunnel" {
-			t.Fatalf("discord inherited canary tunnel: %+v", tg)
+		after := eng.Status()
+		if before.State != after.State || before.OutboundHint != after.OutboundHint || before.Summary != after.Summary || !reflect.DeepEqual(before.Targets, after.Targets) {
+			t.Fatalf("diagnostic class %s changed network: before=%+v after=%+v", class, before, after)
 		}
 	}
 }
 
-func TestCanaryOpenKeepsDesyncDataplane(t *testing.T) {
-	uniquePolicyCache(t)
-	t.Setenv("OFFVEIL_RULESET_SKIP_UPDATE", "1")
-	t.Setenv("OFFVEIL_DESYNC_CACHE", t.TempDir())
-	t.Setenv("OFFVEIL_CANARY_BG", "0")
-
-	reg := cleanup.NewRegistry()
-	var tunCfgs []tunnel.Config
-	eng := engine.New(reg).
-		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
-			return capture.NewFakeSession(capture.Info{RoutesApplied: 1}), nil
-		}).
-		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
-			return offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"}), nil
-		}).
-		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
-			return desync.NewFakeSession(desync.Info{Up: true, LastProbe: desync.FailOK}), nil
-		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-			tunCfgs = append(tunCfgs, cfg)
-			return tunnel.NewFakeSession(tunnel.Info{
-				ProviderID: tunnel.ProviderDesync, Up: true, LastProbe: tunnel.FailOK,
-			}), nil
-		}).
-		WithProbe(fakeDesyncProbe).
-		WithNetInfo(fakeNet)
-
-	if _, err := eng.Start("auto"); err != nil {
-		t.Fatal(err)
+func TestDefaultConnectionTestUsesOnlyIndependentControls(t *testing.T) {
+	eng := newTestEngine(t)
+	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	n := len(tunCfgs)
-	eng.ProbeCanaryForTest()
-	if len(tunCfgs) != n {
-		t.Fatalf("open canary must not rebuild, before=%d after=%d", n, len(tunCfgs))
+	var got []string
+	eng.WithProbe(func(ctx context.Context, doh *offdns.DoHClient, hosts []string) probe.Report {
+		got = append([]string(nil), hosts...)
+		return fakeDiagnosticProbe(ctx, doh, hosts)
+	})
+	if _, rpcErr := eng.Test(nil); rpcErr != nil {
+		t.Fatal(rpcErr)
 	}
-	if tunCfgs[0].AllowlistOutbound != "desync" {
-		t.Fatalf("outbound=%q", tunCfgs[0].AllowlistOutbound)
+	if !reflect.DeepEqual(got, ruleset.DefaultControlHosts()) {
+		t.Fatalf("default controls: %v", got)
 	}
 }

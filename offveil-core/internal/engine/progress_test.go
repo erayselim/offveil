@@ -97,7 +97,7 @@ func TestDNSObserverDoesNotWaitForStartupLock(t *testing.T) {
 		// A system DNS request may arrive as soon as networksetup switches to
 		// the stub, while Start still owns the engine lock.
 		returned := make(chan struct{})
-		go func() { cfg.OnQuery("discord.com"); close(returned) }()
+		go func() { cfg.OnQuery("requested.example.test"); close(returned) }()
 		select {
 		case <-returned:
 		case <-time.After(time.Second):

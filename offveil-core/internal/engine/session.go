@@ -1,6 +1,9 @@
 package engine
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // All helpers in this file require e.mu.
 func (e *Engine) beginSessionLocked() {
@@ -12,7 +15,10 @@ func (e *Engine) cancelSessionLocked() {
 	e.sessionGeneration++
 	e.strategySwitching = false
 	e.extraProbeHosts = nil
-	e.endpointTunnelTried = false
+	e.desyncScan = nil
+	e.networkCheck = nil
+	e.networkFailures = 0
+	e.lastPathCheck = time.Time{}
 	if e.sessionCancel != nil {
 		e.sessionCancel()
 		e.sessionCancel = nil

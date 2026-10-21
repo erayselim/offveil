@@ -1,96 +1,43 @@
-// Package udp covers Discord voice media UDP and QUIC (HTTP/3).
-// Voice signalling is TCP/WSS; media is a separate UDP path that needs
-// TUN or SOCKS5 UDP ASSOCIATE. Protected-domain/app QUIC is dropped so
-// HTTPS falls back to TCP TLS. Raw game UDP on port 443
-// is not QUIC and stays ISS.
+// Package udp describes transport policy independently of applications or hosts.
 package udp
 
 import "strings"
 
-// QuicPolicy is how sniffed HTTP/3 (QUIC) is handled.
 type QuicPolicy string
 
 const (
-	// QuicDrop rejects sniffed QUIC so clients fall back to TCP TLS (desync/tunnel-safe).
 	QuicDrop QuicPolicy = "drop"
+	QuicPass QuicPolicy = "pass"
 )
 
-// VoiceUDPPath is which outbound carries Discord voice media UDP.
-// Signalling (WSS) always follows the session TCP cascade path; media UDP
-// mirrors that outbound so NAT binding stays consistent.
-type VoiceUDPPath string
+type UDPPath string
 
 const (
-	VoiceDirect VoiceUDPPath = "direct"
-	VoiceDesync VoiceUDPPath = "desync" // ByeDPI SOCKS5 UDP ASSOCIATE
-	VoiceTunnel VoiceUDPPath = "tunnel" // sing-box SOCKS → selective WG/Reality
+	PathDirect UDPPath = "direct"
+	PathTunnel UDPPath = "tunnel"
 )
 
-// Info is diagnostics for status.udp (UI may ignore). Quic describes the
-// protected traffic policy; explicit DIRECT route exceptions take precedence.
+// Info separates ordinary UDP transport from QUIC fallback policy. Local TLS
+// desynchronization cannot protect opaque datagrams; they remain direct.
 type Info struct {
-	VoicePath VoiceUDPPath `json:"voice_path"`
-	Quic      QuicPolicy   `json:"quic"`
-	Note      string       `json:"note,omitempty"`
+	Path                 UDPPath    `json:"path"`
+	Quic                 QuicPolicy `json:"quic"`
+	Note                 string     `json:"note,omitempty"`
+	QuicFallbackFamilies []string   `json:"quic_fallback_families,omitempty"`
 }
 
-// ForOutbound maps the session TCP cascade path to voice UDP + QUIC policy.
-//
-//	direct → voice UDP direct; QUIC drop
-//	desync → voice UDP via ByeDPI UDP ASSOCIATE (never --no-udp); QUIC drop
-//	tunnel → voice UDP via sing-box SOCKS UDP → tunnel; QUIC drop
-func ForOutbound(tcpPath string) Info {
-	path := strings.ToLower(strings.TrimSpace(tcpPath))
-	switch path {
-	case "desync":
-		return Info{
-			VoicePath: VoiceDesync,
-			Quic:      QuicDrop,
-			Note:      "voice UDP → ByeDPI SOCKS5 UDP ASSOCIATE; protected QUIC drop → TCP TLS",
-		}
-	case "tunnel":
-		return Info{
-			VoicePath: VoiceTunnel,
-			Quic:      QuicDrop,
-			Note:      "voice UDP → sing-box SOCKS → selective tunnel; protected QUIC drop → TCP TLS",
-		}
+func ForOutbound(path string) Info {
+	switch strings.ToLower(strings.TrimSpace(path)) {
+	case "tunnel", "warp", "reality", "remote":
+		return Info{Path: PathTunnel, Quic: QuicPass, Note: "Public UDP and QUIC use the verified remote transport."}
 	case "direct":
-		return Info{
-			VoicePath: VoiceDirect,
-			Quic:      QuicDrop,
-			Note:      "voice UDP direct; protected QUIC drop → TCP TLS",
-		}
+		return Info{Path: PathDirect, Quic: QuicPass, Note: "UDP and QUIC use the physical network."}
 	default:
-		return Info{
-			VoicePath: VoiceDirect,
-			Quic:      QuicDrop,
-			Note:      "outbound unknown - voice UDP direct; protected QUIC drop",
-		}
+		return Info{Path: PathDirect, Quic: QuicDrop, QuicFallbackFamilies: []string{"ipv4"}, Note: "Local mode: opaque UDP and IPv6 stay direct; IPv4 QUIC falls back to TCP."}
 	}
 }
 
-// IsVoiceHost reports Discord RTC / stream hostnames (voice + media signalling).
-// Dynamic regional hosts are typically under .discord.gg or .discord.media.
-func IsVoiceHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	h = strings.TrimSuffix(h, ".")
-	if h == "" {
-		return false
-	}
-	if h == "discord.gg" || h == "discord.media" || h == "latency.discord.media" {
-		return true
-	}
-	return strings.HasSuffix(h, ".discord.gg") || strings.HasSuffix(h, ".discord.media")
-}
-
-// QuicRejectRule is a sing-box route rule fragment: reject sniffed QUIC
-// (HTTP/3) so clients fall back to TCP TLS. Port 443 is not used — game
-// UDP on 443 is not QUIC and must stay DIRECT. Place after sniff, DNS hijack
-// and explicit DIRECT domain/private-IP exceptions.
+// QuicRejectRule matches the protocol, never a UDP port or application identity.
 func QuicRejectRule() map[string]any {
-	return map[string]any{
-		"protocol": "quic",
-		"action":   "reject",
-		"method":   "drop",
-	}
+	return map[string]any{"protocol": "quic", "action": "reject", "method": "drop"}
 }

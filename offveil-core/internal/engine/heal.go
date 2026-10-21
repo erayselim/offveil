@@ -20,7 +20,7 @@ const (
 
 // HealInfo is reliability diagnostics (status.heal; UI may ignore).
 type HealInfo struct {
-	LastReason string `json:"last_reason,omitempty"` // network_change | power_resume | canary_tunnel
+	LastReason string `json:"last_reason,omitempty"` // network_change | power_resume
 	LastAt     string `json:"last_at,omitempty"`
 	Count      int    `json:"count"`
 	Watching   bool   `json:"watching"`
@@ -135,7 +135,7 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 	if e.policy != nil {
 		invalidated = e.policy.ObserveNetwork(ni)
 	}
-	need := reason == "power_resume" || reason == "canary_tunnel" || networkChanged || invalidated
+	need := reason == "power_resume" || networkChanged || invalidated
 	if !need {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)
@@ -216,7 +216,7 @@ func (e *Engine) diagnosticsInputLocked() diag.Input {
 		in := *e.lastSupport
 		in.System = map[string]any{"protection_state": protectionState(e.protection)}
 		in.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-		if !e.protection {
+		if !e.protection && in.Cascade.Protection {
 			in.Notes = append(append([]string{}, in.Notes...),
 				"Protection is currently off; cascade/sidecars are from the last active session.")
 		}
@@ -300,6 +300,9 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 	}
 	if st.UDP != nil {
 		in.Sidecars["udp"] = st.UDP
+	}
+	if st.Network != nil {
+		in.Sidecars["network"] = st.Network
 	}
 	if st.Expand != nil {
 		in.Sidecars["expand"] = st.Expand

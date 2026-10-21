@@ -14,7 +14,7 @@ import "strconv"
 // --no-domain: ByeDPI must not use the system resolver (DoH owns DNS).
 // Clients CONNECT with IP; TLS SNI carries the name.
 //
-// Never pass --no-udp / -U. Discord voice media uses SOCKS5 UDP
+// Never pass --no-udp / -U. Datagram forwarding uses SOCKS5 UDP
 // ASSOCIATE (ciadpi default). Voice RTP must not get --udp-fake injection.
 func DefaultSafeStrategy() Strategy {
 	return Strategy{
@@ -62,7 +62,7 @@ func SafeStrategySet() []Strategy {
 }
 
 // BuildArgs returns full ciadpi argv (without binary): listen + strategy.
-// Strips any accidental --no-udp / -U so Discord voice UDP ASSOCIATE stays on.
+// Strips any accidental --no-udp / -U so UDP ASSOCIATE stays available.
 func BuildArgs(listenIP string, listenPort int, s Strategy) []string {
 	return BuildArgsBind(listenIP, listenPort, s, "")
 }

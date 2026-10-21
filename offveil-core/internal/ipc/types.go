@@ -45,8 +45,10 @@ type Status struct {
 	Ruleset any `json:"ruleset,omitempty"`
 	// Expand is legacy CDN / half-load domain expansion (optional).
 	Expand any `json:"expand,omitempty"`
-	// UDP is Discord voice UDP path + QUIC policy (optional; UI may ignore).
+	// UDP describes the generic datagram and QUIC routing policy.
 	UDP any `json:"udp,omitempty"`
+	// Network separates transport coverage from process and endpoint health.
+	Network any `json:"network,omitempty"`
 	// Heal is network-change / power-resume self-heal (optional; UI may ignore).
 	Heal any `json:"heal,omitempty"`
 }

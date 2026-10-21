@@ -15,6 +15,7 @@ import (
 	"time"
 
 	offdns "github.com/erayselim/offveil/offveil-core/internal/dns"
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 )
 
 // DefaultTimeout is the per-target probe budget (contracts.md §4.2: ~3-5s).
@@ -402,9 +403,14 @@ func classifyTLSErr(err error) Class {
 	return ClassTimeout
 }
 
-// CuratedHosts is the default probe list (Discord package seed).
+// ControlHosts returns the default independent network-health controls.
+func ControlHosts() []string {
+	return ruleset.DefaultControlHosts()
+}
+
+// CuratedHosts is retained for callers migrating to ControlHosts.
 func CuratedHosts() []string {
-	return []string{"discord.com"}
+	return ControlHosts()
 }
 
 // Session runs probes for curated (or explicit) hosts and builds a Report.
@@ -412,7 +418,7 @@ func CuratedHosts() []string {
 // the clean control host is open (OONI/dpi-probe methodology).
 func Session(ctx context.Context, hosts []string, opt Options) Report {
 	if len(hosts) == 0 {
-		hosts = CuratedHosts()
+		hosts = ControlHosts()
 	}
 	out := Report{Results: make([]Result, 0, len(hosts))}
 

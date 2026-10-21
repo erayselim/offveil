@@ -46,7 +46,7 @@ func TestNativeHijackedDNSUsesCoreStub(t *testing.T) {
 	}
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
-	build, err := BuildSingBox(BuildParams{Provider: ProviderDesync, EnableTUN: true, ListenPort: port, DNSAddress: stubListener.Addr().String()})
+	build, err := BuildSingBox(BuildParams{NetworkMode: true, Provider: ProviderDesync, EnableTUN: false, ListenPort: port, DNSAddress: stubListener.Addr().String()})
 	if err != nil {
 		t.Fatal(err)
 	}

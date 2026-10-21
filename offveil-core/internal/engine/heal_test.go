@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/engine"
 	"github.com/erayselim/offveil/offveil-core/internal/netinfo"
@@ -92,8 +91,8 @@ func TestSelfHealOnFingerprintChange(t *testing.T) {
 	fp.Store("fp-aaaa")
 	eng.WithNetInfo(func(ctx context.Context) netinfo.Info {
 		return netinfo.Info{
-			ASN:         "9121",
-			ISPHint:     "TT",
+			ASN:         "64512",
+			ISPHint:     "Fixture network",
 			Fingerprint: fp.Load().(string),
 		}
 	})
@@ -110,23 +109,9 @@ func TestSelfHealOnFingerprintChange(t *testing.T) {
 	if !st.Protection {
 		t.Fatal("expected protection after heal")
 	}
-	// Allow heal bookkeeping to land.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		st = eng.Status()
-		if h, ok := st.Heal.(map[string]any); ok && h != nil {
-			break
-		}
-		// HealInfo is a struct encoded as JSON object via status - check typed path.
-		if st.Heal != nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	heal, ok := st.Heal.(*engine.HealInfo)
+	if !ok || heal.Count != 1 || heal.LastReason != "network_change" || !heal.Watching {
+		t.Fatalf("heal bookkeeping: %+v", st.Heal)
 	}
-	if st.Heal == nil {
-		t.Fatal("expected heal info after SelfHeal")
-	}
+	requireNetworkTargets(t, st, "tunnel", "tunnel")
 }
-
-// compile-time note: engine.StateActive used elsewhere
-var _ = engine.StateActive
