@@ -91,7 +91,7 @@ jobs:
 
       - name: Verify native UDP routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|NetworkUDPRouting|NetworkOpaqueTCPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
 
       - name: Sign ruleset
         env:
@@ -109,7 +109,7 @@ jobs:
         working-directory: offveil-ui
         run: |
           npm ci
-          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs ../scripts/connection-status.test.cjs
 
       - name: Stage Darwin bundle binaries
         run: bash ./scripts/stage-bundle-darwin.sh

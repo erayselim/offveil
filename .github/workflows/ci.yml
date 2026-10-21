@@ -41,7 +41,7 @@ jobs:
         shell: pwsh
         run: |
           $env:OFFVEIL_SINGBOX_TEST = (Resolve-Path ./third_party/sing-box/sing-box.exe).Path
-          go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
+          go test ./internal/tunnel -run '^TestNative(SingBoxConfig|NetworkUDPRouting|NetworkOpaqueTCPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
       - name: Validate Windows DPI strategies against pinned ByeDPI
         working-directory: offveil-core
         shell: pwsh
@@ -69,4 +69,4 @@ jobs:
         run: |
           npm ci
           npm run typecheck
-          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs ../scripts/connection-status.test.cjs

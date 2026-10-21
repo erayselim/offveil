@@ -3,6 +3,8 @@ export type Locale = "tr" | "en";
 export type Messages = {
   protected: string;
   protectedHint: string;
+  limited: string;
+  limitedHint: string;
   notProtected: string;
   notProtectedHint: string;
   broken: string;
@@ -86,6 +88,8 @@ export type Messages = {
 const tr: Messages = {
   protected: "Koruma Aktif",
   protectedHint: "Güvenli gezinme ve tam erişim etkin",
+  limited: "Sınırlı Koruma",
+  limitedHint: "Yerel aşma etkin. Tam ağ koruması için tünel bağlantısı bekleniyor.",
   notProtected: "Koruma Kapalı",
   notProtectedHint: "Korumayı açmak için dokunun",
   broken: "Bozuldu",
@@ -169,6 +173,8 @@ const tr: Messages = {
 const en: Messages = {
   protected: "Protected",
   protectedHint: "Safe browsing and full access are active",
+  limited: "Limited Protection",
+  limitedHint: "Local bypass is active. Full network protection needs a tunnel connection.",
   notProtected: "Not Protected",
   notProtectedHint: "Tap to enable protection",
   broken: "Broken",

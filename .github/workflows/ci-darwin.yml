@@ -57,7 +57,7 @@ jobs:
         run: python3 scripts/byedpi-darwin-resource-test.py offveil-core/dist/ciadpi
       - name: Validate generated sing-box routing
         working-directory: offveil-core
-        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|ApplicationUDPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
+        run: OFFVEIL_SINGBOX_TEST="$PWD/dist/sing-box" go test ./internal/tunnel -run '^TestNative(SingBoxConfig|NetworkUDPRouting|NetworkOpaqueTCPRouting|OpaqueUDPDirectRoundTrip|HijackedDNSUsesCoreStub)$'
       - name: "Verify sidecars (arm64, ad-hoc, not Killed 9)"
         working-directory: offveil-core
         run: |
@@ -175,7 +175,7 @@ jobs:
         run: |
           npm ci
           npm run typecheck
-          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs ../scripts/connection-status.test.cjs
       - name: Stage real Darwin sidecars
         run: bash ./scripts/stage-bundle-darwin.sh
       - name: Cargo test (unix socket, launchd, LaunchAgent)

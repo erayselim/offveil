@@ -101,7 +101,7 @@ jobs:
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw "UI dependency installation failed" }
-          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs
+          node --test ../scripts/mac-release.test.cjs ../scripts/release.test.cjs ../scripts/status-polling.test.cjs ../scripts/connection-status.test.cjs
           if ($LASTEXITCODE -ne 0) { throw "Release/update tests failed" }
           cargo test --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "UI Rust tests failed" }

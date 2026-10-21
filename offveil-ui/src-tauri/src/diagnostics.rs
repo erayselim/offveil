@@ -62,11 +62,17 @@ pub fn export(app: tauri::AppHandle) -> Result<Option<DiagnosticsBundle>, String
     let core = crate::service::resolve_core_path()
         .ok_or("Destek dosyası için paket içindeki core bulunamadı")?;
     let mut command = std::process::Command::new(core);
-    command.arg("support").arg("--output").arg(&temporary.0);
+    command
+        .arg("support")
+        .arg("--check-network")
+        .arg("--output")
+        .arg(&temporary.0);
     if let Some(error) = LAST_ERROR.lock().ok().and_then(|last| last.clone()) {
         command.arg("--ui-error").arg(error);
     }
-    let output = crate::command::run(&mut command, Duration::from_secs(20))?;
+    // Collection has an eight-second IPC/platform budget; network checks have
+    // one 24-second global budget. Leave time to hash payloads and write the ZIP.
+    let output = crate::command::run(&mut command, Duration::from_secs(40))?;
     if !output.status.success() {
         return Err(format!(
             "Destek dosyası kaydedilemedi: {}",
