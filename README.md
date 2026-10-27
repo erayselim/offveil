@@ -19,9 +19,11 @@ requirements and validation.
 
 ## Download
 
-**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.4/offveil_1.0.4-beta.4_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.4-beta.4/offveil_1.0.4-beta.4_aarch64.dmg)**
+**[Windows 64-bit](https://github.com/erayselim/offveil/releases/download/v1.0.3/offveil_1.0.3_x64-setup.exe)** · **[Mac — Apple Silicon](https://github.com/erayselim/offveil/releases/download/v1.0.3/offveil_1.0.3_aarch64.dmg)**
 
-**1.0.4-beta.4 — test release.** Replaces application-specific routing with a verified general TCP/UDP tunnel and an explicitly limited local fallback. Improves provider recovery and general network diagnostics. Tunnel use may change latency. Testing continues across networks and devices. Available for Windows and Apple Silicon Macs; Intel Macs are not supported. [Release notes and files](https://github.com/erayselim/offveil/releases/tag/v1.0.4-beta.4).
+Stable: **1.0.3**. Intel Macs are not supported. [Latest stable release](https://github.com/erayselim/offveil/releases/latest).
+
+Beta builds are published as GitHub pre-releases for testers and are never offered to stable installs by the updater. Install a beta by hand from [Releases](https://github.com/erayselim/offveil/releases); after that, the beta app updates within the beta channel.
 
 Existing users can use **Check for Updates**. Verify downloads against `SHA256SUMS.txt` on the same release:
 
