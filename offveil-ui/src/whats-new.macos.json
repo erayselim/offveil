@@ -1,7 +1,7 @@
 {
   "version": "1.1.0-beta.1",
   "notes": {
-    "tr": "BETA — Koruma önce ağı ölçer; engel varsa web trafiği yerelde aşılır, tünel yalnızca açılmayan hizmete gider. Destek dosyası artık yönetici izni olmadan da tam.",
-    "en": "BETA — Protection measures the network first; filtered web traffic is bypassed locally and only services that still fail use a tunnel. Support files are now complete without admin access."
+    "tr": "Beta. Koruma artık önce ağınızı ölçüyor ve yalnızca gerekeni açıyor. Destek dosyası yönetici izni olmadan da eksiksiz oluşuyor.",
+    "en": "Beta. Protection now measures your network first and turns on only what is needed. Support files are complete without administrator access."
   }
 }

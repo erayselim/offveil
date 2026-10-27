@@ -1,7 +1,7 @@
 {
   "version": "1.1.0-beta.1",
   "notes": {
-    "tr": "BETA — Koruma önce ağı ölçer; engel varsa web trafiği yerelde aşılır, tünel yalnızca açılmayan hizmete gider. İndirmeler, oyunlar ve QUIC doğrudan kalır.",
-    "en": "BETA — Protection measures the network first; filtered web traffic is bypassed locally and only services that still fail use a tunnel. Downloads, games and QUIC stay direct."
+    "tr": "Beta. Koruma artık önce ağınızı ölçüyor ve yalnızca gerekeni açıyor. İndirmeler, oyunlar ve QUIC doğrudan gider; tünel sadece açılmayan hizmet için devreye girer.",
+    "en": "Beta. Protection now measures your network first and turns on only what is needed. Downloads, games and QUIC go direct; a tunnel is used only for a service that still fails."
   }
 }

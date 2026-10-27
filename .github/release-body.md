@@ -1,17 +1,20 @@
-**Download / İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — Apple Silicon]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
+**İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — M1 ve sonrası]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
 
-**Beta — test release / test sürümü.** Stable installs are not offered this build by the updater. Install it by hand; after that it updates within the beta channel.
+**Beta sürümü.** Koruma yeniden tasarlandı. Kararlı sürüm kullananlara güncelleme olarak sunulmaz; kurmak için yukarıdaki bağlantıları kullanın. Beta'yı kurduktan sonra sonraki beta'lar ve kararlı sürüm uygulama içinden gelir.
 
-- Protection measures the network first. If filtered destinations open directly, only the local DNS layer runs: no TUN, no proxy.
-- When the network filters, IPv4 web traffic goes through local desync, which leaves unfiltered connections untouched. UDP, QUIC, game stores, OS updates and banks stay direct.
-- Strategy search now targets destinations that are actually filtered, not neutral hosts.
-- A tunnel is used only for a group that desync cannot open. WARP endpoints and ports are tried in turn; group paths switch without rebuilding the adapter.
-- DNS prefers resolvers that keep CDN answers local. If the TCP layer cannot start, DNS protection stays on and the app shows Limited Protection.
-- Broken is shown only when the resolver stops or recovery gives up. No internet shows as No Connection.
-- macOS support files include the full report without administrator access. Exports add the filtering verdict, active layers and a short speed sample.
+Önceki beta, tüm trafiği tünelden geçirmeye çalışıyordu. Bu bazı hatlarda yavaşlığa, bağlantı kopmalarına ve koruma açılamamasına yol açtı. Bu sürümde yöntem tersine döndü: koruma önce ağınızı ölçüyor, sadece gerekeni açıyor.
 
-Koruma önce ağı ölçer. Engelli adresler doğrudan açılıyorsa yalnızca yerel DNS çalışır. Engel varsa IPv4 web trafiği yerelde aşılır; engelsiz bağlantılara dokunulmaz, UDP, QUIC, oyun ve güncelleme trafiği doğrudan gider. Tünel yalnızca yerel aşmanın açamadığı hizmet için kullanılır. TCP katmanı kurulamazsa DNS koruması açık kalır.
+- Engelli adresler doğrudan açılıyorsa yalnızca DNS koruması çalışır. Sanal ağ kartı ve vekil açılmaz.
+- Ağ engelliyorsa web trafiği (IPv4) yerelde aşılır. Engelsiz sitelere dokunulmaz, bu yüzden gereksiz yavaşlama olmaz.
+- İndirmeler, oyunlar, QUIC ve UDP olduğu gibi doğrudan gider. Oyun mağazaları, sistem güncellemeleri ve bankalar hiç karışılmaz.
+- Tünel yalnızca yerel aşmanın açamadığı hizmet için devreye girer. WARP için birkaç adres ve port sırayla denenir.
+- DNS, CDN'lerin size yakın sunucu vermesini sağlayan sağlayıcıyla başlar.
+- Windows'ta ağ kartının hazır olması için beklenen süre uzatıldı. Sanal ağ kartı kurulamasa bile DNS koruması açık kalır ve ekranda **Sınırlı Koruma** görünür.
+- **Bozuldu** artık yalnızca DNS durduğunda ya da kurtarma tükendiğinde görünür. İnternet yoksa **Bağlantı Yok** yazar. Yenile'ye basınca Bozuldu görünmez.
+- Mac'te destek dosyası yönetici izni olmadan da eksiksiz oluşur. Dosyaya ağın engel durumu, açık katmanlar ve kısa bir hız ölçümü eklendi.
 
-Windows SmartScreen and macOS developer verification may show a warning. [Windows guidance](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac installation](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
+Sorun yaşarsanız lütfen **Ayarlar → Destek dosyası kaydet** ile rapor paylaşın; bu sürümün asıl amacı farklı hatlarda denenmek. Özellikle Superonline, Kablonet ve Türk Telekom geri bildirimi önemli.
 
-If something fails, share **Settings → Save support file / Ayarlar → Destek dosyası kaydet**. Verify downloads with `SHA256SUMS.txt`. [Architecture](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-architecture.md) · [Network diagnostics](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-diagnostics.md). Source, build workflows and third-party notices are public in this repository.
+Windows'ta SmartScreen, Mac'te geliştirici doğrulama uyarısı çıkabilir. [Windows](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac kurulumu](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
+
+İndirmelerin doğrulama bilgileri `SHA256SUMS.txt` içinde. [Ağ mimarisi](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-architecture.md) · [Ağ tanılama](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-diagnostics.md)
