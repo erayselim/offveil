@@ -36,7 +36,7 @@ func TestChangingCandidateStillReportsFinalStableNetwork(t *testing.T) {
 		if pair != [2]string{"network-a", "network-c"} {
 			t.Fatalf("stable change was not measured from the last reported network: %v", pair)
 		}
-	case <-time.After(400 * time.Millisecond):
+	case <-time.After(5 * time.Second): // generous under a loaded full-suite run
 		t.Fatal("debounce silently adopted an unreported network change")
 	}
 }

@@ -308,7 +308,7 @@ func TestConfiguredStackPreservesOpaqueUDPDatagrams(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		t.Skip("configured capture stacks are shipped on Windows and macOS")
 	}
-	build, err := offveil.BuildSingBox(offveil.BuildParams{Provider: offveil.ProviderDesync, EnableTUN: true})
+	build, err := offveil.BuildSingBox(offveil.BuildParams{Selective: true, Provider: offveil.ProviderDesync, EnableTUN: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,8 @@ func TestGVisorReferencePreservesOpaqueUDPDatagrams(t *testing.T) {
 
 func checkUDPDatagrams(t *testing.T, name string, mtu int) {
 	t.Helper()
-	for _, size := range []int{64, 1200, 1252, 1253, 1300, 4096} {
+	// Fixed sizes plus the IPv4 UDP boundary of the configured MTU.
+	for _, size := range []int{64, 1200, 1252, 1253, 1300, 4096, mtu - 28, mtu - 27, mtu + 100} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%d/reverse=%v", name, size, reverse), func(t *testing.T) {
 				device, handler := startPacketStack(t, name, mtu)

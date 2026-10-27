@@ -337,6 +337,16 @@ func (e *Engine) checkSelectiveLocked(generation uint64, now time.Time) {
 	} else if e.classification != nil && e.classification.DPI == DPIOffline {
 		e.classification.DPI, e.reclassify = DPIPresent, true
 	}
+	// Controls failing only through the gateway point at our own path, not
+	// at the line. Journal it once per episode for support exports.
+	if !offline && !quorum(gatewayControls, controls) {
+		e.networkFailures++
+		if e.networkFailures == groupFailureThreshold {
+			e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: "gateway_controls_failed"})
+		}
+	} else {
+		e.networkFailures = 0
+	}
 	stamp := now.UTC().Format(time.RFC3339)
 	var action func()
 	for _, g := range due {

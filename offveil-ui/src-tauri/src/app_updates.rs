@@ -307,7 +307,8 @@ mod tests {
     fn a_beta_with_the_stable_manifest_name_is_ignored() {
         let mut beta = release("v1.1.0-beta.2", false, true);
         beta.assets[0].name = "latest-mac.json".into();
-        beta.assets[0].browser_download_url = format!("{REPO_DOWNLOADS}v1.1.0-beta.2/latest-mac.json");
+        beta.assets[0].browser_download_url =
+            format!("{REPO_DOWNLOADS}v1.1.0-beta.2/latest-mac.json");
         let current = semver::Version::parse("1.1.0-beta.1").unwrap();
         assert!(newest_manifest(&[beta], &current).is_none());
     }

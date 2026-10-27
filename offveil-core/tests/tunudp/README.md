@@ -32,9 +32,10 @@ go test -tags=with_gvisor -timeout=60s ./...
 
 The legacy system case first passes a small control packet, then reproduces
 loss of a fragmented 1300-byte UDP payload. The configured-stack cases use
-the stack/MTU from offveil's actual config generator and verify 64, 1200,
-1252, 1253, 1300 and 4096 bytes in both directions, including reversed fragment
-order. The adjacent 1252/1253 cases straddle MTU 1280's IPv4 UDP boundary.
+the stack/MTU from offveil's selective gateway generator and verify 64, 1200,
+1252, 1253, 1300 and 4096 bytes plus the configured MTU's IPv4 UDP boundary
+(MTU−28, MTU−27, MTU+100) in both directions, including reversed fragment
+order. The 1252/1253 cases still straddle the 1280 boundary used inside WireGuard.
 
 When changing the pinned sing-box version, review its `go.mod` and update
 this module and the Windows wrapper together. The test must keep following
