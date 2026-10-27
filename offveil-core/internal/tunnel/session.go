@@ -89,7 +89,7 @@ func Start(cfg Config) (Session, error) {
 		return startSelective(cfg)
 	}
 	if cfg.NetworkMode {
-		return startNetwork(cfg)
+		return nil, fmt.Errorf("full-network gateway was removed; use Selective")
 	}
 
 	if strings.EqualFold(strings.TrimSpace(cfg.AllowlistOutbound), "desync") {
