@@ -154,7 +154,7 @@ jobs:
             dist-release/*-setup.exe
 
       - name: Upload Windows release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows
           if-no-files-found: error
@@ -238,7 +238,7 @@ jobs:
         run: node scripts/release.cjs verify-published "$TAG" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/published-release"
       - name: Upload verified preflight packages
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-release-preflight
           path: dist-release/
