@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Installer,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion,
-    [string]$PriorTag = 'v1.0.4-beta.3'
+    [string]$PriorTag = 'v1.0.3'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

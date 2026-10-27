@@ -196,24 +196,10 @@ jobs:
           merge-multiple: true
           path: dist-release
       - name: Verify and assemble the shared release
-        run: node scripts/release.cjs prepare "$TAG" "$GITHUB_REPOSITORY" dist-release "$RUNNER_TEMP/release-body.md"
-      - name: Save the legacy Windows update pointer
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
         run: |
           set -euo pipefail
-          LEGACY_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
-          echo "LEGACY_TAG=$LEGACY_TAG" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/legacy-original" "$RUNNER_TEMP/legacy-update"
-          gh release download "$LEGACY_TAG" --pattern latest.json --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/legacy-original"
-          cp "$RUNNER_TEMP/legacy-original/"* "$RUNNER_TEMP/legacy-update/"
-          node scripts/release.cjs bridge "$RUNNER_TEMP/legacy-update" dist-release
-      - name: Keep a rollback copy of the legacy metadata
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: legacy-update-backup
-          path: ${{ runner.temp }}/legacy-original/
-          retention-days: 30
+          node scripts/release.cjs prepare "$TAG" "$GITHUB_REPOSITORY" dist-release "$RUNNER_TEMP/release-body.md"
+          node scripts/release.cjs beta-pointer dist-release "$RUNNER_TEMP/beta-pointer" "$TAG"
       - name: Attest shared checksums
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -231,16 +217,22 @@ jobs:
             gh release create "$TAG" "${args[@]}"
           fi
           gh release upload "$TAG" dist-release/* --clobber
+      # Prereleases never change the stable Latest pointer. Every release moves
+      # the beta channel pointer, so beta installs also reach the next stable.
       - name: Publish the shared release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           set -euo pipefail
           if [[ "$TAG" == *-* ]]; then
             gh release edit "$TAG" --draft=false --prerelease --latest=false --notes-file "$RUNNER_TEMP/release-body.md"
-            gh release upload "$LEGACY_TAG" "$RUNNER_TEMP/legacy-update/latest.json" "$RUNNER_TEMP/legacy-update/SHA256SUMS.txt" --clobber
           else
             gh release edit "$TAG" --draft=false --prerelease=false --latest --notes-file "$RUNNER_TEMP/release-body.md"
           fi
+          if ! gh release view updates-beta >/dev/null 2>&1; then
+            gh release create updates-beta --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Beta update channel" --notes "Update pointer for beta installs. Download releases from their own pages."
+          fi
+          gh release upload updates-beta "$RUNNER_TEMP/beta-pointer/latest-beta.json" --clobber
       - name: Verify published updates from supported prior versions
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: node scripts/release.cjs verify-published "$TAG" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/published-release"
