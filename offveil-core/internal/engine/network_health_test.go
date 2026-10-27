@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,12 +268,9 @@ func TestNetworkChecksDiscardReplacementSessionResults(t *testing.T) {
 	e, _ := networkTestEngine(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	blocking := newGatewayFixture(false)
+	var once sync.Once
 	blocking.WithProbe(func(string, string) tunnel.FailClass {
-		select {
-		case <-entered:
-		default:
-			close(entered)
-		}
+		once.Do(func() { close(entered) })
 		<-release
 		return tunnel.FailReset
 	})
