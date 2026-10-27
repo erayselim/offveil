@@ -69,7 +69,7 @@ func TestStartReportsOnlyNetworkTransportTargets(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	requireNetworkTargets(t, st, "tunnel", "tunnel")
+	requireNetworkTargets(t, st, "desync", "direct")
 	if len(st.Targets) != 2 {
 		t.Fatalf("unexpected destination-specific targets: %+v", st.Targets)
 	}

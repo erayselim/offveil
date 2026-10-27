@@ -2,14 +2,14 @@ package engine
 
 import (
 	"sync"
-	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
+	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
 func (e *Engine) strategyScopeLocked() string {
-	return "network-v2|" + e.policy.ASN() + "|" + e.policy.Fingerprint() + "|tls"
+	return "network-v3|" + e.policy.ASN() + "|" + e.policy.Fingerprint() + "|tls"
 }
 
 func helperControlQuorum(session desync.Session, hosts []string) bool {
@@ -29,19 +29,33 @@ func helperControlQuorum(session desync.Session, hosts []string) bool {
 	return len(hosts) >= 2 && passed >= 2
 }
 
-// Discovery repairs only the local TLS/HTTP fallback. It cannot confer opaque
-// TCP/UDP tunnel coverage, and one failed control cannot veto the quorum.
-func (e *Engine) recoverDesyncStrategySession(generation uint64) {
+// scanCandidatesLocked merges built-in candidates with signed ruleset ones.
+func (e *Engine) scanCandidatesLocked() []desync.Strategy {
+	var extra []desync.Strategy
+	if e.rulesetSnap != nil {
+		var errs []error
+		extra, errs = desync.CandidatesFrom(e.rulesetSnap.Doc.Strategies)
+		for _, err := range errs {
+			e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_rejected", Reason: diag.Scrub(err.Error())})
+		}
+	}
+	return desync.MergeCandidates(desync.NativeScanCandidates(), extra)
+}
+
+// recoverDesyncStrategySession searches for a strategy that opens the failing
+// group's canary without breaking neutral controls. A strategy is adopted
+// only after the real helper and the gateway open that canary too.
+func (e *Engine) recoverDesyncStrategySession(generation uint64, groupID string) {
 	e.mu.Lock()
-	if !e.currentSessionLocked(generation) || e.strategySwitching || e.networkModeLocked() != "local" || e.desyncScan != nil || e.desyncConfig == nil || e.des == nil || e.tun == nil || !e.tun.Info().Up {
+	g := e.groupLocked(groupID)
+	if !e.currentSessionLocked(generation) || g == nil || e.strategySwitching || e.layer != layerSelective || e.desyncScan != nil ||
+		e.desyncConfig == nil || e.des == nil || e.tun == nil || !e.tun.Info().Up {
+		e.groupWork = false
 		e.mu.Unlock()
 		return
 	}
 	hosts := e.controlHostsLocked()
-	if len(hosts) < 2 {
-		e.mu.Unlock()
-		return
-	}
+	target := g.Hosts[0]
 	original, dataplane, cfg := e.des, e.tun, *e.desyncConfig
 	ctx, start, scan := e.sessionContextLocked(), e.startDesync, e.scanDesync
 	if start == nil {
@@ -50,43 +64,49 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 	if scan == nil {
 		scan = desync.Scan
 	}
+	candidates := e.scanCandidatesLocked()
 	pending := &desync.ScanResult{Reason: "running"}
 	e.desyncScan = pending
 	e.publishOperationLocked("desync_scan")
 	e.mu.Unlock()
 	result := scan(ctx, desync.ScanConfig{
-		Host: hosts[0], VerifyHosts: hosts, VerifyQuorum: 2,
-		Timeout: desync.ScanEnvTimeout(), SkipIDs: map[string]struct{}{cfg.Strategy.ID: {}},
+		Required: []string{target}, VerifyHosts: hosts, VerifyQuorum: 2, PassThroughFirst: true, Candidates: candidates,
+		Timeout: desync.ScanEnvTimeout(), SkipIDs: map[string]struct{}{desync.BaseID(cfg.Strategy.ID): {}},
 		Start: desync.StartFunc(start), Resolve: cfg.Resolve, AssignJob: cfg.AssignJob,
 		BinaryPath: cfg.BinaryPath, ConnIP: cfg.ConnIP, BindInterface: cfg.BindInterface,
 	})
 	e.mu.Lock()
-	if !e.currentSessionLocked(generation) || e.desyncScan != pending {
-		e.mu.Unlock()
-		return
-	}
-	if ctx.Err() != nil || e.des != original || e.tun != dataplane || e.strategySwitching || e.networkModeLocked() != "local" {
-		e.desyncScan = nil
+	finish := func() {
+		e.groupWork = false
 		e.publishOperationLocked("")
 		e.mu.Unlock()
+	}
+	if !e.currentSessionLocked(generation) || e.desyncScan != pending {
+		finish()
+		return
+	}
+	if ctx.Err() != nil || e.des != original || e.tun != dataplane || e.strategySwitching || e.layer != layerSelective {
+		e.desyncScan = nil
+		finish()
 		return
 	}
 	e.desyncScan = &result
 	for _, tried := range result.Tried {
-		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_trial", Strategy: tried.StrategyID, Reason: string(tried.Class)})
+		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_trial", Strategy: tried.StrategyID, Reason: string(tried.Class), Target: groupID})
 	}
-	e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_scan", Reason: result.Reason})
+	e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_scan", Reason: result.Reason, Target: groupID})
 	if !result.OK || !desync.UsableOnOS(result.Strategy) || len(result.Strategy.Args) == 0 {
-		e.publishOperationLocked("")
-		e.mu.Unlock()
+		// Leave the group failing; the next round escalates it to the tunnel.
+		g.Failures = groupFailureThreshold
+		e.desyncScan = nil
+		finish()
 		return
 	}
 	e.strategySwitching = true
 	e.publishOperationLocked("desync_verify")
 	if err := original.Close(); err != nil {
 		e.desyncScan.OK, e.desyncScan.Reason, e.strategySwitching = false, "cleanup_failed", false
-		e.publishOperationLocked("")
-		e.mu.Unlock()
+		finish()
 		return
 	}
 	e.des = nil
@@ -96,10 +116,12 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 	next, err := start(winner)
 	verified := err == nil && next != nil && next.Info().Up && ctx.Err() == nil
 	if verified {
-		verified = helperControlQuorum(next, hosts) && probeControlQuorum(dataplane, hosts)
+		verified = next.ProbeTLS(target).Class == desync.FailOK && helperControlQuorum(next, hosts) &&
+			dataplane.ProbeTLS(target).Class == tunnel.FailOK
 	}
 	e.mu.Lock()
 	if !e.currentSessionLocked(generation) || ctx.Err() != nil || e.tun != dataplane {
+		e.groupWork, e.strategySwitching = false, false
 		e.mu.Unlock()
 		if next != nil {
 			_ = next.Close()
@@ -111,14 +133,13 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 		info := next.Info()
 		e.desyncInfo = &info
 		if e.strategyStore != nil {
-			_ = e.strategyStore.Put(e.strategyScopeLocked(), winner.Strategy, "control_quorum")
+			_ = e.strategyStore.Put(e.strategyScopeLocked(), strategyForCache(winner.Strategy), "canary:"+groupID)
 		}
-		e.strategySwitching, e.networkFailures = false, 0
-		e.networkCheck = &NetworkHealth{Healthy: true, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+		g.OK, g.Failures, g.Unreachable = true, 0, false
+		e.strategySwitching, e.desyncScan = false, nil
+		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_recovered", Strategy: winner.Strategy.ID, Target: groupID})
 		e.refreshNetworkStatusLocked()
-		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "strategy_recovered"})
-		e.publishOperationLocked("")
-		e.mu.Unlock()
+		finish()
 		return
 	}
 	if next != nil {
@@ -129,8 +150,9 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 	e.mu.Unlock()
 	restored, restoreErr := start(cfg)
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if !e.currentSessionLocked(generation) || ctx.Err() != nil || e.tun != dataplane {
+		e.groupWork, e.strategySwitching = false, false
+		e.mu.Unlock()
 		if restored != nil {
 			_ = restored.Close()
 		}
@@ -144,6 +166,22 @@ func (e *Engine) recoverDesyncStrategySession(generation uint64) {
 	if restoreErr != nil {
 		e.recordFailureLocked(diag.Failure{Component: "desync", Event: "rollback_failed"})
 	}
+	g.Failures, e.desyncScan = groupFailureThreshold, nil
 	e.refreshNetworkStatusLocked()
-	e.publishOperationLocked("")
+	finish()
+}
+
+// strategyForCache stores the candidate itself; startup re-applies the
+// pass-through-first wrapper.
+func strategyForCache(s desync.Strategy) desync.Strategy {
+	if !desync.IsPassThrough(s) {
+		return s
+	}
+	for i, arg := range s.Args {
+		if arg == "--auto" && i+1 < len(s.Args) && s.Args[i+1] == "torst,ssl_err" {
+			args := append(append([]string(nil), s.Args[:i]...), s.Args[i+2:]...)
+			return desync.Strategy{ID: desync.BaseID(s.ID), Args: args, Note: s.Note}
+		}
+	}
+	return s
 }

@@ -143,6 +143,11 @@ func (e *Engine) selfHeal(reason string, generation, session uint64) {
 		return
 	}
 	slog.Info("engine: self-heal begin", "reason", reason, "asn", ni.ASN, "fp", ni.Fingerprint)
+	if e.softRebindLocked(reason, ni.Fingerprint) {
+		e.mu.Unlock()
+		go e.checkNetworkSession(session, time.Now())
+		return
+	}
 	e.recordFailureLocked(diag.Failure{Component: "engine", Event: "network_rebind", Reason: reason,
 		FingerprintBefore: e.networkFingerprint, FingerprintAfter: ni.Fingerprint})
 	e.healing = true
@@ -179,6 +184,56 @@ func (e *Engine) selfHeal(reason string, generation, session uint64) {
 	if st != nil {
 		slog.Info("engine: self-heal done", "reason", reason, "state", st.State, "hint", st.OutboundHint)
 	}
+}
+
+// softRebindLocked keeps the TUN across a network change when the physical
+// interface is the same: only the helper's source address and the
+// measurements are refreshed. It reports false when a full rebuild is needed.
+func (e *Engine) softRebindLocked(reason, fingerprint string) bool {
+	rebind := func(mode string) {
+		e.recordFailureLocked(diag.Failure{Component: "engine", Event: "network_rebind", Reason: reason, Stage: mode,
+			FingerprintBefore: e.networkFingerprint, FingerprintAfter: fingerprint})
+		e.networkFingerprint = fingerprint
+		e.reclassify, e.lastPathCheck = true, time.Time{}
+		for _, g := range e.groups {
+			g.Failures, g.Unreachable = 0, false
+		}
+		e.lastHealAt = time.Now().UTC()
+		e.healCount++
+		e.healReason, e.healAt = reason, e.lastHealAt.Format(time.RFC3339)
+		e.refreshNetworkStatusLocked()
+		e.publishOperationLocked("")
+	}
+	if e.layer != layerSelective {
+		rebind("measure")
+		return true
+	}
+	if e.takeSnapshot == nil || e.captureInfo == nil || e.captureInfo.Egress == nil || e.desyncConfig == nil || e.des == nil {
+		return false
+	}
+	snap, err := e.takeSnapshot()
+	if err != nil || snap == nil || snap.Egress == nil || snap.Egress.Name != e.captureInfo.Egress.Name {
+		return false
+	}
+	egress := *snap.Egress
+	if egress.IPv4 != e.captureInfo.Egress.IPv4 {
+		next := *e.desyncConfig
+		next.ConnIP = egress.IPv4
+		_ = e.des.Close()
+		des, err := e.startDesync(next)
+		if err != nil || des == nil {
+			e.des, e.desyncConfig = nil, &next
+			e.recordFailureLocked(diag.Failure{Component: "desync", Event: "rebind_failed"})
+		} else {
+			info := des.Info()
+			e.des, e.desyncConfig, e.desyncInfo = des, &next, &info
+		}
+	}
+	captureInfo := *e.captureInfo
+	captureInfo.Egress = &egress
+	e.captureInfo = &captureInfo
+	rebind("soft")
+	return true
 }
 
 func (e *Engine) healInfoLocked() *HealInfo {

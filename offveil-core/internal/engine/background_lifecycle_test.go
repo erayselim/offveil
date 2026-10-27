@@ -28,7 +28,14 @@ func activeBackgroundEngine(t *testing.T) *Engine {
 	e.rulesetSnap = &rs
 	e.policy.ObserveNetwork(netinfo.Info{ASN: "9121", Fingerprint: "network-a"})
 	e.networkFingerprint = "network-a"
-	e.tun = tunnel.NewFakeSession(tunnel.Info{Up: true, Healthy: true, Mode: "remote", ProviderID: tunnel.ProviderWARP})
+	e.layer = layerSelective
+	e.recoveryAttempts = map[string]int{}
+	e.closeOrphan, e.takeSnapshot = nil, nil
+	e.classify = func(context.Context, DirectProbe, []string, []ruleset.CanaryGroup) Classification {
+		return Classification{DPI: DPIPresent}
+	}
+	e.cap = capture.NewFakeSession(capture.Info{})
+	e.tun = tunnel.NewFakeSession(tunnel.Info{Up: true, Healthy: true, Mode: "selective", ProviderID: tunnel.ProviderDesync})
 	t.Cleanup(func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
@@ -143,14 +150,31 @@ func TestRepairSerializesStartAndKeepsStatusReadable(t *testing.T) {
 	awaitBackground(t, started)
 }
 
-func TestStatusReportsRequiredGatewayExitAsDegraded(t *testing.T) {
+func TestGatewayExitIsReconnectingUntilRecoveryIsExhausted(t *testing.T) {
 	e := activeBackgroundEngine(t)
 	if e.Status().Health != "ok" {
 		t.Fatal("healthy sidecar reported degraded")
 	}
 	_ = e.tun.Close()
 	st := e.Status()
-	if st.State != StateDegraded || st.Health != "degraded" || st.LastError == nil {
-		t.Fatalf("sidecar exit not reflected: %+v", st)
+	if st.State != StateActive || st.Transition != "transport_recovery" || st.LastError != nil {
+		t.Fatalf("a recoverable exit must read as reconnecting: %+v", st)
+	}
+	e.mu.Lock()
+	e.recoveryAttempts["tunnel"] = recoveryBudget
+	e.mu.Unlock()
+	st = e.Status()
+	if st.State != StateDegraded || st.Health != "degraded" || st.LastError == nil || st.Summary != "Bozuldu" {
+		t.Fatalf("exhausted recovery not reflected: %+v", st)
+	}
+}
+
+func TestDNSStubExitIsBrokenAtOnce(t *testing.T) {
+	e := activeBackgroundEngine(t)
+	dns := offdns.NewFakeSession(offdns.Info{})
+	e.dns = dns
+	_ = dns.Close()
+	if st := e.Status(); st.State != StateDegraded || st.Summary != "Bozuldu" || st.LastError == nil {
+		t.Fatalf("dead resolver: %+v", st)
 	}
 }

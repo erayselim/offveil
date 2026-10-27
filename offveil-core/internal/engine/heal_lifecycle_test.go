@@ -17,7 +17,7 @@ func TestUserLifecycleRequestCancelsPendingHeal(t *testing.T) {
 	for _, action := range []string{"stop", "repair"} {
 		t.Run(action, func(t *testing.T) {
 			e := New(cleanup.NewRegistry())
-			e.state = StateActive
+			e.state, e.layer = StateActive, layerSelective
 			e.protection = true
 			entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			e.lookupNet = func(context.Context) netinfo.Info {
@@ -62,7 +62,7 @@ func TestUserLifecycleRequestCancelsPendingHeal(t *testing.T) {
 
 func TestStopDuringHealRestartGapCancelsRestart(t *testing.T) {
 	e := New(cleanup.NewRegistry())
-	e.state = StateActive
+	e.state, e.layer = StateActive, layerSelective
 	e.protection = true
 	e.lookupNet = func(context.Context) netinfo.Info { return netinfo.Info{ASN: "9121", Fingerprint: "test-network"} }
 	var starts atomic.Int32
