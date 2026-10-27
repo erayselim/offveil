@@ -7,6 +7,7 @@ import (
 
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/proc"
+	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
 const (
@@ -35,6 +36,14 @@ func (e *Engine) recordFailureLocked(failure diag.Failure) {
 	failure.Generation = e.sessionGeneration
 	if err := diag.RecordFailure(failure); err != nil {
 		slog.Warn("engine: save failure", "err", err)
+	}
+}
+
+func (e *Engine) recordTunnelFailuresLocked(event string, failures []tunnel.ProviderFailure) {
+	for _, failure := range failures {
+		e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: event,
+			Provider: string(failure.ProviderID), Stage: failure.Stage, Class: string(failure.Class),
+			Reason: failure.Reason, Target: failure.Target, Exit: failure.Exit, ExitOrigin: failure.ExitOrigin})
 	}
 }
 

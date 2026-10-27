@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
+	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	"github.com/erayselim/offveil/offveil-core/internal/probe"
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
@@ -167,5 +168,25 @@ func TestRetainedActiveSnapshotReportsCurrentProtectionOff(t *testing.T) {
 	in := e.diagnosticsInputLocked()
 	if !in.Cascade.Protection || in.System["protection_state"] != "off" || e.lastSupport.System["protection_state"] != "on" {
 		t.Fatal("retained snapshot mutated or misreported current protection")
+	}
+}
+
+func TestHealthyLocalRollbackClearsRemoteFailureHistory(t *testing.T) {
+	e := networkTestEngine(t, "remote")
+	e.networkFailures = 2
+	session := &healthSession{FakeSession: e.tun.(*tunnel.FakeSession), health: func(context.Context) bool { return true }}
+	session.refresh = func(context.Context) error {
+		session.FakeSession = tunnel.NewFakeSession(tunnel.Info{Up: true, Healthy: true, Mode: "local", ProviderID: tunnel.ProviderDesync})
+		return errors.New("remote gateway failed; healthy local restored")
+	}
+	e.tun = session
+	e.refreshTransportSession(e.sessionGeneration, session)
+	st := e.Status()
+	if e.networkFailures != 0 || st.LastError != nil || st.Summary != "Sınırlı koruma" || e.networkCheck.Reason != "remote_transport_unavailable" {
+		t.Fatalf("remote failures poisoned verified local rollback: status=%+v network=%+v", st, e.networkCheck)
+	}
+	history := diag.ReadFailures()
+	if len(history) != 1 || history[0].Event != "transport_demoted" || history[0].FromMode != "remote" || history[0].ToMode != "local" {
+		t.Fatalf("demotion history missing: %+v", history)
 	}
 }

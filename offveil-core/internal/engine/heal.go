@@ -56,12 +56,12 @@ func (e *Engine) requestSessionHeal(reason string, session uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.currentSessionLocked(session) {
-		e.requestHealLocked(reason, reason == "network_change")
+		e.requestHealLocked(reason)
 	}
 }
 
-func (e *Engine) requestHealLocked(reason string, networkChanged bool) {
-	go e.selfHeal(reason, e.lifecycleGeneration, e.sessionGeneration, networkChanged)
+func (e *Engine) requestHealLocked(reason string) {
+	go e.selfHeal(reason, e.lifecycleGeneration, e.sessionGeneration)
 }
 
 // SelfHeal silently rebuilds the protection stack after network change or wake.
@@ -72,10 +72,10 @@ func (e *Engine) SelfHeal(reason string) {
 	generation := e.lifecycleGeneration
 	session := e.sessionGeneration
 	e.mu.Unlock()
-	e.selfHeal(reason, generation, session, false)
+	e.selfHeal(reason, generation, session)
 }
 
-func (e *Engine) selfHeal(reason string, generation, session uint64, networkChanged bool) {
+func (e *Engine) selfHeal(reason string, generation, session uint64) {
 	e.healMu.Lock()
 	defer e.healMu.Unlock()
 
@@ -131,19 +131,24 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 		e.mu.Unlock()
 		return
 	}
-	invalidated := false
 	if e.policy != nil {
-		invalidated = e.policy.ObserveNetwork(ni)
+		e.policy.ObserveNetwork(ni)
 	}
-	need := reason == "power_resume" || networkChanged || invalidated
+	// Revalidate after settling: a reverted change or a relay ASN update must
+	// not tear down a working physical binding.
+	need := reason == "power_resume" || e.physicalNetworkChangedLocked(ni.Fingerprint)
 	if !need {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)
 		return
 	}
 	slog.Info("engine: self-heal begin", "reason", reason, "asn", ni.ASN, "fp", ni.Fingerprint)
+	e.recordFailureLocked(diag.Failure{Component: "engine", Event: "network_rebind", Reason: reason,
+		FingerprintBefore: e.networkFingerprint, FingerprintAfter: ni.Fingerprint})
+	e.healing = true
 
 	if _, err := e.stopLocked(); err != nil {
+		e.healing = false
 		e.mu.Unlock()
 		slog.Warn("engine: self-heal stop", "err", err.Message)
 		return
@@ -153,6 +158,10 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 	time.Sleep(400 * time.Millisecond)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer func() {
+		e.healing = false
+		e.publishOperationLocked("")
+	}()
 	if generation != e.lifecycleGeneration || stoppedSession != e.sessionGeneration || e.state != StateStopped {
 		return
 	}

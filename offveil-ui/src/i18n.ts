@@ -13,6 +13,8 @@ export type Messages = {
   waitingAdmin: string;
   needsAdmin: string;
   starting: string;
+  reconnecting: string;
+  reconnectingHint: string;
   disconnecting: string;
   refresh: string;
   refreshing: string;
@@ -98,6 +100,8 @@ const tr: Messages = {
   waitingAdmin: "Servis kuruluyor. Açılırsa yönetici penceresini onaylayın.",
   needsAdmin: "Kurulumu tamamlamak için düğmeye basın.",
   starting: "Bağlanıyor…",
+  reconnecting: "Yeniden bağlanıyor…",
+  reconnectingHint: "Ağ bağlantısı yenileniyor. Koruma durumu doğrulanıyor.",
   disconnecting: "Kesiliyor…",
   refresh: "Yenile",
   refreshing: "Yenileniyor…",
@@ -183,6 +187,8 @@ const en: Messages = {
   waitingAdmin: "Installing the service. Approve the administrator prompt if shown.",
   needsAdmin: "Press the button to complete setup.",
   starting: "Connecting…",
+  reconnecting: "Reconnecting…",
+  reconnectingHint: "Rebuilding the network connection and verifying protection.",
   disconnecting: "Disconnecting…",
   refresh: "Refresh",
   refreshing: "Refreshing…",

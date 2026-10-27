@@ -34,13 +34,14 @@ func startNetwork(cfg Config) (Session, error) { return startNetworkWith(cfg, st
 
 func startNetworkWith(cfg Config, launch networkLauncher) (Session, error) {
 	if err := normalizeControls(&cfg); err != nil {
-		return nil, err
+		return nil, &StartupError{Err: err, Failures: []ProviderFailure{{Stage: "configuration", Class: FailConfig}}}
 	}
 	if cfg.ProviderListenPort == 0 {
 		cfg.ProviderListenPort = 18082
 	}
 	if cfg.ProviderListenPort == cfg.ListenPort {
-		return nil, fmt.Errorf("gateway and provider listeners must differ")
+		return nil, &StartupError{Err: fmt.Errorf("gateway and provider listeners must differ"),
+			Failures: []ProviderFailure{{Stage: "configuration", Class: FailConfig}}}
 	}
 	if cfg.ProbeTimeout <= 0 || cfg.ProbeTimeout > 5*time.Second {
 		cfg.ProbeTimeout = 5 * time.Second
@@ -62,12 +63,22 @@ func startNetworkWith(cfg Config, launch networkLauncher) (Session, error) {
 	readiness, finish := context.WithTimeout(ctx, 8*time.Second)
 	defer finish()
 	gateway, err := n.openGateway(readiness, n.leaf)
+	if err != nil && n.leaf != nil && ctx.Err() == nil {
+		_ = n.leaf.Close()
+		n.leaf = nil
+		// Remote routing can fail independently of local routing. Give the
+		// fallback its own budget rather than aborting before it is attempted.
+		fallback, stop := context.WithTimeout(ctx, 8*time.Second)
+		defer stop()
+		gateway, err = n.openGateway(fallback, nil)
+		readiness = fallback
+	}
 	if err != nil {
 		if n.leaf != nil {
 			_ = n.leaf.Close()
 		}
 		cancel()
-		return nil, err
+		return nil, &StartupError{Failures: append([]ProviderFailure(nil), n.failures...), Err: err}
 	}
 	n.gateway = gateway
 	if cfg.SkipStart {
@@ -78,7 +89,7 @@ func startNetworkWith(cfg Config, launch networkLauncher) (Session, error) {
 		if !n.CheckHealth(readiness) && n.leaf != nil {
 			// Leaf transport can work while gateway setup or its routing fails.
 			// Keep the limited fallback explicit rather than claiming full coverage.
-			n.failures = append(n.failures, ProviderFailure{ProviderID: n.leaf.provider, Stage: "gateway_control_tls", Class: FailProbe})
+			n.recordControlFailure()
 			_ = n.gateway.Close()
 			_ = n.leaf.Close()
 			n.leaf = nil
@@ -87,7 +98,7 @@ func startNetworkWith(cfg Config, launch networkLauncher) (Session, error) {
 			n.gateway, err = n.openGateway(fallback, nil)
 			if err != nil {
 				cancel()
-				return nil, err
+				return nil, &StartupError{Failures: append([]ProviderFailure(nil), n.failures...), Err: err}
 			}
 			n.CheckHealth(fallback)
 		}
@@ -161,17 +172,44 @@ func (n *networkSession) openGateway(ctx context.Context, leaf *session) (*sessi
 	} else {
 		cfg.upstreamSOCKS = ""
 	}
-	gateway, ok, _, err := n.launch(cfg, providerAttempt{ID: provider})
+	gateway, ok, class, err := n.launch(cfg, providerAttempt{ID: provider})
 	if !ok || gateway == nil || !gateway.Info().Up {
 		if gateway != nil {
+			if gateway.child.Running() {
+				gateway.exitOrigin = "cleanup"
+			}
 			_ = gateway.Close()
 		}
 		if err == nil {
 			err = fmt.Errorf("network gateway not ready")
 		}
+		if class == "" || class == FailOK {
+			class = FailDial
+		}
+		failure := providerFailure(gateway, provider, class, err)
+		if failure.Stage == "" {
+			failure.Stage = "readiness"
+		}
+		failure.Stage = "gateway_" + failure.Stage
+		n.mu.Lock()
+		n.failures = append(n.failures, failure)
+		n.mu.Unlock()
 		return nil, err
 	}
 	return gateway, nil
+}
+
+func (n *networkSession) recordControlFailure() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.leaf == nil {
+		return
+	}
+	n.failures = append(n.failures, ProviderFailure{
+		ProviderID: n.leaf.provider, Stage: "gateway_verification", Class: FailProbe,
+		Controls:        append([]ControlResult(nil), n.controls...),
+		GatewayControls: append([]ControlResult(nil), n.gatewayControls...),
+	})
 }
 
 // CheckHealth updates provider health only from the configured control quorum.
@@ -377,6 +415,7 @@ func (n *networkSession) RefreshTransport(ctx context.Context) error {
 // A candidate is not adopted solely because its process started. Failed
 // gateway verification restores limited routing with a fresh cleanup budget.
 func (n *networkSession) restoreLocalGateway() error {
+	n.recordControlFailure()
 	n.mu.Lock()
 	if n.closed {
 		n.mu.Unlock()

@@ -64,9 +64,9 @@ func run(ctx context.Context, interval time.Duration, fp FingerprintFunc, onChan
 			}
 			stable := fp()
 			if stable == "" || stable == "offline" || stable == prev || stable != candidate {
-				if stable != "" && stable != "offline" {
-					prev = stable
-				}
+				// Only advance the baseline after reporting a stable change.
+				// A -> B -> C during debounce must retry C, not silently adopt it
+				// while the engine is still bound to A.
 				continue
 			}
 			slog.Info("netwatch: egress fingerprint changed", "from", prev, "to", stable)

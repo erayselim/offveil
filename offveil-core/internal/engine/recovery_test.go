@@ -14,6 +14,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/diag"
 	offdns "github.com/erayselim/offveil/offveil-core/internal/dns"
 	"github.com/erayselim/offveil/offveil-core/internal/netinfo"
+	"github.com/erayselim/offveil/offveil-core/internal/proc"
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
@@ -187,6 +188,53 @@ func TestStartupFailureReplacesPreviousSuccessfulDiagnostics(t *testing.T) {
 	e.mu.Unlock()
 	if report.Cascade.Protection || report.Cascade.State != StateStopped || !strings.Contains(report.Cascade.LastError, "fixture gateway startup failure") {
 		t.Fatalf("new startup failure masked by retained success: %+v", report.Cascade)
+	}
+}
+
+func TestStartupFailurePersistsGatewayFactsAfterEngineReplacement(t *testing.T) {
+	e := startedNetworkFixture(t, func(offdns.Config) (offdns.Session, error) {
+		return offdns.NewFakeSession(offdns.Info{}), nil
+	})
+	_, _ = e.Stop()
+	exit := &proc.ExitInfo{Code: 1, StderrClass: "tun_setup", Reason: "adapter_busy"}
+	e.startTunnel = func(tunnel.Config) (tunnel.Session, error) {
+		return nil, &tunnel.StartupError{Err: errors.New("fixture gateway startup failure"), Failures: []tunnel.ProviderFailure{
+			{ProviderID: tunnel.ProviderWARP, Stage: "control_tls", Class: tunnel.FailEOF, ExitOrigin: "cleanup"},
+			{ProviderID: tunnel.ProviderDesync, Stage: "gateway_startup", Class: tunnel.FailDial, Exit: exit, ExitOrigin: "natural"},
+		}}
+	}
+	if _, err := e.Start("auto"); err == nil {
+		t.Fatal("fixture gateway unexpectedly started")
+	}
+	report := e.diagnosticsInputLocked()
+	if report.Cascade.Protection || report.Sidecars["tunnel"] == nil || report.Sidecars["capture"] == nil {
+		t.Fatal("cleanup discarded the failed startup stack")
+	}
+	// A fresh engine has no previous in-memory snapshot, just like an offline
+	// collector after the service stopped. The durable journal keeps the layer.
+	_ = New(cleanup.NewRegistry())
+	history := diag.ReadFailures()
+	if len(history) != 3 || history[0].Stage != "control_tls" || history[0].Class != "eof" ||
+		history[1].ExitOrigin != "natural" || history[1].Exit == nil || history[1].Exit.Reason != "adapter_busy" ||
+		history[2].Reason != "tun_failed" || history[2].Stage != "gateway_startup" || history[2].Class != "dial" {
+		t.Fatalf("offline startup evidence lost: %+v", history)
+	}
+}
+
+func TestCaptureFailureIsDistinctFromGatewayStartup(t *testing.T) {
+	e := startedNetworkFixture(t, func(offdns.Config) (offdns.Session, error) {
+		return offdns.NewFakeSession(offdns.Info{}), nil
+	})
+	_, _ = e.Stop()
+	e.startCapture = func(capture.Config) (capture.Session, error) {
+		return nil, context.DeadlineExceeded
+	}
+	if _, err := e.Start("auto"); err == nil {
+		t.Fatal("fixture capture unexpectedly started")
+	}
+	history := diag.ReadFailures()
+	if len(history) != 1 || history[0].Stage != "capture" || history[0].Class != "timeout" || history[0].Reason != "tun_failed" {
+		t.Fatalf("capture error collapsed into generic TUN failure: %+v", history)
 	}
 }
 

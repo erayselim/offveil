@@ -79,6 +79,9 @@ func TestStopDuringHealRestartGapCancelsRestart(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("heal did not stop")
 	}
+	if st := e.Status(); st.Transition != "network_heal" {
+		t.Fatalf("heal cleanup looked like an explicit stop: %+v", st)
+	}
 	_, _ = e.Stop() // Already stopped is still an explicit request to stay off.
 	select {
 	case <-done:
@@ -87,5 +90,8 @@ func TestStopDuringHealRestartGapCancelsRestart(t *testing.T) {
 	}
 	if starts.Load() != 0 {
 		t.Fatal("self-heal ignored stop during restart delay")
+	}
+	if st := e.Status(); st.Transition != "" || st.Protection {
+		t.Fatalf("explicit stop retained automatic reconnection: %+v", st)
 	}
 }

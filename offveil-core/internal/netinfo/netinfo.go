@@ -46,7 +46,10 @@ func Lookup(ctx context.Context) Info {
 // LocalFingerprint hashes the machine's default egress local IPs (dnscrypt-style).
 // Wi-Fi ↔ Ethernet / DHCP renew that changes source IP invalidates policy cache.
 func LocalFingerprint() string {
-	ips := discoverLocalIPs()
+	return fingerprintIPs(discoverLocalIPs())
+}
+
+func fingerprintIPs(ips []net.IP) string {
 	if len(ips) == 0 {
 		return "offline"
 	}
@@ -64,14 +67,18 @@ func LocalFingerprint() string {
 }
 
 func discoverLocalIPs() []net.IP {
-	// The IPv4 target is excluded from offveil's split-default TUN routes.
-	// UDP connect sends no packet, but selects the physical source address;
-	// a captured target would identify our own TUN and hide network changes.
-	probes := []string{"1.1.1.1:53", "[2001:db8::1]:9"}
+	return discoverLocalIPsWith(net.DialTimeout)
+}
+
+func discoverLocalIPsWith(dial func(string, string, time.Duration) (net.Conn, error)) []net.IP {
+	// Both targets are excluded from offveil's split-default TUN routes.
+	// UDP connect sends no packet. A captured IPv6 target would identify our
+	// own synthetic interface, even on a LAN with no physical IPv6 route.
+	probes := []string{"1.1.1.1:53", "[2606:4700:4700::1111]:53"}
 	seen := map[string]struct{}{}
 	var out []net.IP
 	for _, addr := range probes {
-		c, err := net.DialTimeout("udp", addr, time.Second)
+		c, err := dial("udp", addr, time.Second)
 		if err != nil {
 			continue
 		}

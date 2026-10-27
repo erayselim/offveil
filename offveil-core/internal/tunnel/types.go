@@ -139,15 +139,26 @@ func DefaultConfig() Config {
 
 // ProviderFailure retains allowlisted facts from an exhausted provider attempt.
 type ProviderFailure struct {
-	ProviderID ProviderID      `json:"provider_id"`
-	Class      FailClass       `json:"class"`
-	Reason     string          `json:"reason,omitempty"`
-	Exit       *proc.ExitInfo  `json:"exit,omitempty"`
-	Stage      string          `json:"stage,omitempty"`
-	Target     string          `json:"target,omitempty"`
-	ExitOrigin string          `json:"exit_origin,omitempty"`
-	Controls   []ControlResult `json:"controls,omitempty"`
+	ProviderID      ProviderID      `json:"provider_id"`
+	Class           FailClass       `json:"class"`
+	Reason          string          `json:"reason,omitempty"`
+	Exit            *proc.ExitInfo  `json:"exit,omitempty"`
+	Stage           string          `json:"stage,omitempty"`
+	Target          string          `json:"target,omitempty"`
+	ExitOrigin      string          `json:"exit_origin,omitempty"`
+	Controls        []ControlResult `json:"controls,omitempty"`
+	GatewayControls []ControlResult `json:"gateway_controls,omitempty"`
 }
+
+// StartupError preserves safe attempt facts even when no gateway can be
+// returned. Callers can persist these before startup cleanup or daemon exit.
+type StartupError struct {
+	Failures []ProviderFailure
+	Err      error
+}
+
+func (e *StartupError) Error() string { return e.Err.Error() }
+func (e *StartupError) Unwrap() error { return e.Err }
 
 // ControlResult is a certificate-verified TLS result, never an application probe.
 type ControlResult struct {

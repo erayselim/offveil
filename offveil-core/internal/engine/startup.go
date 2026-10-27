@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -51,7 +52,12 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.networkFailures, e.lastTransportRetry = 0, time.Time{}
 	e.networkCheck = nil
 	e.targets = networkTargets("none", false)
-	e.publishOperationLocked("ruleset")
+	stage := "job"
+	publish := func(next string) {
+		stage = next
+		e.publishOperationLocked(next)
+	}
+	publish(stage)
 	defer e.publishOperationLocked("")
 	defer func() {
 		if !e.protection {
@@ -59,17 +65,38 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 		}
 	}()
 	fail := func(code string, cause error) (*ipc.Status, *ipc.RPCError) {
+		message := diag.Scrub(cause.Error())
+		e.lastError = &message
+		e.state, e.summary, e.protection = StateStopped, "Kapalı", false
+		class := "other"
+		switch {
+		case isPrivilegeErr(cause):
+			class = "permission"
+		case errors.Is(cause, context.DeadlineExceeded):
+			class = "timeout"
+		case errors.Is(cause, context.Canceled):
+			class = "canceled"
+		}
+		var startup *tunnel.StartupError
+		if errors.As(cause, &startup) {
+			e.recordTunnelFailuresLocked("startup_attempt_failed", startup.Failures)
+			e.tunnelInfo = &tunnel.Info{Failures: append([]tunnel.ProviderFailure(nil), startup.Failures...)}
+			if len(startup.Failures) > 0 {
+				last := startup.Failures[len(startup.Failures)-1]
+				stage, class = last.Stage, string(last.Class)
+			}
+		}
+		e.recordFailureLocked(diag.Failure{Component: "engine", Event: "startup_failed", Reason: code, Stage: stage, Class: class})
+		// Freeze the attempted stack before cleanup erases its evidence. Current
+		// protection remains off; Up fields describe the attempted stack only.
+		e.freezeSupportLocked()
+		e.lastSupport.Notes = append(e.lastSupport.Notes, "Startup failed; sidecars describe the attempted stack before cleanup.")
 		e.cleanup.Run("start_failed")
 		e.cleanup.Clear()
 		e.cap, e.dns, e.des, e.tun = nil, nil, nil, nil
 		e.captureInfo, e.dnsInfo, e.desyncInfo, e.tunnelInfo = nil, nil, nil, nil
 		e.dnsConfig, e.desyncConfig, e.tunnelConfig = nil, nil, nil
 		e.doh, e.job = nil, nil
-		e.state, e.summary, e.protection = StateStopped, "Kapalı", false
-		message := diag.Scrub(cause.Error())
-		e.lastError = &message
-		e.recordFailureLocked(diag.Failure{Component: "engine", Event: "startup_failed", Reason: code})
-		e.freezeSupportLocked()
 		return e.statusLocked(), &ipc.RPCError{Code: code, Message: message}
 	}
 	job, err := proc.NewKillOnCloseJob()
@@ -79,6 +106,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.job = job
 	// Cleanup is LIFO: gateway/provider, helper, resolver, capture, then job.
 	e.cleanup.Register("job", func() error { return job.Close() })
+	publish("ruleset")
 	load := e.loadRuleset
 	if load == nil {
 		load = func(ctx context.Context) (ruleset.Snapshot, error) {
@@ -117,7 +145,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	capCfg.SkipAdapter, capCfg.ApplyRoutes, capCfg.SplitDefault = true, false, true
 	capCfg.ResolveHosts = nil
 	capCfg.Resolve = doh.LookupAWithFallback
-	e.publishOperationLocked("capture")
+	publish("capture")
 	startCapture := e.startCapture
 	if startCapture == nil {
 		startCapture = capture.Start
@@ -144,7 +172,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	// It also never waits for the engine lock on a system DNS request.
 	dnsCfg.OnQuery = e.observeDNSQuery
 	e.dnsConfig = &dnsCfg
-	e.publishOperationLocked("dns")
+	publish("dns")
 	startDNS := e.startDNS
 	if startDNS == nil {
 		startDNS = offdns.Start
@@ -165,7 +193,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	})
 	dnsInfo := dnsSession.Info()
 	e.dnsInfo = &dnsInfo
-	e.publishOperationLocked("network")
+	publish("network")
 	lookup := e.lookupNet
 	if lookup == nil {
 		lookup = netinfo.Lookup
@@ -177,6 +205,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 		e.policy = policy.NewStore()
 	}
 	e.policy.ObserveNetwork(identity)
+	e.networkFingerprint = identity.Fingerprint
 	if e.strategyStore == nil {
 		if store, openErr := desync.OpenStrategyStore(""); openErr == nil {
 			e.strategyStore = store
@@ -198,7 +227,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 		desCfg.BindInterface = capInfo.Egress.Name
 	}
 	e.desyncConfig = &desCfg
-	e.publishOperationLocked("desync")
+	publish("desync")
 	startDesync := e.startDesync
 	if startDesync == nil {
 		startDesync = desync.Start
@@ -238,7 +267,7 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 		tunCfg.DNSAddress = dnsInfo.ListenAddr
 	}
 	e.tunnelConfig = &tunCfg
-	e.publishOperationLocked("tunnel")
+	publish("tunnel")
 	startTunnel := e.startTunnel
 	if startTunnel == nil {
 		startTunnel = tunnel.Start
@@ -261,12 +290,14 @@ func (e *Engine) startLocked(mode string) (*ipc.Status, *ipc.RPCError) {
 	})
 	ti := e.tun.Info()
 	e.tunnelInfo = &ti
+	e.recordTunnelFailuresLocked("startup_attempt_failed", ti.Failures)
 	if ti.Mode == "remote" && !ti.Healthy {
 		return fail(ipc.CodeEngineFailed, fmt.Errorf("network gateway failed independent connectivity controls"))
 	}
 	if e.networkModeLocked() == "local" && (e.des == nil || !e.des.Info().Up) {
 		return fail(ipc.CodeEngineFailed, fmt.Errorf("remote transport unavailable and local fallback helper failed"))
 	}
+	publish("adapter_attach")
 	if err = attachCaptureAdapter(e.sessionContextLocked(), e.cap, capture.AdapterName); err != nil {
 		return fail(ipc.CodeTunFailed, fmt.Errorf("adapter readiness: %w", err))
 	}

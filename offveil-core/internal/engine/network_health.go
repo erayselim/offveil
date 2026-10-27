@@ -221,6 +221,7 @@ func (e *Engine) refreshTransportSession(generation uint64, session tunnel.Sessi
 		return
 	}
 	ctx := e.sessionContextLocked()
+	before := session.Info()
 	e.strategySwitching = true
 	e.publishOperationLocked("transport_recovery")
 	e.mu.Unlock()
@@ -235,7 +236,9 @@ func (e *Engine) refreshTransportSession(generation uint64, session tunnel.Sessi
 	e.strategySwitching = false
 	info := session.Info()
 	e.tunnelInfo = &info
-	if err == nil && info.Up && info.Healthy {
+	// A failed remote attempt can still restore a verified local path. Its
+	// controls must not inherit the failed remote path's debounce counter.
+	if info.Up && info.Healthy {
 		e.networkFailures = 0
 	}
 	e.networkCheck = &NetworkHealth{Healthy: info.Healthy, CheckedAt: time.Now().UTC().Format(time.RFC3339)}
@@ -243,7 +246,15 @@ func (e *Engine) refreshTransportSession(generation uint64, session tunnel.Sessi
 	if err != nil {
 		event = "transport_retry_failed"
 	}
-	e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: event, Provider: string(info.ProviderID)})
+	if before.Mode != info.Mode && info.Up && info.Healthy {
+		if info.Mode == "local" {
+			event = "transport_demoted"
+		} else {
+			event = "transport_promoted"
+		}
+	}
+	e.recordFailureLocked(diag.Failure{Component: "tunnel", Event: event, Provider: string(info.ProviderID),
+		Stage: "transport_refresh", FromMode: before.Mode, ToMode: info.Mode})
 	e.refreshNetworkStatusLocked()
 	e.publishOperationLocked("")
 }

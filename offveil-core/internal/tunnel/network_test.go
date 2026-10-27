@@ -300,3 +300,99 @@ func TestPromotionFailureRollsBackLocalGateway(t *testing.T) {
 		t.Fatal("local gateway was not restored")
 	}
 }
+
+func TestRemoteGatewayStartupFailureTriesLocalFallback(t *testing.T) {
+	cfg := networkFixture(t)
+	var candidate *session
+	var remote, local int
+	launcher := func(c Config, p providerAttempt) (*session, bool, FailClass, error) {
+		if c.providerOnly {
+			candidate = fakeNetworkSession(c, p.ID)
+			return candidate, true, FailOK, nil
+		}
+		if c.upstreamSOCKS != "" {
+			remote++
+			return nil, false, FailDial, stageError("startup", "", errors.New("fixture remote gateway unavailable"))
+		}
+		local++
+		if c.startupContext.Err() != nil || c.Context.Err() != nil {
+			t.Fatal("local fallback inherited a spent or canceled readiness budget")
+		}
+		return fakeNetworkSession(c, p.ID), true, FailOK, nil
+	}
+	value, err := startNetworkWith(cfg, launcher)
+	if err != nil {
+		t.Fatalf("remote gateway error bypassed local fallback: %v", err)
+	}
+	defer value.Close()
+	info := value.Info()
+	if remote != 1 || local != 1 || candidate.Info().Up || !info.Up || info.Mode != "local" || info.Coverage != "tls_http_only" {
+		t.Fatalf("fallback lifecycle: remote=%d local=%d info=%+v", remote, local, info)
+	}
+}
+
+func TestFailedLocalGatewayRetainsStartupExitFacts(t *testing.T) {
+	cfg := networkFixture(t)
+	cfg.AllowlistOutbound = "desync"
+	launcher := func(c Config, p providerAttempt) (*session, bool, FailClass, error) {
+		child, err := failedAdapterChild(t, "The device is being removed")
+		s := fakeNetworkSession(c, p.ID)
+		s.up.Store(false)
+		s.child, s.exitOrigin = child, "natural"
+		return s, false, FailDial, stageError("startup", "", err)
+	}
+	value, err := startNetworkWith(cfg, launcher)
+	var startup *StartupError
+	if value != nil || !errors.As(err, &startup) || len(startup.Failures) != 1 {
+		t.Fatalf("startup discarded gateway failure facts: %v %+v", err, startup)
+	}
+	f := startup.Failures[0]
+	if f.Stage != "gateway_startup" || f.Class != FailDial || f.ExitOrigin != "natural" || f.Exit == nil ||
+		f.Exit.StderrClass != "tun_setup" || f.Exit.Reason != "adapter_removing" {
+		t.Fatalf("missing failure layer: %+v", f)
+	}
+}
+
+func TestFailedGatewayControlsCannotPromoteVerifiedProvider(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close() // fail SOCKS/TLS without contacting a public host
+		}
+	}()
+	defer func() { _ = listener.Close(); <-done }()
+	cfg := networkFixture(t)
+	cfg.AllowlistOutbound = "desync"
+	launcher := func(c Config, p providerAttempt) (*session, bool, FailClass, error) {
+		s := fakeNetworkSession(c, p.ID)
+		s.socks = listener.Addr().String()
+		return s, true, FailOK, nil
+	}
+	value, err := startNetworkWith(cfg, launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := value.(*networkSession)
+	defer n.Close()
+	n.cfg.SkipStart = false
+	if err := n.RefreshTransport(context.Background()); err == nil {
+		t.Fatal("unverified gateway accepted a preflight-only provider")
+	}
+	info := n.Info()
+	if info.Mode != "local" || info.Coverage != "tls_http_only" || info.Healthy || len(info.Failures) == 0 {
+		t.Fatalf("failed gateway overstated protection: %+v", info)
+	}
+	last := info.Failures[len(info.Failures)-1]
+	if last.Stage != "gateway_verification" || len(last.GatewayControls) != len(cfg.ControlHosts) {
+		t.Fatalf("gateway verification facts lost: %+v", last)
+	}
+}

@@ -50,6 +50,8 @@ pub struct RpcError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Status {
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition: Option<String>,
     pub protection: bool,
     pub summary: String,
     #[serde(default)]
@@ -73,6 +75,7 @@ impl Status {
     pub fn stopped() -> Self {
         Self {
             state: "stopped".into(),
+            transition: None,
             protection: false,
             summary: String::new(),
             outbound_hint: None,
@@ -452,6 +455,27 @@ pub fn shutdown() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_bridge_preserves_automatic_reconnection() {
+        for transition in ["network_heal", "transport_recovery"] {
+            let input = serde_json::json!({
+                "state": "starting", "protection": false, "summary": "",
+                "transition": transition,
+            });
+            let status: Status = serde_json::from_value(input).unwrap();
+            let output = serde_json::to_value(status).unwrap();
+            assert_eq!(output["transition"], transition);
+        }
+        let legacy: Status = serde_json::from_value(serde_json::json!({
+            "state": "stopped", "protection": false, "summary": "",
+        }))
+        .unwrap();
+        let output = serde_json::to_value(legacy).unwrap();
+        assert!(output.get("transition").is_none());
+        let stopped = serde_json::to_value(Status::stopped()).unwrap();
+        assert!(stopped.get("transition").is_none());
+    }
 
     #[test]
     fn read_timeout_is_actionable() {

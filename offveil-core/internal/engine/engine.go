@@ -131,6 +131,8 @@ type Engine struct {
 	networkCheck       *NetworkHealth
 	networkFailures    int
 	lastTransportRetry time.Time
+	networkFingerprint string // physical identity captured before installing TUN routes
+	healing            bool
 
 	// Last active-session support snapshot (kept after Stop so diag stays useful).
 	lastSupport *diag.Input
@@ -211,6 +213,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	return e.startLocked(mode)
 }
 
@@ -219,6 +222,7 @@ func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	return e.stopLocked()
 }
 
@@ -263,6 +267,7 @@ func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	if e.protection || e.state != StateStopped {
 		if _, err := e.stopLocked(); err != nil && err.Code != ipc.CodeNotRunning {
 			return &ipc.RepairResult{Status: e.statusLocked()}, err
@@ -293,6 +298,7 @@ func (e *Engine) CrashCleanup(reason string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	e.cancelSessionLocked()
 	slog.Warn("engine: crash cleanup", "reason", reason, "state", e.state)
 	e.stopReliabilityLocked()
@@ -409,7 +415,8 @@ func (e *Engine) silentReprobeSession(generation uint64) {
 	ctx := e.sessionContextLocked()
 	e.mu.Unlock()
 
-	// Backup to netwatch: ASN / fingerprint drift → self-heal.
+	// Relay egress ASN can change without a physical network change. It may
+	// invalidate cached policy, but only the physical fingerprint needs rebind.
 	nctx, ncancel := context.WithTimeout(ctx, 4*time.Second)
 	ni := netFn(nctx)
 	ncancel()
@@ -418,18 +425,18 @@ func (e *Engine) silentReprobeSession(generation uint64) {
 		e.mu.Unlock()
 		return
 	}
-	inv := false
 	if e.policy != nil {
-		inv = e.policy.ObserveNetwork(ni)
+		e.policy.ObserveNetwork(ni)
 	}
-	if inv {
+	rebind := e.physicalNetworkChangedLocked(ni.Fingerprint)
+	if rebind {
 		e.resetDNSCacheLocked()
 		// The change was already adopted above; do not require a second
 		// ObserveNetwork call to rediscover it inside self-heal.
-		e.requestHealLocked("network_change", true)
+		e.requestHealLocked("network_change")
 	}
 	e.mu.Unlock()
-	if inv {
+	if rebind {
 		slog.Info("engine: network identity changed during TTL loop")
 		return
 	}
@@ -520,6 +527,11 @@ func (e *Engine) statusLocked() *ipc.Status {
 		Version:      version.Version,
 		ContractsVer: version.ContractsVersion,
 		Network:      network,
+	}
+	if e.healing {
+		st.Transition = "network_heal"
+	} else if e.strategySwitching {
+		st.Transition = "transport_recovery"
 	}
 	if e.captureInfo != nil {
 		st.Capture = e.captureInfo

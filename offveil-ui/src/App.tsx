@@ -53,6 +53,7 @@ import {
 } from "./app-icon";
 import { Lockup } from "./brand";
 import {
+  connectionState,
   isBrokenStatus as isBroken,
   isLimitedStatus,
   type NetworkStatus,
@@ -104,12 +105,13 @@ type TargetStatus = {
 
 type Status = {
   state: string;
+  transition?: string;
   protection: boolean;
   summary: string;
   outbound_hint?: string | null;
   targets: TargetStatus[];
   last_error?: string | null;
-  tunnel?: { retry_hint?: boolean } | null;
+  tunnel?: { retry_hint?: boolean; up?: boolean } | null;
   network?: NetworkStatus | null;
 };
 
@@ -154,21 +156,28 @@ function copyFor(
     return { title: m.notProtected, hint: m.resetting };
   }
   if (busyKind === "disconnect") {
-    return { title: m.protected, hint: m.disconnecting };
+    return { title: isLimitedStatus(status) ? m.limited : m.protected, hint: m.disconnecting };
   }
   if (busyKind === "connect") {
-    return { title: m.notProtected, hint: m.starting };
+    return { title: m.starting, hint: m.preparing };
   }
-  if (status?.state === "starting") {
-    return { title: m.notProtected, hint: m.starting };
+  const connection = connectionState(status);
+  if (connection === "reconnecting") {
+    return { title: m.reconnecting, hint: m.reconnectingHint };
   }
-  if (isBroken(status)) {
+  if (connection === "connecting") {
+    return { title: m.starting, hint: m.preparing };
+  }
+  if (connection === "disconnecting") {
+    return { title: m.disconnecting, hint: m.preparing };
+  }
+  if (connection === "broken") {
     return { title: m.broken, hint: m.brokenHint };
   }
-  if (isLimitedStatus(status)) {
+  if (connection === "limited") {
     return { title: m.limited, hint: m.limitedHint };
   }
-  if (status?.protection) {
+  if (connection === "protected") {
     return { title: m.protected, hint: m.protectedHint };
   }
   return { title: m.notProtected, hint: m.notProtectedHint };
@@ -654,6 +663,8 @@ export default function App() {
   const on = protection && !broken;
   const { title, hint } = copyFor(locale, phase, status, busyKind);
   const padOn = on || broken;
+  const connection = connectionState(status);
+  const reconnecting = connection === "reconnecting" || connection === "connecting" || connection === "disconnecting";
 
   return (
     <TooltipProvider>
@@ -716,7 +727,7 @@ export default function App() {
                   >
                     <ProtectionPad
                       on={padOn}
-                      busy={busy}
+                      busy={busy || reconnecting}
                       label={protection ? m.toggleOn : m.toggleOff}
                       onClick={() => void onPad()}
                     />

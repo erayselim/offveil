@@ -176,7 +176,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 
 	var warp *WARPProfile
 	if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
-		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, nil)
+		client := newBootstrapHTTPClient(cfg)
+		defer client.CloseIdleConnections()
+		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, client)
 		if err != nil {
 			return nil, false, FailAuth, stageError("registration", "", err)
 		}
@@ -191,7 +193,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	// owns a distinct configuration so a late write cannot replace a new one's.
 	configFile, err := os.CreateTemp(cfg.DataDir, "sing-box-*.json")
 	if err != nil {
-		return nil, false, FailAuth, err
+		return nil, false, FailConfig, stageError("configuration_write", "", err)
 	}
 	cfgPath := configFile.Name()
 	keepConfig := false
@@ -203,10 +205,10 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	_, writeErr := configFile.Write(build.JSON)
 	closeErr := configFile.Close()
 	if writeErr != nil {
-		return nil, false, FailAuth, writeErr
+		return nil, false, FailConfig, stageError("configuration_write", "", writeErr)
 	}
 	if closeErr != nil {
-		return nil, false, FailAuth, closeErr
+		return nil, false, FailConfig, stageError("configuration_write", "", closeErr)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, false, FailAuth, err

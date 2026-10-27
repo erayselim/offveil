@@ -88,6 +88,13 @@ broken local process. A required component loss or repeated failed control
 quorum is a connection failure. The UI uses `network.reason` to distinguish it
 from limited coverage, and preserves legacy error handling when the field is absent.
 
+The optional `transition` field identifies automatic `network_heal` or
+`transport_recovery`. A full-stack heal can temporarily have `state=stopped`
+or `starting` and `protection=false`; the UI shows reconnection while the
+operation is pending. Explicit Stop clears it and cancels the pending restart.
+A provider trial that retains a working local gateway continues to show limited
+coverage. A gateway replacement shows reconnection until verification finishes.
+
 Optional diagnostics fields include `capture`, `dns`, `desync`, `tunnel`,
 `ruleset`, `expand`, `udp`, `heal` and `network`. The IP family fields describe
 capture configuration, not proof that every destination in that family works.
@@ -112,6 +119,14 @@ The ZIP contains diagnostics.json, summary.md and manifest.json. The digest
 covers diagnostics.json. Exports preserve the last active session after Stop,
 but always state current protection separately. A new failed startup replaces
 an older successful snapshot so its error remains visible.
+
+Failed startup retains attempted sidecars before cleanup, marked in notes with
+current protection off. Durable failure events include safe stage/class and
+provider exit facts even if no gateway is returned and the service later stops.
+Transport promotion/demotion records previous/resulting modes; physical rebind
+records before/after fingerprints. Fingerprint measurements in both IP families
+stay outside capture. ASN metadata updates may invalidate learned policy, but
+only a changed physical fingerprint or power resume requires a full rebind.
 
 ## Routing and verification
 

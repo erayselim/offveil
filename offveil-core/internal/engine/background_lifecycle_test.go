@@ -27,6 +27,7 @@ func activeBackgroundEngine(t *testing.T) *Engine {
 	rs := ruleset.MustLoadEmbedded()
 	e.rulesetSnap = &rs
 	e.policy.ObserveNetwork(netinfo.Info{ASN: "9121", Fingerprint: "network-a"})
+	e.networkFingerprint = "network-a"
 	e.tun = tunnel.NewFakeSession(tunnel.Info{Up: true, Healthy: true, Mode: "remote", ProviderID: tunnel.ProviderWARP})
 	t.Cleanup(func() {
 		e.mu.Lock()

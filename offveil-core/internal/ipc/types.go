@@ -23,7 +23,9 @@ type RPCError struct {
 
 // Status is contracts.md §2.3.
 type Status struct {
-	State        string         `json:"state"`
+	State string `json:"state"`
+	// Transition distinguishes automatic reconnection from an explicit stop.
+	Transition   string         `json:"transition,omitempty"`
 	Protection   bool           `json:"protection"`
 	Summary      string         `json:"summary"`
 	OutboundHint string         `json:"outbound_hint,omitempty"`

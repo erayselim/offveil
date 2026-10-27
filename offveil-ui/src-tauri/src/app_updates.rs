@@ -231,6 +231,14 @@ mod tests {
             assert!(rc > semver::Version::parse(prior).unwrap());
         }
     }
+
+    #[test]
+    fn private_beta_four_build_can_update_to_beta_five_or_final() {
+        let current = semver::Version::parse("1.0.4-beta.4.1").unwrap();
+        assert!(current > semver::Version::parse("1.0.4-beta.4").unwrap());
+        assert!(semver::Version::parse("1.0.4-beta.5").unwrap() > current);
+        assert!(semver::Version::parse("1.0.4").unwrap() > current);
+    }
     #[test]
     fn rejects_manifest_outside_this_release() {
         let mut release = release("v1.0.1", false, true);

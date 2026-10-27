@@ -7,11 +7,31 @@ export type NetworkStatus = {
 
 type ConnectionStatus = {
   state: string;
+  transition?: string;
   protection: boolean;
   last_error?: string | null;
   network?: NetworkStatus | null;
-  tunnel?: { retry_hint?: boolean } | null;
+  tunnel?: { retry_hint?: boolean; up?: boolean } | null;
 };
+
+export type ConnectionState =
+  | "off" | "connecting" | "reconnecting" | "disconnecting"
+  | "limited" | "protected" | "broken";
+
+export function connectionState(status: ConnectionStatus | null): ConnectionState {
+  if (status?.transition === "network_heal") return "reconnecting";
+  // Provider trials leave a working local gateway in service. When that
+  // gateway is replaced, Up=false marks the actual reconnection interval.
+  if (status?.transition === "transport_recovery" &&
+    !(isLimitedStatus(status) && status.tunnel?.up !== false)) {
+    return "reconnecting";
+  }
+  if (status?.state === "starting") return "connecting";
+  if (status?.state === "stopping") return "disconnecting";
+  if (isBrokenStatus(status)) return "broken";
+  if (isLimitedStatus(status)) return "limited";
+  return status?.protection ? "protected" : "off";
+}
 
 export function isLimitedStatus(status: ConnectionStatus | null): boolean {
   return Boolean(
