@@ -23,6 +23,7 @@ type Stub struct {
 
 	queries        atomic.Uint64
 	fallbacks      atomic.Uint64
+	ipv4Only       atomic.Bool
 	lastPoisonID   atomic.Value // string
 	lastPoisonHost atomic.Value // string
 }
@@ -105,6 +106,34 @@ func (s *Stub) SetQueryObserver(fn QueryObserver) {
 	s.onQuery = fn
 }
 
+// SetIPv4Only answers AAAA with NODATA and drops IPv6 hints from HTTPS
+// records. Protected web traffic then uses IPv4, where the gateway runs.
+func (s *Stub) SetIPv4Only(on bool) { s.ipv4Only.Store(on) }
+
+// IPv4Only reports the current AAAA policy.
+func (s *Stub) IPv4Only() bool { return s.ipv4Only.Load() }
+
+func stripIPv6Hints(answer []mdns.RR) {
+	for _, rr := range answer {
+		var values *[]mdns.SVCBKeyValue
+		switch record := rr.(type) {
+		case *mdns.HTTPS:
+			values = &record.Value
+		case *mdns.SVCB:
+			values = &record.Value
+		default:
+			continue
+		}
+		kept := (*values)[:0]
+		for _, value := range *values {
+			if _, hint := value.(*mdns.SVCBIPv6Hint); !hint {
+				kept = append(kept, value)
+			}
+		}
+		*values = kept
+	}
+}
+
 func (s *Stub) handle(w mdns.ResponseWriter, r *mdns.Msg) {
 	s.queries.Add(1)
 	if len(r.Question) == 0 {
@@ -120,6 +149,13 @@ func (s *Stub) handle(w mdns.ResponseWriter, r *mdns.Msg) {
 		if host != "" {
 			s.onQuery(host)
 		}
+	}
+	if q.Qtype == mdns.TypeAAAA && s.ipv4Only.Load() {
+		m := new(mdns.Msg)
+		m.SetReply(r)
+		m.RecursionAvailable = true
+		_ = w.WriteMsg(m)
+		return
 	}
 	msg := new(mdns.Msg)
 	msg.SetQuestion(q.Name, q.Qtype)
@@ -154,6 +190,9 @@ func (s *Stub) handle(w mdns.ResponseWriter, r *mdns.Msg) {
 
 	clean, poisonID, poisoned := filterPoisonAnswers(s.poison, out.Answer)
 	out.Answer = clean
+	if s.ipv4Only.Load() {
+		stripIPv6Hints(out.Answer)
+	}
 	if poisoned {
 		s.lastPoisonID.Store(poisonID)
 		s.lastPoisonHost.Store(mdns.Fqdn(q.Name))

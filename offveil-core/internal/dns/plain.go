@@ -13,10 +13,10 @@ import (
 // Plain UDP resolvers used when DoH/443 is unreachable.
 // Never use the system resolver here - after leak-guard it points at our stub (loop).
 var defaultPlainUDP = []string{
-	"1.1.1.1:53",
-	"1.0.0.1:53",
 	"8.8.8.8:53",
 	"9.9.9.9:53",
+	"1.1.1.1:53",
+	"1.0.0.1:53",
 }
 
 const plainUDPBudget = 3 * time.Second
