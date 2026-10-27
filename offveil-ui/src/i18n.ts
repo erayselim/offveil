@@ -5,6 +5,8 @@ export type Messages = {
   protectedHint: string;
   limited: string;
   limitedHint: string;
+  offline: string;
+  offlineHint: string;
   notProtected: string;
   notProtectedHint: string;
   broken: string;
@@ -91,7 +93,9 @@ const tr: Messages = {
   protected: "Koruma Aktif",
   protectedHint: "Güvenli gezinme ve tam erişim etkin",
   limited: "Sınırlı Koruma",
-  limitedHint: "Yerel aşma etkin. Tam ağ koruması için tünel bağlantısı bekleniyor.",
+  limitedHint: "DNS koruması açık. Bazı engelli hizmetler için yol aranıyor.",
+  offline: "Bağlantı Yok",
+  offlineHint: "İnternet bağlantısı yok gibi görünüyor. Bağlantı gelince koruma sürer.",
   notProtected: "Koruma Kapalı",
   notProtectedHint: "Korumayı açmak için dokunun",
   broken: "Bozuldu",
@@ -178,7 +182,9 @@ const en: Messages = {
   protected: "Protected",
   protectedHint: "Safe browsing and full access are active",
   limited: "Limited Protection",
-  limitedHint: "Local bypass is active. Full network protection needs a tunnel connection.",
+  limitedHint: "DNS protection is on. Still looking for a path to some blocked services.",
+  offline: "No Connection",
+  offlineHint: "The network looks offline. Protection resumes when it is back.",
   notProtected: "Not Protected",
   notProtectedHint: "Tap to enable protection",
   broken: "Broken",

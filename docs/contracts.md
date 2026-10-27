@@ -1,8 +1,7 @@
 # Core contracts
 
-This describes the application-independent 1.0.4-beta.4 version. Beta.3
-artifacts use the previous routing policy. IPC envelopes remain version 1;
-network policy files use schema 2. See [network architecture](network-architecture.md).
+This describes 1.1.0. IPC envelopes remain version 1; network policy files use
+schema 3. See [network architecture](network-architecture.md).
 
 ## Process and privilege model
 
@@ -43,7 +42,7 @@ Responses preserve the request ID and return either a result or an RPC error:
 | restart | none | Status after stop/start |
 | status | none | Status |
 | test | optional targets: hostname array | endpoint diagnostic report; never changes routes or policy |
-| diagnostics | none | DiagnosticsBundle |
+| diagnostics | none | DiagnosticsBundle with the redacted report inline |
 | repair | none | stopped Status plus best-effort restore steps |
 | shutdown | none | stops protection and the demand-start service |
 
@@ -59,47 +58,60 @@ owned network state and exits unsuccessfully for the supervisor to handle.
   "state":"active",
   "protection":true,
   "summary":"Açık",
-  "outbound_hint":"tunnel",
-  "since":"2026-10-21T00:00:00Z",
+  "outbound_hint":"desync",
+  "since":"2026-10-27T00:00:00Z",
   "targets":[
-    {"id":"tcp","label":"TCP","outcome":"ok","path":"tunnel"},
-    {"id":"udp","label":"UDP","outcome":"ok","path":"tunnel"}
+    {"id":"tcp","label":"TCP","outcome":"ok","path":"desync"},
+    {"id":"udp","label":"UDP","outcome":"ok","path":"direct"}
   ],
   "last_error":null,
   "health":"ok",
   "network":{
-    "mode":"remote",
-    "coverage":"public_tcp_udp_dual_stack",
-    "tcp_path":"tunnel",
-    "udp_path":"tunnel",
+    "mode":"selective",
+    "coverage":"dns_web_desync",
+    "dpi":"present",
+    "layers":{"dns":"up","tcp":"up","tunnel":"off"},
+    "groups":[
+      {"id":"discord","label":"Discord","kind":"persistent","path":"desync","healthy":true,"checked":true}
+    ],
+    "tcp_path":"desync",
+    "udp_path":"direct",
     "ipv4":true,
-    "ipv6":true,
+    "ipv6":false,
     "healthy":true
   }
 }
 ```
 
-States are `stopped`, `starting`, `active`, `degraded`, `stopping`. Protection
-means the owned protection session is enabled; coverage is a separate fact.
-Remote mode routes public TCP/UDP through a verified remote transport. Local
-fallback is `degraded`, summary `Sınırlı koruma`, coverage `tls_http_only`,
-TCP path `desync`, UDP path `direct`. A local provider retry is not itself a
-broken local process. A required component loss or repeated failed control
-quorum is a connection failure. The UI uses `network.reason` to distinguish it
-from limited coverage, and preserves legacy error handling when the field is absent.
+States are `stopped`, `starting`, `active`, `degraded`, `stopping`. Only a
+broken session is `degraded`: the DNS stub is down, or a required component
+used up its restart budget. Everything else is `active` and `network.reason`
+explains it:
+
+| `network.reason` | Summary | Meaning |
+| --- | --- | --- |
+| (none) | Açık | All layers up, persistent canaries open |
+| `dns_only_fallback` | Sınırlı koruma | Filtering measured, TCP layer could not start; DNS still on |
+| `group_unreachable` | Sınırlı koruma | A persistent group opens on no path |
+| `offline` | Bağlantı yok | Neutral controls fail on the physical interface too |
+| `recovering` | Yeniden bağlanıyor | A required component is restarting (`transition=transport_recovery`) |
+| `dns_unavailable`, `component_unavailable` | Bozuldu | Broken; `last_error` is set |
+
+`network.mode` is `dns_only` (no filtering measured, no TUN), `selective` (TUN
+and helper) or `fallback`. `layers.tunnel` is `off`, `ready` (a tunnel exists
+in the gateway) or `up` (a group uses it). `groups[].path` is `desync`,
+`tunnel` or `direct` (DNS-only modes). Group IDs and labels come from the signed
+ruleset. The 1.0.4 beta `remote`/`local` modes and `remote_transport_unavailable`
+reason are still understood by the UI for mixed-version installs.
 
 The optional `transition` field identifies automatic `network_heal` or
 `transport_recovery`. A full-stack heal can temporarily have `state=stopped`
 or `starting` and `protection=false`; the UI shows reconnection while the
 operation is pending. Explicit Stop clears it and cancels the pending restart.
-A provider trial that retains a working local gateway continues to show limited
-coverage. A gateway replacement shows reconnection until verification finishes.
 
 Optional diagnostics fields include `capture`, `dns`, `desync`, `tunnel`,
-`ruleset`, `expand`, `udp`, `heal` and `network`. The IP family fields describe
-capture configuration, not proof that every destination in that family works.
-`targets` is an aggregate protocol view; individual failed site diagnostics do
-not change it. New fields remain optional for older IPC clients.
+`ruleset`, `expand`, `udp`, `heal` and `network`. New fields remain optional
+for older IPC clients.
 
 ### Test and support results
 
@@ -108,102 +120,90 @@ classification completion. `ok=true` does not mean the chosen bypass works.
 This request runs outside the lifecycle lock and cannot publish after its
 session has stopped or changed. It never changes network identity or routing.
 
-The support collector also works while the daemon is unavailable. The UI runs
-`support -check-network` with a bounded overall timeout. It includes public
-IPv4/IPv6 DNS/TCP/TLS/HTTP checks through current OS/TUN routes. Optional
-`-check-url` and `-check-tcp` endpoints are explicit; no application endpoint or
-download schema is built in. See [network diagnostics](network-diagnostics.md).
-
-A DiagnosticsBundle has path, created_at, sha256, version and optional note.
+A DiagnosticsBundle has path, created_at, sha256, version, optional note and
+`report`: the same redacted document that is written to the ZIP. Unprivileged
+collectors use `report` and never read the root-owned diagnostics directory.
 The ZIP contains diagnostics.json, summary.md and manifest.json. The digest
 covers diagnostics.json. Exports preserve the last active session after Stop,
 but always state current protection separately. A new failed startup replaces
 an older successful snapshot so its error remains visible.
 
-Failed startup retains attempted sidecars before cleanup, marked in notes with
-current protection off. Durable failure events include safe stage/class and
-provider exit facts even if no gateway is returned and the service later stops.
-Transport promotion/demotion records previous/resulting modes; physical rebind
-records before/after fingerprints. Fingerprint measurements in both IP families
-stay outside capture. ASN metadata updates may invalidate learned policy, but
-only a changed physical fingerprint or power resume requires a full rebind.
+Durable failure events (last 64) include classification changes, layer start
+and fallback, adapter readiness, strategy trials, group escalation and WARP
+endpoint results. They survive daemon exits and offline collection.
 
 ## Routing and verification
 
 System DNS uses the local stub at `127.0.0.1:53`. Windows steers the resolver
 with catch-all NRPT; macOS snapshots and sets eligible physical-service DNS
-with `networksetup`. NIC rewrite/leak guard is disabled. The shared sing-box
-gateway delegates DNS to core's TCP loopback stub on Windows; standalone/macOS
-helpers retain their configured resolver transport. Core races multiple DoH
-upstreams and filters known poisoned replies. Stop/repair restores DNS state.
+with `networksetup`. The gateway sends its own DNS to the stub on every
+platform. Upstreams are tried Google first (EDNS Client Subnet keeps CDN answers
+local), then Quad9, then Cloudflare, with a race after 150 ms and a circuit
+breaker to plain DNS. Known poisoned answers are dropped; the signed ruleset can
+add fingerprints. While the TCP layer is up the stub answers AAAA with NODATA
+and strips IPv6 hints, so protected web traffic stays on IPv4.
 
-Public IPv4 and IPv6 use split-default capture. Local/private/bootstrap traffic
-is excluded; the gateway has explicit owned-subnet loop guards. There are no
-built-in game, voice, updater or application exceptions. Exact and suffix DIRECT
-exceptions are optional user configuration.
+At startup core probes neutral controls and the first host of each canary group
+over the physical interface. If every canary opens, only the DNS layer runs. If
+any canary is reset, dropped, throttled or tampered with, the TCP layer starts.
+DNS-only sessions re-measure every five minutes and after a network change.
 
-Remote provider attempts happen on a separate SOCKS listener with TUN disabled.
-At least two independent control hosts must pass certificate-verified TLS.
-Provider-only probes cannot inherit DIRECT exceptions. Runtime remote checks
-verify both provider and gateway quorums. A single control failure is tolerated;
-two failed rounds are required to degrade an accepted path.
+The TCP layer captures public IPv4 only. IPv4 TCP 80/443 goes to the local
+helper, whose first group leaves connections untouched; ByeDPI applies the
+strategy only after a reset, timeout or missing ServerHello and caches the
+destination. UDP and QUIC stay direct. Exclusions (game stores, OS updates,
+banks, government sites) always go direct.
 
-Remote coverage includes opaque TCP, arbitrary ports, literal IPs and UDP/QUIC.
-When no provider works, local HTTP/TLS bypass is explicitly limited; other
-traffic is direct and sniffed QUIC is rejected for TCP fallback. A working relay
-is required to bypass transport/IP restrictions that local desync cannot fix.
-
-`network.bypass_families` is IPv4/IPv6 in remote mode and IPv4 in local mode.
-The current physical-source-bound local helper cannot proxy IPv6; these flows
-remain direct. Local QUIC fallback is therefore limited to IPv4 as well.
+Canary groups are probed through the gateway every 30 s (crisis groups every
+fifth round). Two failed rounds start a strategy scan aimed at that canary; a
+candidate must open the canary without breaking the controls and is verified on
+the real helper and gateway before it is kept. If no strategy works, that group
+alone moves to the tunnel. The tunnel is prepared off the lifecycle lock: WARP
+registration over the physical interface, then endpoint preflight across
+documented hosts and UDP ports. Group paths switch at runtime through sing-box
+selectors over a loopback API with a per-process secret; the TUN is not rebuilt.
 
 Failure classes distinguish timeout, EOF, reset, refused, certificate,
-configuration and other dial/probe failures. Provider facts retain safe stage,
-control target and natural-versus-cleanup exit origin. `up` is process liveness;
-`healthy` is measured control quorum. Neither is universal endpoint success.
+configuration and other dial/probe failures. A handshake slower than three
+seconds on an otherwise healthy line counts as throttling.
 
 ## Network policy format
 
 ```json
 {
-  "schema_version":2,
-  "version":7,
-  "updated_at":"2026-10-21",
-  "network":{
-    "control_hosts":["www.cloudflare.com","www.microsoft.com","example.com"],
-    "routes":[]
-  }
+  "schema_version":3,
+  "version":8,
+  "network":{"control_hosts":["www.cloudflare.com","www.microsoft.com","example.com"],"routes":[]},
+  "canaries":[{"id":"discord","label":"Discord","kind":"persistent","probe_hosts":["discord.com"],"domain_suffix":["discord.com"]}],
+  "exclude":["steampowered.com"],
+  "strategies":[{"id":"byedpi:fake-ttl4","platform":"windows","args":["--disorder","1","--fake","-1","--ttl","4"]}],
+  "poison_ips":[]
 }
 ```
 
-`network.routes` supports explicit `path: direct` exceptions, using `domains`
-for exact names and `domain_suffix` for suffixes. Other paths and nonempty old
-packages are rejected. Schema/version checks apply to embedded, adjacent,
-cached and remote content. Remote/cache content requires a valid Ed25519
-signature. Missing or invalid remote content falls back to a valid local source.
-Release CI signs source policy; a stale signature must not accompany changed data.
+See [ruleset/README.md](../ruleset/README.md) for field limits. Schema/version
+checks apply to embedded, adjacent, cached and remote content. Remote/cache
+content requires a valid Ed25519 signature. Strategy arguments are filtered by a
+flag allowlist; listen, bind, daemon and file options are refused.
 
-Local strategy evidence is scoped to network ASN, fingerprint and transport
-profile in a new cache namespace. Old global application/ASN-only entries are
-not applied to network-wide routing.
+Strategy evidence is scoped to ASN and physical fingerprint in a new namespace;
+entries chosen against neutral controls by older versions are not reused.
 
 ## Lifecycle and cleanup
 
 Each protection session has a generation and cancellation context. Stop,
 replacement and self-heal invalidate background work. Status and diagnostics
 remain available from immutable snapshots during startup/repair. Slow probes,
-strategy verification and component/provider recovery run outside the lifecycle
-lock. Late sessions are closed rather than adopted.
+strategy scans, tunnel preparation and component recovery run outside the
+lifecycle lock. Late sessions are closed rather than adopted.
+
+Before a gateway starts, core removes a stale `offveil` Wintun adapter. It then
+waits up to 20 s for the adapter while the gateway is alive; a gateway exit ends
+the wait at once and its log class is journaled. A network change on the same
+physical interface restarts only the helper (new source address) and
+re-measures; a different interface rebuilds the stack.
 
 Core uses kill-on-close child ownership and one Wait per process. Cleanup is
-best-effort in reverse ownership order: gateway/provider, helper, resolver,
-capture, job. Recovery cleanup targets the current replacement session, not a
-captured old instance. Failed restoration prevents an overlapping replacement.
-
-The last 64 redacted failure/recovery events survive daemon exits. No credentials,
-public IPs, SSID, account data, raw provider responses or browsing DNS history
-enter support exports. DNS observation is bounded, counts demand, never guesses
-sibling hosts and never triggers probes for every system lookup.
-
-Native fixtures use SOCKS-only configs; actual TUN/OS traffic and device cleanup
-require physical acceptance. See [engine reliability](engine-reliability.md).
+best-effort in reverse ownership order: gateway and helper, resolver, capture,
+job. No credentials, public IPs, SSID, account data, raw provider responses or
+browsing DNS history enter support exports.

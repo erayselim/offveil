@@ -150,7 +150,7 @@ function copyFor(
     };
   }
   if (busyKind === "refresh") {
-    return { title: m.broken, hint: m.refreshing };
+    return { title: m.reconnecting, hint: m.refreshing };
   }
   if (busyKind === "reset") {
     return { title: m.notProtected, hint: m.resetting };
@@ -173,6 +173,9 @@ function copyFor(
   }
   if (connection === "broken") {
     return { title: m.broken, hint: m.brokenHint };
+  }
+  if (connection === "offline") {
+    return { title: m.offline, hint: m.offlineHint };
   }
   if (connection === "limited") {
     return { title: m.limited, hint: m.limitedHint };
