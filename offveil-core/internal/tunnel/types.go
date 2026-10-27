@@ -109,7 +109,7 @@ type Config struct {
 	// TUNAddress is the TUN IPv4 prefix (default 10.87.0.1/30).
 	TUNAddress  string
 	TUNAddress6 string
-	// TUNMTU defaults to 1280.
+	// TUNMTU defaults to 9000 (4064 on Darwin); see defaultTUNMTU.
 	TUNMTU int
 	// RouteCIDRs are TUN prefixes (never 0.0.0.0/0). Empty + EnableTUN → split-default.
 	RouteCIDRs []string
@@ -124,6 +124,20 @@ type Config struct {
 	// DNSAddress is the already-running core DNS stub. Only loopback literals
 	// are accepted; empty retains standalone DoH for isolated sidecar use.
 	DNSAddress string
+
+	// Selective starts the 1.1 gateway: local desync for IPv4 web traffic,
+	// optional tunnel only for listed groups, everything else direct.
+	Selective          bool
+	Groups             []GroupRoute
+	GroupPaths         map[string]string
+	ExcludeSuffixes    []string
+	QuicRejectSuffixes []string
+	// TunnelProvider is WARP or Reality when a verified tunnel should be
+	// available to group selectors. Empty keeps the gateway local-only.
+	TunnelProvider ProviderID
+	// WARPProfile is a preflighted profile; startup never registers WARP.
+	WARPProfile *WARPProfile
+	clash       *clashControl
 }
 
 // DefaultConfig returns selective-tunnel defaults.
@@ -139,15 +153,26 @@ func DefaultConfig() Config {
 
 // ProviderFailure retains allowlisted facts from an exhausted provider attempt.
 type ProviderFailure struct {
-	ProviderID ProviderID      `json:"provider_id"`
-	Class      FailClass       `json:"class"`
-	Reason     string          `json:"reason,omitempty"`
-	Exit       *proc.ExitInfo  `json:"exit,omitempty"`
-	Stage      string          `json:"stage,omitempty"`
-	Target     string          `json:"target,omitempty"`
-	ExitOrigin string          `json:"exit_origin,omitempty"`
-	Controls   []ControlResult `json:"controls,omitempty"`
+	ProviderID      ProviderID      `json:"provider_id"`
+	Class           FailClass       `json:"class"`
+	Reason          string          `json:"reason,omitempty"`
+	Exit            *proc.ExitInfo  `json:"exit,omitempty"`
+	Stage           string          `json:"stage,omitempty"`
+	Target          string          `json:"target,omitempty"`
+	ExitOrigin      string          `json:"exit_origin,omitempty"`
+	Controls        []ControlResult `json:"controls,omitempty"`
+	GatewayControls []ControlResult `json:"gateway_controls,omitempty"`
 }
+
+// StartupError preserves safe attempt facts even when no gateway can be
+// returned. Callers can persist these before startup cleanup or daemon exit.
+type StartupError struct {
+	Failures []ProviderFailure
+	Err      error
+}
+
+func (e *StartupError) Error() string { return e.Err.Error() }
+func (e *StartupError) Unwrap() error { return e.Err }
 
 // ControlResult is a certificate-verified TLS result, never an application probe.
 type ControlResult struct {
@@ -187,6 +212,11 @@ type Info struct {
 	TUNMTU          int               `json:"tun_mtu,omitempty"`
 	StartupAttempts int               `json:"startup_attempts,omitempty"`
 	DNSMode         string            `json:"dns_mode,omitempty"`
+	// Selective gateway facts.
+	TunnelAvailable bool              `json:"tunnel_available,omitempty"`
+	GroupPaths      map[string]string `json:"group_paths,omitempty"`
+	WARPEndpoint    string            `json:"warp_endpoint,omitempty"`
+	StderrClass     string            `json:"stderr_class,omitempty"`
 }
 
 // Session is a running selective tunnel outbound (sing-box SOCKS).

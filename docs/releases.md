@@ -14,47 +14,50 @@ a tag push enables publication steps.
 Both platforms build the pinned sing-box source with the patched Go toolchain
 and isolated dependency lock in `offveil-core/tools/singbox`. Its actual tagged
 source must pass govulncheck before packaging. The shared release includes the
-upstream source archive, covered by the same checksum file as the installers;
-the matching offveil tag includes the complete dependency lock and build recipe.
+upstream source archive, covered by the same checksum file as the installers.
 
 The Windows job verifies the updater signatures before executing installers
 on its disposable runner. It checks a clean install, payload/license files,
-demand-start service and versioned IPC, then upgrades from the prior beta and
-checks again. It does not enable protection or modify a developer's machine.
-macOS runs the existing bundle and installation smoke tests.
+demand-start service and versioned IPC, then upgrades from v1.0.3 and checks
+again. It does not enable protection or modify a developer's machine.
 
 Update the version in package.json/package-lock.json, Cargo.toml/Cargo.lock,
 tauri.conf.json, the core version and both localized whats-new files. Run
 `node scripts/release.cjs check vVERSION` before tagging. The short release body
-in `.github/release-body.md` gets direct Windows and Mac download links. Update
-the README's direct download links to the same release.
+in `.github/release-body.md` gets direct Windows and Mac download links.
 
-## Release candidates and existing Windows clients
+## Channels
 
-GitHub prereleases cannot be Latest. Windows b4/b5 and the RC use the existing
-`releases/latest/download/latest.json` endpoint. To offer a shared RC through
-that endpoint, the publish job replaces only Latest's update manifest and the
-corresponding checksum entry. Its installer and installer signature are retained.
-The previous metadata is saved in the workflow's `legacy-update-backup` artifact.
-Before changing this pointer, the new signed packages must have passed validation.
+| Install | Windows endpoint | Mac discovery |
+| --- | --- | --- |
+| Stable (no `-` in version) | `releases/latest/download/latest.json` | stable releases with `latest-mac.json` |
+| Beta (prerelease version) | `releases/download/updates-beta/latest-beta.json` | stable `latest-mac.json` and beta `latest-mac-beta.json` |
 
-The Mac updater discovers the highest newer SemVer release with a complete Mac
-manifest, archive and signature. Both mac.3 and mac.4 can discover the shared RC.
-A mac.3 installation whose old service cannot stop still needs a manual DMG
-upgrade; this limitation is described in the installation guide.
+A tag with a hyphen is published as a GitHub prerelease. It never becomes Latest
+and never rewrites another release's assets. Its manifests are named
+`latest-beta.json` and `latest-mac-beta.json`; installed 1.0.x clients look only
+for `latest.json` and `latest-mac.json`, so they are not offered the beta.
+Testers install the first beta by hand; after that it updates within the beta
+channel.
 
-After publication, `scripts/release.cjs verify-published` checks the live legacy
-Windows endpoint, Mac discovery from both prior versions, signing-key continuity,
-downloaded package signatures, ruleset signature and all published checksums.
-It does not simulate interactive installation or physical-device networking.
+Every release, beta or stable, uploads its Windows manifest to the fixed
+`updates-beta` prerelease as `latest-beta.json`. A stable release therefore
+also reaches beta installs, which then return to the stable channel.
 
-The same bridge is used for beta releases. The published verification also
-checks the current stable client and Beta 1/Beta 2/Beta 3 on both supported platforms.
-Windows uses signed NSIS executables; Mac uses signed tar update archives.
-The updater's unused Windows ZIP feature is disabled, removing its ZIP
-extraction dependency while preserving these two update formats.
+`scripts/release.cjs verify-published` checks the published assets, signatures
+and checksums. For a beta it also checks that the stable pointer still holds a
+stable version and that no supported prior client would be offered the beta.
+For a stable release it checks that every supported prior client is offered it.
 
-For a normal stable release, GitHub Latest moves to the new release and the
-standard Windows endpoint follows automatically. For an RC rollback, restore
-both saved legacy metadata files. Do not replace a published installer's bytes
-or move an existing version tag.
+## Beta acceptance
+
+Before promoting a beta, test on Windows and macOS, on the affected ISPs and a
+mobile hotspot:
+
+- Discord app, web and voice; a DNS-blocked site; random HTTPS sites.
+- A large download with protection on and off (support file speed sample).
+- Game ping; sleep/wake; Wi-Fi change; Stop and repair leave DNS, routes and
+  the adapter clean.
+- A support file from each device.
+
+Do not replace a published installer's bytes or move an existing version tag.

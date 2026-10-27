@@ -131,9 +131,67 @@ type Engine struct {
 	networkCheck       *NetworkHealth
 	networkFailures    int
 	lastTransportRetry time.Time
+	networkFingerprint string // physical identity captured before installing TUN routes
+	healing            bool
+
+	// Layered protection (1.1): DNS always, TCP desync when the network
+	// filters, a tunnel only for groups that desync cannot open.
+	layer          string
+	layerReason    string
+	layerRetries   int
+	lastLayerTry   time.Time
+	layerCleanup   bool
+	classification *Classification
+	lastClassify   time.Time
+	reclassify     bool
+	groups         []*groupState
+	groupWork      bool
+	monitorRound   int
+	directProbe    DirectProbe
+	tunnelTrials   []tunnel.EndpointTrial
+	attachTook     string
+
+	forceLayer    func() bool
+	classify      ClassifyFunc
+	prepareTunnel TunnelPrepareFunc
+	takeSnapshot  func() (*capture.Snapshot, error)
+	closeOrphan   func() error
 
 	// Last active-session support snapshot (kept after Stop so diag stays useful).
 	lastSupport *diag.Input
+}
+
+// TunnelPrepareFunc registers/loads a tunnel and pins a reachable endpoint.
+type TunnelPrepareFunc func(ctx context.Context, cfg tunnel.Config, scope string) (tunnel.ProviderID, *tunnel.WARPProfile, []tunnel.EndpointTrial, error)
+
+// WithClassifier overrides physical DPI measurement (unit tests).
+func (e *Engine) WithClassifier(fn ClassifyFunc) *Engine {
+	e.classify = fn
+	return e
+}
+
+// WithTunnelPrepare overrides WARP registration and endpoint preflight (unit tests).
+func (e *Engine) WithTunnelPrepare(fn TunnelPrepareFunc) *Engine {
+	e.prepareTunnel = fn
+	return e
+}
+
+// WithSnapshot overrides the physical adapter snapshot used for rebinding (unit tests).
+func (e *Engine) WithSnapshot(fn func() (*capture.Snapshot, error)) *Engine {
+	e.takeSnapshot = fn
+	return e
+}
+
+// WithForcedLayer overrides the force-tcp-layer flag lookup (unit tests).
+func (e *Engine) WithForcedLayer(fn func() bool) *Engine {
+	e.forceLayer = fn
+	return e
+}
+
+// WithAdapterCleanup overrides stale adapter removal; nil disables it (unit tests).
+func (e *Engine) WithAdapterCleanup(fn func() error) *Engine {
+	e.closeOrphan = fn
+	return e
 }
 
 func New(reg *cleanup.Registry) *Engine {
@@ -146,6 +204,10 @@ func New(reg *cleanup.Registry) *Engine {
 		startDNS:     offdns.Start,
 		startDesync:  desync.Start,
 		startTunnel:  tunnel.Start,
+		classify:     classifyNetwork,
+		forceLayer:   forcedTCPLayer,
+		closeOrphan:  capture.CloseOrphanAdapter,
+		takeSnapshot: capture.TakeSnapshot,
 		targets:      networkTargets("none", false),
 	}
 	e.publishOperationLocked("")
@@ -211,6 +273,7 @@ func (e *Engine) Start(mode string) (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	return e.startLocked(mode)
 }
 
@@ -219,6 +282,7 @@ func (e *Engine) Stop() (*ipc.Status, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	return e.stopLocked()
 }
 
@@ -263,6 +327,7 @@ func (e *Engine) Repair() (*ipc.RepairResult, *ipc.RPCError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	if e.protection || e.state != StateStopped {
 		if _, err := e.stopLocked(); err != nil && err.Code != ipc.CodeNotRunning {
 			return &ipc.RepairResult{Status: e.statusLocked()}, err
@@ -293,6 +358,7 @@ func (e *Engine) CrashCleanup(reason string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.lifecycleGeneration++
+	e.healing = false
 	e.cancelSessionLocked()
 	slog.Warn("engine: crash cleanup", "reason", reason, "state", e.state)
 	e.stopReliabilityLocked()
@@ -409,7 +475,8 @@ func (e *Engine) silentReprobeSession(generation uint64) {
 	ctx := e.sessionContextLocked()
 	e.mu.Unlock()
 
-	// Backup to netwatch: ASN / fingerprint drift → self-heal.
+	// Relay egress ASN can change without a physical network change. It may
+	// invalidate cached policy, but only the physical fingerprint needs rebind.
 	nctx, ncancel := context.WithTimeout(ctx, 4*time.Second)
 	ni := netFn(nctx)
 	ncancel()
@@ -418,18 +485,18 @@ func (e *Engine) silentReprobeSession(generation uint64) {
 		e.mu.Unlock()
 		return
 	}
-	inv := false
 	if e.policy != nil {
-		inv = e.policy.ObserveNetwork(ni)
+		e.policy.ObserveNetwork(ni)
 	}
-	if inv {
+	rebind := e.physicalNetworkChangedLocked(ni.Fingerprint)
+	if rebind {
 		e.resetDNSCacheLocked()
 		// The change was already adopted above; do not require a second
 		// ObserveNetwork call to rediscover it inside self-heal.
-		e.requestHealLocked("network_change", true)
+		e.requestHealLocked("network_change")
 	}
 	e.mu.Unlock()
-	if inv {
+	if rebind {
 		slog.Info("engine: network identity changed during TTL loop")
 		return
 	}
@@ -480,10 +547,8 @@ func (e *Engine) statusLocked() *ipc.Status {
 		e.refreshNetworkStatusLocked()
 	}
 	if e.protection && (e.state == StateActive || e.state == StateDegraded) {
-		component, failed, pid, exit := e.failedComponentLocked()
+		component, _, pid, exit := e.failedComponentLocked()
 		if component != "" && e.componentRequiredLocked(component) {
-			e.state, e.summary = StateDegraded, "Bozuldu"
-			e.lastError = &failed
 			key := fmt.Sprintf("%s:%d", component, pid)
 			if e.failureKey != key {
 				e.failureKey = key
@@ -493,11 +558,10 @@ func (e *Engine) statusLocked() *ipc.Status {
 	}
 
 	hint := ""
-	if e.protection && e.tunnelInfo != nil && e.tunnelInfo.Up {
-		if e.tunnelInfo.ProviderID == tunnel.ProviderDesync {
+	if e.protection {
+		hint = policy.PathDirect
+		if e.layer == layerSelective && e.tunnelInfo != nil && e.tunnelInfo.Up {
 			hint = policy.PathDesync
-		} else {
-			hint = policy.PathTunnel
 		}
 	}
 
@@ -521,6 +585,13 @@ func (e *Engine) statusLocked() *ipc.Status {
 		ContractsVer: version.ContractsVersion,
 		Network:      network,
 	}
+	if e.healing {
+		st.Transition = "network_heal"
+	} else if e.strategySwitching {
+		st.Transition = "transport_recovery"
+	} else if network != nil && network.Reason == ReasonRecovering {
+		st.Transition = "transport_recovery"
+	}
 	if e.captureInfo != nil {
 		st.Capture = e.captureInfo
 	}
@@ -539,7 +610,9 @@ func (e *Engine) statusLocked() *ipc.Status {
 			"source":     e.rulesetSnap.Source,
 			"updated_at": e.rulesetSnap.Doc.UpdatedAt,
 			"sha256":     e.rulesetSnap.SHA256Hex,
-			"packages":   len(e.rulesetSnap.Doc.Packages),
+			"schema":     e.rulesetSnap.Doc.SchemaVersion,
+			"canaries":   len(e.rulesetSnap.Doc.Canaries),
+			"strategies": len(e.rulesetSnap.Doc.Strategies),
 		}
 	}
 	if exp := e.expandInfoLocked(); exp != nil {
@@ -586,11 +659,17 @@ func isPrivilegeErr(err error) bool {
 	return false
 }
 
-func attachCaptureAdapter(parent context.Context, sess capture.Session, name string) error {
+// adapterReadiness covers a cold Wintun driver load and a pending removal of
+// the previous adapter; both can exceed five seconds on a busy PnP queue.
+const adapterReadiness = 20 * time.Second
+
+// attachCaptureAdapter waits for the gateway's adapter while the gateway is
+// still alive. A gateway that exits stops the wait at once.
+func attachCaptureAdapter(parent context.Context, sess capture.Session, name string, gateway tunnel.Session) error {
 	if sess == nil {
 		return fmt.Errorf("capture session unavailable")
 	}
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, adapterReadiness)
 	defer cancel()
 	var last error
 	for {
@@ -600,12 +679,15 @@ func attachCaptureAdapter(parent context.Context, sess capture.Session, name str
 			}
 			return err
 		}
+		if gateway != nil && !gateway.Info().Up {
+			return fmt.Errorf("gateway exited before its adapter appeared")
+		}
 		if err := sess.AttachAdapter(name); err == nil {
 			return nil
 		} else {
 			last = err
 		}
-		timer := time.NewTimer(100 * time.Millisecond)
+		timer := time.NewTimer(150 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

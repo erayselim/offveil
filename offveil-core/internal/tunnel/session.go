@@ -43,6 +43,22 @@ type session struct {
 	controls        []ControlResult
 	controlHealthy  bool
 	exitOrigin      string
+	stderr          *proc.TailBuffer
+}
+
+// stderrClass classifies the live log tail without exporting it.
+func (s *session) stderrClass() string {
+	s.mu.Lock()
+	tail := s.stderr
+	s.mu.Unlock()
+	if tail == nil {
+		return ""
+	}
+	class, reason := proc.ClassifyStderr(tail.String())
+	if reason != "" {
+		return reason
+	}
+	return class
 }
 
 // Start brings up selective tunnel with WARP↔Reality failover.
@@ -69,8 +85,11 @@ func Start(cfg Config) (Session, error) {
 		return nil, err
 	}
 	cfg.DataDir = dataDir
+	if cfg.Selective {
+		return startSelective(cfg)
+	}
 	if cfg.NetworkMode {
-		return startNetwork(cfg)
+		return nil, fmt.Errorf("full-network gateway was removed; use Selective")
 	}
 
 	if strings.EqualFold(strings.TrimSpace(cfg.AllowlistOutbound), "desync") {
@@ -175,8 +194,12 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	}
 
 	var warp *WARPProfile
-	if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
-		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, nil)
+	if provider == ProviderWARP && cfg.WARPProfile != nil {
+		warp = cfg.WARPProfile
+	} else if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
+		client := newBootstrapHTTPClient(cfg)
+		defer client.CloseIdleConnections()
+		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, client)
 		if err != nil {
 			return nil, false, FailAuth, stageError("registration", "", err)
 		}
@@ -191,7 +214,7 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	// owns a distinct configuration so a late write cannot replace a new one's.
 	configFile, err := os.CreateTemp(cfg.DataDir, "sing-box-*.json")
 	if err != nil {
-		return nil, false, FailAuth, err
+		return nil, false, FailConfig, stageError("configuration_write", "", err)
 	}
 	cfgPath := configFile.Name()
 	keepConfig := false
@@ -203,10 +226,10 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	_, writeErr := configFile.Write(build.JSON)
 	closeErr := configFile.Close()
 	if writeErr != nil {
-		return nil, false, FailAuth, writeErr
+		return nil, false, FailConfig, stageError("configuration_write", "", writeErr)
 	}
 	if closeErr != nil {
-		return nil, false, FailAuth, closeErr
+		return nil, false, FailConfig, stageError("configuration_write", "", closeErr)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, false, FailAuth, err
@@ -246,6 +269,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		// The process belongs to the protection session, not the readiness deadline.
 		cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
 		stderr := &proc.TailBuffer{}
+		s.mu.Lock()
+		s.stderr = stderr
+		s.mu.Unlock()
 		cmd.Stdout = nil
 		cmd.Stderr = stderr
 		proc.PrepareCmd(cmd)
@@ -511,6 +537,14 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		DesyncSOCKSHost:   host,
 		DesyncSOCKSPort:   port,
 		DNSAddress:        cfg.DNSAddress,
+
+		Selective:          cfg.Selective,
+		Groups:             cfg.Groups,
+		GroupPaths:         cfg.GroupPaths,
+		ExcludeSuffixes:    cfg.ExcludeSuffixes,
+		QuicRejectSuffixes: cfg.QuicRejectSuffixes,
+		ClashController:    cfg.clash.address(),
+		ClashSecret:        cfg.clash.token(),
 	}
 }
 

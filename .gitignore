@@ -46,9 +46,13 @@ offveil-ui/src-tauri/bundle-bin/offveil-core
 offveil-ui/src-tauri/bundle-bin/sing-box
 offveil-ui/src-tauri/bundle-bin/ciadpi
 
-# Local diagnostics dumps
+# Local diagnostics dumps and user support exports
 offveil-diag/
 * test diagnostics/
+diagnostics*/
+offveil-support-*.zip
+offveil-support-*/
+docs/*-diagnostics-analysis.md
 exa-results/
 *.exe
 *.dll

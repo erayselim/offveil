@@ -33,6 +33,8 @@ func Start(cfg Config) (Session, error) {
 	client := cfg.Client
 	if client == nil {
 		client = NewDoHClient(poison)
+	} else if client.Poison() != nil {
+		poison = client.Poison()
 	}
 	stub := NewStub(client, poison)
 	if cfg.OnQuery != nil {
@@ -116,6 +118,9 @@ func splitHostPortDefault(addr, defaultPort string) (host, port string, err erro
 
 func (s *session) Client() *DoHClient { return s.client }
 
+// SetIPv4Only changes the stub's AAAA policy while it serves.
+func (s *session) SetIPv4Only(on bool) { s.stub.SetIPv4Only(on) }
+
 func (s *session) Info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,6 +132,8 @@ func (s *session) Info() Info {
 		LeakGuard:      s.guard != nil,
 		NRPT:           s.nrpt != nil && s.nrpt.applied,
 		PoisonHits:     s.client.PoisonHits(),
+		PreferredDoH:   s.client.PreferredEndpoint(),
+		IPv4Only:       s.stub.IPv4Only(),
 		Queries:        q,
 		PlainFallbacks: s.stub.FallbackHits(),
 		DoHMode:        s.client.Mode(),
@@ -167,9 +174,10 @@ func (s *session) Close() error {
 
 // FakeSession is an in-memory Session for unit tests.
 type FakeSession struct {
-	info   Info
-	client *DoHClient
-	closed atomic.Bool
+	info     Info
+	client   *DoHClient
+	closed   atomic.Bool
+	ipv4Only atomic.Bool
 }
 
 // NewFakeSession returns a no-op DNS session.
@@ -187,6 +195,12 @@ func (f *FakeSession) Info() Info {
 	return info
 }
 func (f *FakeSession) Client() *DoHClient { return f.client }
+
+// SetIPv4Only records the requested AAAA policy for assertions.
+func (f *FakeSession) SetIPv4Only(on bool) { f.ipv4Only.Store(on) }
+
+// IPv4Only reports the last requested AAAA policy.
+func (f *FakeSession) IPv4Only() bool { return f.ipv4Only.Load() }
 func (f *FakeSession) Close() error {
 	f.closed.Store(true)
 	return nil

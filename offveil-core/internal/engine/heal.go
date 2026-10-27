@@ -56,12 +56,12 @@ func (e *Engine) requestSessionHeal(reason string, session uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.currentSessionLocked(session) {
-		e.requestHealLocked(reason, reason == "network_change")
+		e.requestHealLocked(reason)
 	}
 }
 
-func (e *Engine) requestHealLocked(reason string, networkChanged bool) {
-	go e.selfHeal(reason, e.lifecycleGeneration, e.sessionGeneration, networkChanged)
+func (e *Engine) requestHealLocked(reason string) {
+	go e.selfHeal(reason, e.lifecycleGeneration, e.sessionGeneration)
 }
 
 // SelfHeal silently rebuilds the protection stack after network change or wake.
@@ -72,10 +72,10 @@ func (e *Engine) SelfHeal(reason string) {
 	generation := e.lifecycleGeneration
 	session := e.sessionGeneration
 	e.mu.Unlock()
-	e.selfHeal(reason, generation, session, false)
+	e.selfHeal(reason, generation, session)
 }
 
-func (e *Engine) selfHeal(reason string, generation, session uint64, networkChanged bool) {
+func (e *Engine) selfHeal(reason string, generation, session uint64) {
 	e.healMu.Lock()
 	defer e.healMu.Unlock()
 
@@ -131,19 +131,29 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 		e.mu.Unlock()
 		return
 	}
-	invalidated := false
 	if e.policy != nil {
-		invalidated = e.policy.ObserveNetwork(ni)
+		e.policy.ObserveNetwork(ni)
 	}
-	need := reason == "power_resume" || networkChanged || invalidated
+	// Revalidate after settling: a reverted change or a relay ASN update must
+	// not tear down a working physical binding.
+	need := reason == "power_resume" || e.physicalNetworkChangedLocked(ni.Fingerprint)
 	if !need {
 		e.mu.Unlock()
 		slog.Info("engine: self-heal skipped (network identity unchanged)", "reason", reason)
 		return
 	}
 	slog.Info("engine: self-heal begin", "reason", reason, "asn", ni.ASN, "fp", ni.Fingerprint)
+	if e.softRebindLocked(reason, ni.Fingerprint) {
+		e.mu.Unlock()
+		go e.checkNetworkSession(session, time.Now())
+		return
+	}
+	e.recordFailureLocked(diag.Failure{Component: "engine", Event: "network_rebind", Reason: reason,
+		FingerprintBefore: e.networkFingerprint, FingerprintAfter: ni.Fingerprint})
+	e.healing = true
 
 	if _, err := e.stopLocked(); err != nil {
+		e.healing = false
 		e.mu.Unlock()
 		slog.Warn("engine: self-heal stop", "err", err.Message)
 		return
@@ -153,6 +163,10 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 	time.Sleep(400 * time.Millisecond)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer func() {
+		e.healing = false
+		e.publishOperationLocked("")
+	}()
 	if generation != e.lifecycleGeneration || stoppedSession != e.sessionGeneration || e.state != StateStopped {
 		return
 	}
@@ -170,6 +184,56 @@ func (e *Engine) selfHeal(reason string, generation, session uint64, networkChan
 	if st != nil {
 		slog.Info("engine: self-heal done", "reason", reason, "state", st.State, "hint", st.OutboundHint)
 	}
+}
+
+// softRebindLocked keeps the TUN across a network change when the physical
+// interface is the same: only the helper's source address and the
+// measurements are refreshed. It reports false when a full rebuild is needed.
+func (e *Engine) softRebindLocked(reason, fingerprint string) bool {
+	rebind := func(mode string) {
+		e.recordFailureLocked(diag.Failure{Component: "engine", Event: "network_rebind", Reason: reason, Stage: mode,
+			FingerprintBefore: e.networkFingerprint, FingerprintAfter: fingerprint})
+		e.networkFingerprint = fingerprint
+		e.reclassify, e.lastPathCheck = true, time.Time{}
+		for _, g := range e.groups {
+			g.Failures, g.Unreachable = 0, false
+		}
+		e.lastHealAt = time.Now().UTC()
+		e.healCount++
+		e.healReason, e.healAt = reason, e.lastHealAt.Format(time.RFC3339)
+		e.refreshNetworkStatusLocked()
+		e.publishOperationLocked("")
+	}
+	if e.layer != layerSelective {
+		rebind("measure")
+		return true
+	}
+	if e.takeSnapshot == nil || e.captureInfo == nil || e.captureInfo.Egress == nil || e.desyncConfig == nil || e.des == nil {
+		return false
+	}
+	snap, err := e.takeSnapshot()
+	if err != nil || snap == nil || snap.Egress == nil || snap.Egress.Name != e.captureInfo.Egress.Name {
+		return false
+	}
+	egress := *snap.Egress
+	if egress.IPv4 != e.captureInfo.Egress.IPv4 {
+		next := *e.desyncConfig
+		next.ConnIP = egress.IPv4
+		_ = e.des.Close()
+		des, err := e.startDesync(next)
+		if err != nil || des == nil {
+			e.des, e.desyncConfig = nil, &next
+			e.recordFailureLocked(diag.Failure{Component: "desync", Event: "rebind_failed"})
+		} else {
+			info := des.Info()
+			e.des, e.desyncConfig, e.desyncInfo = des, &next, &info
+		}
+	}
+	captureInfo := *e.captureInfo
+	captureInfo.Egress = &egress
+	e.captureInfo = &captureInfo
+	rebind("soft")
+	return true
 }
 
 func (e *Engine) healInfoLocked() *HealInfo {
@@ -303,6 +367,15 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 	}
 	if st.Network != nil {
 		in.Sidecars["network"] = st.Network
+	}
+	if e.classification != nil {
+		in.Sidecars["classification"] = e.classification
+	}
+	if e.layer != "" {
+		in.Sidecars["layer"] = map[string]any{"mode": e.layer, "reason": e.layerReason, "retries": e.layerRetries, "adapter_wait": e.attachTook}
+	}
+	if len(e.tunnelTrials) > 0 {
+		in.Sidecars["warp_endpoints"] = e.tunnelTrials
 	}
 	if st.Expand != nil {
 		in.Sidecars["expand"] = st.Expand

@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { checkVersions, compareVersions, assetNames, verifyUpdaterSignature, bridge } = require("./release.cjs");
+const { checkVersions, compareVersions, assetNames, buildOutputs, manifestNames, verifyUpdaterSignature, betaPointer } = require("./release.cjs");
 
 function signed(bytes, prehashed = true) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
@@ -64,34 +64,43 @@ for (const prehashed of [true, false]) {
   });
 }
 
-test("only required public assets are selected", () => {
-  const names = assetNames("1.0.0-rc.1");
+test("1.1.0 betas follow every 1.0.x build and precede the final", () => {
+  for (const prior of ["1.0.3", "1.0.4-beta.4", "1.0.4-beta.4.1"]) assert.ok(compareVersions("1.1.0-beta.1", prior) > 0);
+  assert.ok(compareVersions("1.1.0-beta.2", "1.1.0-beta.1") > 0);
+  assert.ok(compareVersions("1.1.0", "1.1.0-beta.9") > 0);
+});
+
+test("stable releases publish stable manifests", () => {
+  const names = assetNames("1.1.0");
   assert.equal(new Set(names).size, 10);
   assert.ok(names.includes("sing-box-1.13.14-source.zip"));
   assert.ok(names.includes("active.json.sig"));
-  assert.ok(names.includes("latest-mac.json"));
-  assert.ok(names.includes("offveil_1.0.0-rc.1_aarch64.app.tar.gz.sig"));
+  assert.ok(names.includes("latest.json") && names.includes("latest-mac.json"));
+  assert.ok(names.includes("offveil_1.1.0_aarch64.app.tar.gz.sig"));
   assert.ok(!names.includes("READ-ME-FIRST.txt"));
+  assert.deepEqual(buildOutputs("1.1.0"), names);
 });
 
-test("legacy bridge changes only the update pointer and its checksum", (t) => {
+test("betas never publish a manifest that installed stable clients read", () => {
+  const names = assetNames("1.1.0-beta.1");
+  assert.ok(!names.includes("latest.json") && !names.includes("latest-mac.json"));
+  assert.ok(names.includes("latest-beta.json") && names.includes("latest-mac-beta.json"));
+  assert.deepEqual(manifestNames("1.1.0-beta.1"), { windows: "latest-beta.json", mac: "latest-mac-beta.json" });
+  const built = buildOutputs("1.1.0-beta.1");
+  assert.ok(built.includes("latest.json") && built.includes("latest-mac.json"));
+});
+
+test("the beta pointer copies the release's Windows manifest", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "offveil-release-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const legacy = path.join(dir, "legacy"), next = path.join(dir, "next");
-  fs.mkdirSync(legacy); fs.mkdirSync(next);
-  const installerHash = "a".repeat(64);
-  fs.writeFileSync(path.join(legacy, "latest.json"), JSON.stringify({ version: "1.0.0-b5" }));
-  fs.writeFileSync(path.join(legacy, "SHA256SUMS.txt"), `${installerHash}  old-setup.exe\n${"b".repeat(64)}  latest.json\n`);
-  const manifest = JSON.stringify({ version: "1.0.0-rc.1", platforms: { "windows-x86_64": { signature: "signed", url: "https://github.com/rc/setup.exe" } } });
-  fs.writeFileSync(path.join(next, "latest.json"), manifest);
-  bridge(legacy, next);
-  assert.equal(fs.readFileSync(path.join(legacy, "latest.json"), "utf8"), manifest);
-  const sums = fs.readFileSync(path.join(legacy, "SHA256SUMS.txt"), "utf8");
-  assert.ok(sums.includes(`${installerHash}  old-setup.exe`));
-  const hash = crypto.createHash("sha256").update(manifest).digest("hex");
-  assert.ok(sums.includes(`${hash}  latest.json`));
-  assert.equal(sums.split("latest.json").length, 2);
-  fs.writeFileSync(path.join(next, "latest.json"), JSON.stringify({ version: "1.0.0-b4" }));
-  assert.throws(() => bridge(legacy, next), /advance/);
-  assert.equal(fs.readFileSync(path.join(legacy, "latest.json"), "utf8"), manifest);
+  const out = path.join(dir, "pointer");
+  const manifest = JSON.stringify({ version: "1.1.0-beta.1", platforms: { "windows-x86_64": { signature: "s", url: "u" } } });
+  fs.writeFileSync(path.join(dir, "latest-beta.json"), manifest);
+  betaPointer(dir, out, "v1.1.0-beta.1");
+  assert.equal(fs.readFileSync(path.join(out, "latest-beta.json"), "utf8"), manifest);
+  const stable = JSON.stringify({ version: "1.1.0", platforms: {} });
+  fs.writeFileSync(path.join(dir, "latest.json"), stable);
+  betaPointer(dir, out, "v1.1.0");
+  assert.equal(fs.readFileSync(path.join(out, "latest-beta.json"), "utf8"), stable);
+  assert.throws(() => betaPointer(dir, out, "v1.1.1"), /does not match/);
 });

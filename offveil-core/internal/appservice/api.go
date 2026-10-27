@@ -114,6 +114,7 @@ func (a *API) Handle(method string, params map[string]any) (any, *ipc.RPCError) 
 			SHA256:    meta.SHA256,
 			Version:   meta.Version,
 			Note:      meta.Note,
+			Report:    meta.Report,
 		}, nil
 
 	case "repair":

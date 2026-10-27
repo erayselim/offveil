@@ -77,13 +77,31 @@ type ProbeRow struct {
 	OK     bool   `json:"ok"`
 }
 
-// BundleMeta is returned by IPC `diagnostics`.
+// BundleMeta is returned by IPC `diagnostics`. Report carries the same
+// redacted diagnostics.json inline so an unprivileged collector never has
+// to read the root-owned diagnostics directory.
 type BundleMeta struct {
-	Path      string `json:"path"`
-	CreatedAt string `json:"created_at"`
-	SHA256    string `json:"sha256"`
-	Version   string `json:"version"`
-	Note      string `json:"note,omitempty"`
+	Path      string          `json:"path"`
+	CreatedAt string          `json:"created_at"`
+	SHA256    string          `json:"sha256"`
+	Version   string          `json:"version"`
+	Note      string          `json:"note,omitempty"`
+	Report    json.RawMessage `json:"report,omitempty"`
+}
+
+// maxInlineReport keeps the IPC reply well under the transport limits.
+const maxInlineReport = 1 << 20
+
+// ensureReadableDir creates dir and, because a root umask can produce 0700,
+// sets 0755 explicitly so the desktop user can open sanitized files.
+func ensureReadableDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if st, err := os.Stat(dir); err == nil && st.Mode().Perm()&0o055 != 0o055 {
+		return os.Chmod(dir, 0o755)
+	}
+	return nil
 }
 
 // Dir returns the diagnostics folder (or OFFVEIL_DIAG_DIR).
@@ -106,7 +124,7 @@ func WriteZip(in Input) (*BundleMeta, error) {
 // WriteZipIn is used by the unprivileged support collector. The privileged IPC
 // method continues to write only under Dir(), never to a caller-supplied path.
 func WriteZipIn(in Input, dir string) (*BundleMeta, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensureReadableDir(dir); err != nil {
 		return nil, err
 	}
 	if in.CreatedAt == "" {
@@ -198,13 +216,17 @@ func WriteZipIn(in Input, dir string) (*BundleMeta, error) {
 	}
 	complete = true
 
-	return &BundleMeta{
+	meta := &BundleMeta{
 		Path:      path,
 		CreatedAt: in.CreatedAt,
 		SHA256:    sha,
 		Version:   version.Version,
 		Note:      "PII-safe diagnostics bundle (ASN, cascade, error class)",
-	}, nil
+	}
+	if len(raw) <= maxInlineReport {
+		meta.Report = raw
+	}
+	return meta, nil
 }
 
 func writeZipFile(zw *zip.Writer, name string, body []byte) error {

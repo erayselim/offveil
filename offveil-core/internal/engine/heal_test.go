@@ -8,8 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/erayselim/offveil/offveil-core/internal/capture"
+	"github.com/erayselim/offveil/offveil-core/internal/desync"
 	"github.com/erayselim/offveil/offveil-core/internal/engine"
 	"github.com/erayselim/offveil/offveil-core/internal/netinfo"
+	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
 func TestDiagnosticsBundle(t *testing.T) {
@@ -113,5 +116,36 @@ func TestSelfHealOnFingerprintChange(t *testing.T) {
 	if !ok || heal.Count != 1 || heal.LastReason != "network_change" || !heal.Watching {
 		t.Fatalf("heal bookkeeping: %+v", st.Heal)
 	}
-	requireNetworkTargets(t, st, "tunnel", "tunnel")
+	requireNetworkTargets(t, st, "desync", "direct")
+}
+
+func TestSameInterfaceNetworkChangeKeepsGateway(t *testing.T) {
+	t.Setenv("OFFVEIL_DIAG_DIR", t.TempDir())
+	var fp atomic.Value
+	fp.Store("fp-aaaa")
+	gateways, helpers := 0, 0
+	var connIPs []string
+	eng := newTestEngine(t).
+		WithNetInfo(func(context.Context) netinfo.Info { return netinfo.Info{ASN: "64512", Fingerprint: fp.Load().(string)} }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { gateways++; return gatewaySession(), nil }).
+		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
+			helpers++
+			connIPs = append(connIPs, cfg.ConnIP)
+			return desync.NewFakeSession(desync.Info{}), nil
+		}).
+		WithSnapshot(func() (*capture.Snapshot, error) {
+			return &capture.Snapshot{Egress: &capture.EgressInfo{Name: "Ethernet", IPv4: "192.0.2.77"}}, nil
+		})
+	if _, err := eng.Start("auto"); err != nil {
+		t.Fatal(err)
+	}
+	fp.Store("fp-bbbb")
+	eng.SelfHeal("network_change")
+	st := eng.Status()
+	if gateways != 1 || helpers != 2 || connIPs[1] != "192.0.2.77" || !st.Protection || st.Transition != "" {
+		t.Fatalf("soft rebind: gateways=%d helpers=%d ips=%v status=%+v", gateways, helpers, connIPs, st)
+	}
+	if heal := st.Heal.(*engine.HealInfo); heal.Count != 1 {
+		t.Fatalf("heal count: %+v", heal)
+	}
 }

@@ -76,6 +76,12 @@ func stderrReason(tail string) string {
 	return ""
 }
 
+// ClassifyStderr maps a live stderr tail to the same allowlisted facts as an
+// exit, so a stalled sidecar can be explained without exporting its log.
+func ClassifyStderr(tail string) (class, reason string) {
+	return stderrClass(tail), stderrReason(tail)
+}
+
 // Exit publishes completed process facts without exporting arbitrary sidecar logs.
 func (c *Child) Exit() *ExitInfo {
 	if c == nil || c.Running() {

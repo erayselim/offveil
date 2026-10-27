@@ -53,7 +53,7 @@ func (e *Engine) recoverComponent(generation uint64, now time.Time) {
 	e.recoveryAttempts[component]++
 	e.lastRecovery, e.strategySwitching = now, true
 	oldDes, oldTun, oldDNS := e.des, e.tun, e.dns
-	captureSession, sessionCtx := e.cap, e.sessionContextLocked()
+	captureSession, sessionCtx, closeOrphan := e.cap, e.sessionContextLocked(), e.closeOrphan
 	startDes, startTun, startDNS := e.startDesync, e.startTunnel, e.startDNS
 	var desCfg desync.Config
 	var tunCfg tunnel.Config
@@ -90,9 +90,12 @@ func (e *Engine) recoverComponent(generation uint64, now time.Time) {
 			err = oldTun.Close()
 		}
 		if err == nil {
+			if closeOrphan != nil {
+				_ = closeOrphan()
+			}
 			nextTun, err = startTun(tunCfg)
 			if err == nil && nextTun != nil && nextTun.Info().Up && captureSession != nil {
-				err = attachCaptureAdapter(sessionCtx, captureSession, capture.AdapterName)
+				err = attachCaptureAdapter(sessionCtx, captureSession, capture.AdapterName, nextTun)
 			}
 		} else {
 			event = "cleanup_failed"

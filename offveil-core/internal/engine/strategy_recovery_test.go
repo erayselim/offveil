@@ -4,9 +4,9 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
 
@@ -17,9 +17,9 @@ type desyncHostCheck struct {
 
 func (s *desyncHostCheck) ProbeTLS(host string) desync.FailSignal { return s.check(host) }
 
-func localRecoveryEngine(t *testing.T) *Engine {
+func localRecoveryEngine(t *testing.T) (*Engine, *gatewayFixture) {
 	t.Helper()
-	e := networkTestEngine(t, "local")
+	e, gateway := networkTestEngine(t)
 	var err error
 	e.strategyStore, err = desync.OpenStrategyStore(t.TempDir() + "/strategies.json")
 	if err != nil {
@@ -31,17 +31,19 @@ func localRecoveryEngine(t *testing.T) *Engine {
 	e.startDesync = func(cfg desync.Config) (desync.Session, error) {
 		return desync.NewFakeSession(desync.Info{Up: true, StrategyID: cfg.Strategy.ID}), nil
 	}
-	return e
+	return e, gateway
 }
 
-func TestStrategyRecoveryUsesIndependentQuorumAndScopedCache(t *testing.T) {
-	e := localRecoveryEngine(t)
+func TestStrategyRecoveryTargetsCanaryAndCachesBaseStrategy(t *testing.T) {
+	e, gateway := localRecoveryEngine(t)
 	original := e.des.(*desync.FakeSession)
-	gateway := e.tun.(*tunnel.FakeSession)
-	winner := desync.NativeScanCandidates()[1]
+	winner := desync.PassThroughFirst(desync.NativeScanCandidates()[1])
 	e.scanDesync = func(_ context.Context, cfg desync.ScanConfig) desync.ScanResult {
-		if original.Closed() || cfg.VerifyQuorum != 2 || len(cfg.VerifyHosts) != 3 {
-			t.Fatalf("invalid non-destructive trial: %+v", cfg)
+		if original.Closed() || cfg.VerifyQuorum != 2 || len(cfg.VerifyHosts) != 3 || len(cfg.Required) != 1 || cfg.Required[0] != "chat.test" || !cfg.PassThroughFirst {
+			t.Fatalf("invalid trial: %+v", cfg)
+		}
+		if _, skip := cfg.SkipIDs[desync.NativeSafeStrategy().ID]; !skip {
+			t.Fatalf("current strategy not skipped: %+v", cfg.SkipIDs)
 		}
 		return desync.ScanResult{OK: true, Strategy: winner, Reason: "ok"}
 	}
@@ -59,82 +61,79 @@ func TestStrategyRecoveryUsesIndependentQuorumAndScopedCache(t *testing.T) {
 			return desync.FailSignal{Target: host, Class: class}
 		}}, nil
 	}
-	e.recoverDesyncStrategySession(e.sessionGeneration)
-	if !original.Closed() || checked.Load() != 3 || gateway.Closed() || e.desyncConfig.Strategy.ID != winner.ID {
-		t.Fatal("winner not independently verified/adopted")
+	e.groupLocked("chat").Failures = 2
+	e.recoverDesyncStrategySession(e.sessionGeneration, "chat")
+	if !original.Closed() || checked.Load() != 4 || gateway.Closed() || e.desyncConfig.Strategy.ID != winner.ID {
+		t.Fatalf("winner not verified/adopted: checked=%d", checked.Load())
 	}
-	if e.Status().Summary != "Sınırlı koruma" {
-		t.Fatal("TLS success conferred full network coverage")
+	if g := e.groupLocked("chat"); !g.OK || g.Failures != 0 || e.groupWork {
+		t.Fatalf("group: %+v", g)
 	}
-	if cached, ok := e.strategyStore.Lookup(e.strategyScopeLocked()); !ok || cached.ID != winner.ID {
-		t.Fatal("network-scoped strategy not stored")
+	cached, ok := e.strategyStore.Lookup(e.strategyScopeLocked())
+	if !ok || cached.ID != desync.BaseID(winner.ID) || desync.IsPassThrough(cached) {
+		t.Fatalf("cache must hold the bare candidate: %+v", cached)
 	}
-	if _, ok := e.strategyStore.Lookup(e.policy.ASN()); ok {
-		t.Fatal("network evidence escaped into the old ASN-only cache")
+	if desync.PassThroughFirst(cached).ID != winner.ID {
+		t.Fatal("cached strategy does not rebuild the deployed chain")
 	}
 }
 
-func TestStrategyRecoveryRollsBackFailedRealPortVerification(t *testing.T) {
-	e := localRecoveryEngine(t)
+func TestStrategyRecoveryRollsBackWhenGatewayStillFails(t *testing.T) {
+	e, gateway := localRecoveryEngine(t)
+	gateway.set("chat.test", tunnel.FailReset)
 	original := e.desyncConfig.Strategy
 	winner := desync.NativeScanCandidates()[1]
 	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
 		return desync.ScanResult{OK: true, Strategy: winner}
 	}
-	var rejected *desync.FakeSession
 	var starts atomic.Int32
+	var rejected *desync.FakeSession
 	e.startDesync = func(cfg desync.Config) (desync.Session, error) {
 		starts.Add(1)
 		f := desync.NewFakeSession(desync.Info{Up: true, StrategyID: cfg.Strategy.ID})
 		if cfg.Strategy.ID == winner.ID {
 			rejected = f
-			return &desyncHostCheck{f, func(host string) desync.FailSignal { return desync.FailSignal{Target: host, Class: desync.FailReset} }}, nil
 		}
 		return f, nil
 	}
-	e.recoverDesyncStrategySession(e.sessionGeneration)
-	if starts.Load() != 2 || rejected == nil || !rejected.Closed() || e.des.StrategyID() != original.ID || e.desyncScan.Reason != "verification_failed" {
-		t.Fatal("failed real-port candidate replaced accepted helper")
+	e.recoverDesyncStrategySession(e.sessionGeneration, "chat")
+	if starts.Load() != 2 || rejected == nil || !rejected.Closed() || e.des.StrategyID() != original.ID || e.desyncScan != nil {
+		t.Fatal("candidate that the gateway could not use replaced the accepted helper")
+	}
+	if g := e.groupLocked("chat"); g.Failures != groupFailureThreshold || e.groupWork {
+		t.Fatalf("failed recovery must hand the group to escalation: %+v", g)
 	}
 }
 
-func TestFailedStrategySearchIsBoundedPerSession(t *testing.T) {
-	e := localRecoveryEngine(t)
-	var scans atomic.Int32
-	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
-		scans.Add(1)
+func TestRulesetCandidatesJoinTheScan(t *testing.T) {
+	e, _ := localRecoveryEngine(t)
+	var got []desync.Strategy
+	e.scanDesync = func(_ context.Context, cfg desync.ScanConfig) desync.ScanResult {
+		got = cfg.Candidates
 		return desync.ScanResult{Reason: "exhausted"}
 	}
-	e.recoverDesyncStrategySession(e.sessionGeneration)
-	e.recoverDesyncStrategySession(e.sessionGeneration)
-	if scans.Load() != 1 {
-		t.Fatal("failed discovery loops without a new episode")
+	snap := *e.rulesetSnap
+	snap.Doc.Strategies = append(snap.Doc.Strategies,
+		ruleset.StrategySpec{ID: "extra:split", Args: []string{"--split", "2"}},
+		ruleset.StrategySpec{ID: "extra:bad", Args: []string{"--ip", "0.0.0.0"}})
+	e.rulesetSnap = &snap
+	e.recoverDesyncStrategySession(e.sessionGeneration, "chat")
+	found := false
+	for _, s := range got {
+		if s.ID == "extra:split" {
+			found = true
+		}
+		if s.ID == "extra:bad" {
+			t.Fatal("unsafe ruleset strategy reached the scan")
+		}
 	}
-}
-
-func TestPendingScanOwnershipClearsWhenHelperChanges(t *testing.T) {
-	e := localRecoveryEngine(t)
-	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
-		close(entered)
-		<-release
-		return desync.ScanResult{Reason: "exhausted"}
-	}
-	generation := e.sessionGeneration
-	go func() { defer close(done); e.recoverDesyncStrategySession(generation) }()
-	awaitBackground(t, entered)
-	e.mu.Lock()
-	e.des = desync.NewFakeSession(desync.Info{Up: true})
-	e.mu.Unlock()
-	close(release)
-	awaitBackground(t, done)
-	if e.desyncScan != nil {
-		t.Fatal("superseded scan left a permanent running marker")
+	if !found || len(got) <= len(desync.NativeScanCandidates()) {
+		t.Fatalf("candidates: %d", len(got))
 	}
 }
 
 func TestStrategyScanDoesNotBlockStatusOrStopAndDiscardsLateResult(t *testing.T) {
-	e := localRecoveryEngine(t)
+	e, _ := localRecoveryEngine(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
 		close(entered)
@@ -147,7 +146,7 @@ func TestStrategyScanDoesNotBlockStatusOrStopAndDiscardsLateResult(t *testing.T)
 		return desync.NewFakeSession(desync.Info{Up: true}), nil
 	}
 	generation := e.sessionGeneration
-	go func() { defer close(done); e.recoverDesyncStrategySession(generation) }()
+	go func() { defer close(done); e.recoverDesyncStrategySession(generation, "chat") }()
 	awaitBackground(t, entered)
 	stopped := make(chan struct{})
 	go func() { _ = e.Status(); _, _ = e.Stop(); close(stopped) }()
@@ -159,54 +158,23 @@ func TestStrategyScanDoesNotBlockStatusOrStopAndDiscardsLateResult(t *testing.T)
 	}
 }
 
-func TestStrategyVerificationDiscardsLateHelperAfterStop(t *testing.T) {
-	e := localRecoveryEngine(t)
-	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
-		return desync.ScanResult{OK: true, Strategy: desync.NativeScanCandidates()[1]}
-	}
-	late := desync.NewFakeSession(desync.Info{Up: true})
-	e.startDesync = func(desync.Config) (desync.Session, error) { close(entered); <-release; return late, nil }
-	generation := e.sessionGeneration
-	go func() { defer close(done); e.recoverDesyncStrategySession(generation) }()
-	awaitBackground(t, entered)
-	_, _ = e.Stop()
-	close(release)
-	awaitBackground(t, done)
-	if !late.Closed() || e.Status().Protection {
-		t.Fatal("late verified helper survived Stop")
-	}
-}
-
-func TestStrategyScanCannotReplaceRemotePromotion(t *testing.T) {
-	e := localRecoveryEngine(t)
+func TestPendingScanOwnershipClearsWhenHelperChanges(t *testing.T) {
+	e, _ := localRecoveryEngine(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	e.scanDesync = func(context.Context, desync.ScanConfig) desync.ScanResult {
 		close(entered)
 		<-release
-		return desync.ScanResult{OK: true, Strategy: desync.NativeScanCandidates()[1]}
+		return desync.ScanResult{Reason: "exhausted"}
 	}
 	generation := e.sessionGeneration
-	go func() { defer close(done); e.recoverDesyncStrategySession(generation) }()
+	go func() { defer close(done); e.recoverDesyncStrategySession(generation, "chat") }()
 	awaitBackground(t, entered)
 	e.mu.Lock()
-	info := tunnel.Info{Up: true, Mode: "remote", Healthy: true, ProviderID: tunnel.ProviderWARP}
-	e.tun = tunnel.NewFakeSession(info)
-	e.tunnelInfo = &info
+	e.des = desync.NewFakeSession(desync.Info{Up: true})
 	e.mu.Unlock()
 	close(release)
 	awaitBackground(t, done)
-	if e.desyncScan != nil || e.strategySwitching {
-		t.Fatal("local scan took ownership of a remote transport")
-	}
-}
-
-func TestControlRetryRetainsLocalCoverage(t *testing.T) {
-	e := localRecoveryEngine(t)
-	e.networkFailures = 2
-	e.lastPathCheck = time.Now().Add(-networkCheckInterval)
-	e.checkNetworkSession(e.sessionGeneration, time.Now())
-	if e.Status().Summary != "Sınırlı koruma" || e.networkCheck.Coverage != "tls_http_only" {
-		t.Fatal("successful TLS controls overstated fallback coverage")
+	if e.desyncScan != nil || e.groupWork {
+		t.Fatal("superseded scan left a permanent running marker")
 	}
 }

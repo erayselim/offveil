@@ -13,10 +13,18 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/udp"
 )
 
-const (
-	defaultTUNAddress = "10.87.0.1/30"
-	defaultTUNMTU     = 1280
-)
+const defaultTUNAddress = "10.87.0.1/30"
+
+// sing-box terminates TCP from the TUN, so this MTU only sizes the virtual
+// link between applications and the gateway. Larger frames cut per-packet
+// cost; WireGuard keeps its own 1280 inner MTU. Darwin's utun loses
+// throughput above 4064 (see sing-box tun inbound defaults).
+var defaultTUNMTU = func() int {
+	if runtime.GOOS == "darwin" {
+		return 4064
+	}
+	return 9000
+}()
 
 // SplitDefaultCIDRs is a TUN split-default (not 0.0.0.0/0). Captures public
 // IPv4 for local desync; WARP stays selective via route rules.
@@ -88,6 +96,15 @@ type BuildParams struct {
 	// SpecialDomains are legacy explicit UDP routes.
 	SpecialDomains []string
 	DNSAddress     string
+
+	// Selective is the 1.1 single-gateway policy (see selective_config.go).
+	Selective          bool
+	Groups             []GroupRoute
+	GroupPaths         map[string]string
+	ExcludeSuffixes    []string
+	QuicRejectSuffixes []string
+	ClashController    string
+	ClashSecret        string
 }
 
 // BuildSingBoxConfig produces a selective SOCKS→tunnel config (no TUN).
@@ -108,7 +125,10 @@ func BuildSingBoxConfig(provider ProviderID, warp *WARPProfile, reality *Reality
 // route_address only (never 0.0.0.0/0). Empty TUN CIDRs become split-default
 // (0.0.0.0/1 + 128.0.0.0/1) for local HTTPS desync — not full WARP.
 func BuildSingBox(p BuildParams) (*SingBoxBuild, error) {
-	if p.NetworkMode {
+	if p.Selective && !p.ProviderOnly {
+		return buildSelectiveConfig(p)
+	}
+	if p.NetworkMode || p.Selective {
 		return buildNetworkConfig(p)
 	}
 	if p.ListenIP == "" {

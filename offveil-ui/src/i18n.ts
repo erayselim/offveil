@@ -5,6 +5,8 @@ export type Messages = {
   protectedHint: string;
   limited: string;
   limitedHint: string;
+  offline: string;
+  offlineHint: string;
   notProtected: string;
   notProtectedHint: string;
   broken: string;
@@ -13,6 +15,8 @@ export type Messages = {
   waitingAdmin: string;
   needsAdmin: string;
   starting: string;
+  reconnecting: string;
+  reconnectingHint: string;
   disconnecting: string;
   refresh: string;
   refreshing: string;
@@ -89,7 +93,9 @@ const tr: Messages = {
   protected: "Koruma Aktif",
   protectedHint: "Güvenli gezinme ve tam erişim etkin",
   limited: "Sınırlı Koruma",
-  limitedHint: "Yerel aşma etkin. Tam ağ koruması için tünel bağlantısı bekleniyor.",
+  limitedHint: "DNS koruması açık. Bazı engelli hizmetler için yol aranıyor.",
+  offline: "Bağlantı Yok",
+  offlineHint: "İnternet bağlantısı yok gibi görünüyor. Bağlantı gelince koruma sürer.",
   notProtected: "Koruma Kapalı",
   notProtectedHint: "Korumayı açmak için dokunun",
   broken: "Bozuldu",
@@ -98,6 +104,8 @@ const tr: Messages = {
   waitingAdmin: "Servis kuruluyor. Açılırsa yönetici penceresini onaylayın.",
   needsAdmin: "Kurulumu tamamlamak için düğmeye basın.",
   starting: "Bağlanıyor…",
+  reconnecting: "Yeniden bağlanıyor…",
+  reconnectingHint: "Ağ bağlantısı yenileniyor. Koruma durumu doğrulanıyor.",
   disconnecting: "Kesiliyor…",
   refresh: "Yenile",
   refreshing: "Yenileniyor…",
@@ -174,7 +182,9 @@ const en: Messages = {
   protected: "Protected",
   protectedHint: "Safe browsing and full access are active",
   limited: "Limited Protection",
-  limitedHint: "Local bypass is active. Full network protection needs a tunnel connection.",
+  limitedHint: "DNS protection is on. Still looking for a path to some blocked services.",
+  offline: "No Connection",
+  offlineHint: "The network looks offline. Protection resumes when it is back.",
   notProtected: "Not Protected",
   notProtectedHint: "Tap to enable protection",
   broken: "Broken",
@@ -183,6 +193,8 @@ const en: Messages = {
   waitingAdmin: "Installing the service. Approve the administrator prompt if shown.",
   needsAdmin: "Press the button to complete setup.",
   starting: "Connecting…",
+  reconnecting: "Reconnecting…",
+  reconnectingHint: "Rebuilding the network connection and verifying protection.",
   disconnecting: "Disconnecting…",
   refresh: "Refresh",
   refreshing: "Refreshing…",

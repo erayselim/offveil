@@ -16,12 +16,16 @@ import (
 	mdns "github.com/miekg/dns"
 )
 
-// Default DoH upstreams (bootstrap by IP - no system DNS dependency).
+// Default DoH upstreams (bootstrap by IP - no system DNS dependency). Google
+// sends EDNS Client Subnet, so CDNs answer with nodes near the user's ISP;
+// 1.1.1.1 does not, and on some Turkish lines it is reached abroad. The first
+// entry is tried alone for 150 ms before the others race.
 var defaultDoHEndpoints = []string{
+	"https://8.8.8.8/dns-query",
+	"https://8.8.4.4/dns-query",
+	"https://9.9.9.9/dns-query",
 	"https://1.1.1.1/dns-query",
 	"https://1.0.0.1/dns-query",
-	"https://8.8.8.8/dns-query",
-	"https://9.9.9.9/dns-query",
 }
 
 const (
@@ -75,9 +79,20 @@ func NewDoHClient(poison *PoisonSet) *DoHClient {
 			Timeout:   dohExchangeBudget,
 			Transport: transport,
 		},
-		poison: poison,
-		mode:   "doh",
+		poison:    poison,
+		mode:      "doh",
+		preferred: defaultDoHEndpoints[0],
 	}
+}
+
+// Poison returns the fingerprint set shared with the stub.
+func (c *DoHClient) Poison() *PoisonSet { return c.poison }
+
+// PreferredEndpoint is the upstream tried first on the next query.
+func (c *DoHClient) PreferredEndpoint() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.preferred
 }
 
 // PoisonHits returns how many DoH answers matched censorship fingerprints.

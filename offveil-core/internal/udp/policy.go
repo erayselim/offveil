@@ -33,7 +33,10 @@ func ForOutbound(path string) Info {
 	case "direct":
 		return Info{Path: PathDirect, Quic: QuicPass, Note: "UDP and QUIC use the physical network."}
 	default:
-		return Info{Path: PathDirect, Quic: QuicDrop, QuicFallbackFamilies: []string{"ipv4"}, Note: "Local mode: opaque UDP and IPv6 stay direct; IPv4 QUIC falls back to TCP."}
+		// Turkish filtering inspects TCP SNI/Host, not QUIC; dropping QUIC
+		// would close a path that already works. Groups on the tunnel carry
+		// their own UDP.
+		return Info{Path: PathDirect, Quic: QuicPass, Note: "UDP and QUIC use the physical network; groups moved to the tunnel carry their UDP there."}
 	}
 }
 

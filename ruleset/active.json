@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
-  "version": 7,
-  "updated_at": "2026-10-21",
+  "schema_version": 3,
+  "version": 8,
+  "updated_at": "2026-10-27",
   "network": {
     "control_hosts": [
       "www.cloudflare.com",
@@ -10,5 +10,166 @@
     ],
     "routes": []
   },
-  "packages": []
+  "canaries": [
+    {
+      "id": "discord",
+      "label": "Discord",
+      "kind": "persistent",
+      "probe_hosts": [
+        "discord.com",
+        "gateway.discord.gg"
+      ],
+      "domain_suffix": [
+        "discord.com",
+        "discord.gg",
+        "discordapp.com",
+        "discordapp.net",
+        "discord.media",
+        "discordcdn.com",
+        "discord.dev",
+        "discordstatus.com",
+        "dis.gd"
+      ]
+    },
+    {
+      "id": "roblox",
+      "label": "Roblox",
+      "kind": "persistent",
+      "probe_hosts": [
+        "www.roblox.com"
+      ],
+      "domain_suffix": [
+        "roblox.com",
+        "rbxcdn.com",
+        "robloxlabs.com"
+      ]
+    },
+    {
+      "id": "imvu",
+      "label": "IMVU",
+      "kind": "persistent",
+      "probe_hosts": [
+        "secure.imvu.com"
+      ],
+      "domain_suffix": [
+        "imvu.com",
+        "im.vu"
+      ]
+    },
+    {
+      "id": "social",
+      "label": "Social media",
+      "kind": "crisis",
+      "probe_hosts": [
+        "x.com",
+        "www.youtube.com",
+        "www.instagram.com",
+        "web.telegram.org"
+      ],
+      "domain_suffix": [
+        "x.com",
+        "twitter.com",
+        "twimg.com",
+        "youtube.com",
+        "googlevideo.com",
+        "ytimg.com",
+        "youtu.be",
+        "instagram.com",
+        "cdninstagram.com",
+        "facebook.com",
+        "facebook.net",
+        "fbcdn.net",
+        "whatsapp.com",
+        "whatsapp.net",
+        "tiktok.com",
+        "tiktokcdn.com",
+        "telegram.org",
+        "t.me",
+        "signal.org"
+      ]
+    }
+  ],
+  "exclude": [
+    "steampowered.com",
+    "steamcommunity.com",
+    "steamstatic.com",
+    "steamserver.net",
+    "steamcontent.com",
+    "steamusercontent.com",
+    "steam-chat.com",
+    "steamgames.com",
+    "valvesoftware.com",
+    "valve.net",
+    "riotgames.com",
+    "riotcdn.net",
+    "pvp.net",
+    "playvalorant.com",
+    "leagueoflegends.com",
+    "epicgames.com",
+    "unrealengine.com",
+    "faceit.com",
+    "battle.net",
+    "blizzard.com",
+    "ea.com",
+    "windowsupdate.com",
+    "update.microsoft.com",
+    "delivery.mp.microsoft.com",
+    "download.microsoft.com",
+    "swcdn.apple.com",
+    "updates.cdn-apple.com",
+    "gov.tr",
+    "ziraatbank.com.tr",
+    "isbank.com.tr",
+    "garantibbva.com.tr",
+    "akbank.com",
+    "yapikredi.com.tr",
+    "qnb.com.tr",
+    "denizbank.com",
+    "vakifbank.com.tr",
+    "halkbank.com.tr",
+    "kuveytturk.com.tr",
+    "enpara.com",
+    "papara.com"
+  ],
+  "strategies": [
+    {
+      "id": "byedpi:fake-ttl3",
+      "platform": "windows",
+      "args": ["--disorder", "1", "--fake", "-1", "--ttl", "3"]
+    },
+    {
+      "id": "byedpi:fake-ttl4",
+      "platform": "windows",
+      "args": ["--disorder", "1", "--fake", "-1", "--ttl", "4"]
+    },
+    {
+      "id": "byedpi:fake-ttl5",
+      "platform": "windows",
+      "args": ["--disorder", "1", "--fake", "-1", "--ttl", "5"]
+    },
+    {
+      "id": "byedpi:fake-ttl6",
+      "platform": "windows",
+      "args": ["--disorder", "1", "--fake", "-1", "--ttl", "6"]
+    },
+    {
+      "id": "byedpi:fake-ttl4-rand",
+      "platform": "windows",
+      "args": ["--disorder", "1", "--fake", "-1", "--ttl", "4", "--fake-tls-mod", "rand"]
+    },
+    {
+      "id": "byedpi:disoob-sni",
+      "platform": "windows",
+      "args": ["--split", "1", "--disoob", "3+s"]
+    },
+    {
+      "id": "byedpi:oob-sni",
+      "args": ["--split", "1", "--oob", "3+s"]
+    },
+    {
+      "id": "byedpi:split-tlsrec-mid",
+      "args": ["--split", "1", "--tlsrec", "0+sm"]
+    }
+  ],
+  "poison_ips": []
 }

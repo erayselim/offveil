@@ -16,7 +16,7 @@ import (
 const (
 	version   = "1.13.14"
 	toolchain = "go1.26.10"
-	tags      = "with_gvisor,with_quic,with_wireguard,with_utls"
+	tags      = "with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api"
 	module    = "github.com/sagernet/sing-box"
 	sourceSum = "h1:p9/eqwilCgzyR/DpKM8hq7ppvzPIq1QMLgZWT3Cbg10="
 )

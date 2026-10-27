@@ -35,8 +35,14 @@ func fakeNet(context.Context) netinfo.Info {
 	return netinfo.Info{ASN: "64512", ISPHint: "Fixture network", Fingerprint: "testfp"}
 }
 
-func remoteSession() *tunnel.FakeSession {
-	return tunnel.NewFakeSession(tunnel.Info{SocksAddr: "127.0.0.1:18081", ProviderID: tunnel.ProviderWARP, Mode: "remote", Coverage: "public_tcp_udp_dual_stack", Up: true, Healthy: true, LastProbe: tunnel.FailOK})
+func classifier(dpi string) engine.ClassifyFunc {
+	return func(context.Context, engine.DirectProbe, []string, []ruleset.CanaryGroup) engine.Classification {
+		return engine.Classification{DPI: dpi, CheckedAt: "2026-10-27T00:00:00Z"}
+	}
+}
+
+func gatewaySession() *tunnel.FakeSession {
+	return tunnel.NewFakeSession(tunnel.Info{SocksAddr: "127.0.0.1:18081", ProviderID: tunnel.ProviderDesync, Mode: "selective", Up: true, Healthy: true})
 }
 
 func newTestEngine(t *testing.T) *engine.Engine {
@@ -55,7 +61,12 @@ func newTestEngine(t *testing.T) *engine.Engine {
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
 			return desync.NewFakeSession(desync.Info{SocksAddr: "127.0.0.1:18080", StrategyID: cfg.Strategy.ID, Up: true}), nil
 		}).
-		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return remoteSession(), nil }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return gatewaySession(), nil }).
+		WithClassifier(classifier(engine.DPIPresent)).
+		WithTunnelPrepare(func(context.Context, tunnel.Config, string) (tunnel.ProviderID, *tunnel.WARPProfile, []tunnel.EndpointTrial, error) {
+			return "", nil, nil, errors.New("no tunnel in unit tests")
+		}).
+		WithAdapterCleanup(nil).WithSnapshot(nil).WithForcedLayer(func() bool { return false }).
 		WithProbe(fakeDiagnosticProbe).WithNetInfo(fakeNet)
 	t.Cleanup(func() { _, _ = eng.Stop() })
 	return eng
@@ -82,6 +93,15 @@ func requireNetworkTargets(t *testing.T, st *ipc.Status, tcp, udp string) {
 	}
 }
 
+func networkOf(t *testing.T, st *ipc.Status) *engine.NetworkHealth {
+	t.Helper()
+	health, ok := st.Network.(*engine.NetworkHealth)
+	if !ok {
+		t.Fatalf("network: %+v", st.Network)
+	}
+	return health
+}
+
 func TestStartStopStatus(t *testing.T) {
 	eng := newTestEngine(t)
 	if st := eng.Status(); st.State != engine.StateStopped || st.Protection {
@@ -91,13 +111,19 @@ func TestStartStopStatus(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	if st.State != engine.StateActive || !st.Protection || st.OutboundHint != "tunnel" || eng.Health() != "ok" {
+	if st.State != engine.StateActive || !st.Protection || st.OutboundHint != "desync" || st.Summary != "Açık" || eng.Health() != "ok" {
 		t.Fatalf("active network: %+v", st)
 	}
 	if st.Capture == nil || st.DNS == nil || st.Tunnel == nil || st.Network == nil {
 		t.Fatalf("missing infrastructure status: %+v", st)
 	}
-	requireNetworkTargets(t, st, "tunnel", "tunnel")
+	requireNetworkTargets(t, st, "desync", "direct")
+	if network := networkOf(t, st); network.Mode != "selective" || network.Layers.TCP != "up" || network.DPI != engine.DPIPresent || len(network.Groups) == 0 {
+		t.Fatalf("layers: %+v", network)
+	}
+	if st.UDP == nil {
+		t.Fatal("UDP policy missing")
+	}
 	if _, rpcErr := eng.Start("auto"); rpcErr == nil || rpcErr.Code != ipc.CodeAlreadyRunning {
 		t.Fatalf("already_running: %v", rpcErr)
 	}
@@ -135,21 +161,26 @@ func TestStartUsesCatchAllNRPT(t *testing.T) {
 	got.OnQuery("1.2.3.4.in-addr.arpa")
 }
 
-func TestStartupUsesDualStackTransportAndIndependentControls(t *testing.T) {
+func TestStartupBuildsSelectiveGateway(t *testing.T) {
 	var capCfg capture.Config
 	var desCfg desync.Config
 	var tunCfg tunnel.Config
+	var dnsSession *offdns.FakeSession
 	probeCalls := 0
 	eng := newTestEngine(t).
 		WithCaptureStart(func(cfg capture.Config) (capture.Session, error) {
 			capCfg = cfg
 			return capture.NewFakeSession(capture.Info{Egress: &capture.EgressInfo{Name: "Ethernet", IPv4: "192.0.2.10"}}), nil
 		}).
+		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
+			dnsSession = offdns.NewFakeSession(offdns.Info{ListenAddr: cfg.ListenAddr})
+			return dnsSession, nil
+		}).
 		WithDesyncStart(func(cfg desync.Config) (desync.Session, error) {
 			desCfg = cfg
 			return desync.NewFakeSession(desync.Info{}), nil
 		}).
-		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) { tunCfg = cfg; return remoteSession(), nil }).
+		WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) { tunCfg = cfg; return gatewaySession(), nil }).
 		WithProbe(func(context.Context, *offdns.DoHClient, []string) probe.Report { probeCalls++; return probe.Report{} })
 	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
 		t.Fatal(rpcErr)
@@ -157,25 +188,112 @@ func TestStartupUsesDualStackTransportAndIndependentControls(t *testing.T) {
 	if !capCfg.SkipAdapter || !capCfg.SplitDefault || capCfg.ApplyRoutes {
 		t.Fatalf("capture ownership: %+v", capCfg)
 	}
-	if !tunCfg.NetworkMode || !tunCfg.EnableTUN || tunCfg.TUNAddress != capture.TunIPv4 || tunCfg.TUNAddress6 != capture.TunIPv6 {
-		t.Fatalf("network TUN: %+v", tunCfg)
+	if !tunCfg.Selective || tunCfg.NetworkMode || !tunCfg.EnableTUN || tunCfg.TUNAddress != capture.TunIPv4 || tunCfg.TUNAddress6 != "" || len(tunCfg.RouteCIDRs) != 0 {
+		t.Fatalf("selective TUN: %+v", tunCfg)
 	}
-	for _, prefix := range []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"} {
-		if !strings.Contains(strings.Join(tunCfg.RouteCIDRs, ","), prefix) {
-			t.Fatalf("missing public route %s: %v", prefix, tunCfg.RouteCIDRs)
-		}
+	if tunCfg.TunnelProvider != "" || tunCfg.WARPProfile != nil {
+		t.Fatal("startup must not prepare a tunnel")
 	}
-	if desCfg.ConnIP != "192.0.2.10" || desCfg.BindInterface != "Ethernet" || tunCfg.EgressInterface != "Ethernet" {
-		t.Fatal("physical egress bindings differ")
+	doc := ruleset.MustLoadEmbedded().Doc
+	if len(tunCfg.Groups) != len(doc.Canaries) || !reflect.DeepEqual(tunCfg.ExcludeSuffixes, doc.ExcludeSuffixes()) {
+		t.Fatalf("groups=%d exclude=%d", len(tunCfg.Groups), len(tunCfg.ExcludeSuffixes))
+	}
+	if tunCfg.DNSAddress != "127.0.0.1:53" {
+		t.Fatalf("gateway DNS must use the core stub on every platform: %q", tunCfg.DNSAddress)
+	}
+	if !desync.IsPassThrough(desCfg.Strategy) || desCfg.ConnIP != "192.0.2.10" || desCfg.BindInterface != "Ethernet" || tunCfg.EgressInterface != "Ethernet" {
+		t.Fatalf("helper: %+v", desCfg)
 	}
 	if probeCalls != 0 || desCfg.ProbeHost != "" || tunCfg.ProbeHost != "" {
 		t.Fatal("arbitrary destination classification affected startup")
 	}
-	if !reflect.DeepEqual(tunCfg.ControlHosts, ruleset.DefaultControlHosts()) || tunCfg.ControlQuorum != 2 {
-		t.Fatalf("network controls: %v quorum=%d", tunCfg.ControlHosts, tunCfg.ControlQuorum)
+	if !dnsSession.IPv4Only() {
+		t.Fatal("TCP layer must keep protected traffic on IPv4")
 	}
-	if len(tunCfg.TunnelDomains)+len(tunCfg.SpecialDomains)+len(tunCfg.DirectDomains)+len(tunCfg.ProtectedDomains) > 0 {
-		t.Fatal("default transport contains destination-specific rules")
+}
+
+func TestNoFilteringKeepsDNSLayerOnly(t *testing.T) {
+	helpers, gateways := 0, 0
+	var dnsSession *offdns.FakeSession
+	eng := newTestEngine(t).WithClassifier(classifier(engine.DPINone)).
+		WithDNSStart(func(cfg offdns.Config) (offdns.Session, error) {
+			dnsSession = offdns.NewFakeSession(offdns.Info{ListenAddr: cfg.ListenAddr})
+			return dnsSession, nil
+		}).
+		WithDesyncStart(func(desync.Config) (desync.Session, error) {
+			helpers++
+			return desync.NewFakeSession(desync.Info{}), nil
+		}).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { gateways++; return gatewaySession(), nil })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	if helpers != 0 || gateways != 0 || st.Tunnel != nil || st.Summary != "Açık" || st.OutboundHint != "direct" || dnsSession.IPv4Only() {
+		t.Fatalf("unfiltered network got a TCP layer: helpers=%d gateways=%d status=%+v", helpers, gateways, st)
+	}
+	if network := networkOf(t, st); network.Mode != "dns_only" || network.Layers.DNS != "up" || network.Layers.TCP != "off" {
+		t.Fatalf("layers: %+v", network)
+	}
+	requireNetworkTargets(t, st, "direct", "direct")
+}
+
+func TestForceFlagStartsTCPLayerOnAnUnfilteredNetwork(t *testing.T) {
+	gateways := 0
+	eng := newTestEngine(t).WithClassifier(classifier(engine.DPINone)).WithForcedLayer(func() bool { return true }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { gateways++; return gatewaySession(), nil })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil || gateways != 1 || networkOf(t, st).Mode != "selective" {
+		t.Fatalf("forced layer: gateways=%d status=%+v err=%v", gateways, st, rpcErr)
+	}
+	// A measured offline network must not be overridden.
+	off := newTestEngine(t).WithClassifier(classifier(engine.DPIOffline)).WithForcedLayer(func() bool { return true })
+	if st, _ := off.Start("auto"); networkOf(t, st).Reason != engine.ReasonOffline {
+		t.Fatalf("offline overridden: %+v", st)
+	}
+}
+
+func TestGatewayFailureKeepsDNSProtection(t *testing.T) {
+	helper := desync.NewFakeSession(desync.Info{})
+	dnsSession := offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"})
+	eng := newTestEngine(t).
+		WithDNSStart(func(offdns.Config) (offdns.Session, error) { return dnsSession, nil }).
+		WithDesyncStart(func(desync.Config) (desync.Session, error) { return helper, nil }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return nil, errors.New("gateway unavailable") })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil {
+		t.Fatalf("a TCP layer failure turned protection off: %v", rpcErr)
+	}
+	if !st.Protection || st.Summary != "Sınırlı koruma" || st.LastError != nil || st.State != engine.StateActive {
+		t.Fatalf("fallback status: %+v", st)
+	}
+	if network := networkOf(t, st); network.Reason != engine.ReasonDNSOnly || network.Layers.TCP != "failed" || network.Layers.DNS != "up" {
+		t.Fatalf("fallback layers: %+v", network)
+	}
+	if !helper.Closed() || !dnsSession.Info().StubUp || dnsSession.IPv4Only() {
+		t.Fatal("fallback must close the helper and keep DNS")
+	}
+}
+
+func TestHelperFailureKeepsDNSProtection(t *testing.T) {
+	gateways := 0
+	eng := newTestEngine(t).
+		WithDesyncStart(func(desync.Config) (desync.Session, error) { return nil, errors.New("helper unavailable") }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { gateways++; return gatewaySession(), nil })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil || !st.Protection || gateways != 0 || networkOf(t, st).Reason != engine.ReasonDNSOnly {
+		t.Fatalf("helper failure: status=%+v error=%v gateways=%d", st, rpcErr, gateways)
+	}
+}
+
+func TestOfflineNetworkIsNotReportedAsBroken(t *testing.T) {
+	eng := newTestEngine(t).WithClassifier(classifier(engine.DPIOffline))
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	if st.Summary != "Bağlantı yok" || st.State != engine.StateActive || st.LastError != nil || networkOf(t, st).Reason != engine.ReasonOffline {
+		t.Fatalf("offline: %+v", st)
 	}
 }
 
@@ -229,106 +347,18 @@ func TestStartPrivilegeAndTunFailed(t *testing.T) {
 	}
 }
 
-func TestOptionalHelperStartupFailureKeepsRemoteProtection(t *testing.T) {
-	eng := newTestEngine(t).WithDesyncStart(func(desync.Config) (desync.Session, error) { return nil, errors.New("optional helper failed") })
-	st, rpcErr := eng.Start("auto")
-	if rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
-	if st.State != engine.StateActive || st.OutboundHint != "tunnel" || st.LastError != nil {
-		t.Fatalf("optional helper broke transport: %+v", st)
-	}
-	requireNetworkTargets(t, st, "tunnel", "tunnel")
-}
-
-func TestOptionalHelperExitDoesNotRewriteRemoteStatus(t *testing.T) {
-	helper := desync.NewFakeSession(desync.Info{})
-	eng := newTestEngine(t).WithDesyncStart(func(desync.Config) (desync.Session, error) { return helper, nil })
-	if _, rpcErr := eng.Start("auto"); rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
-	_ = helper.Close()
-	st := eng.Status()
-	if st.State != engine.StateActive || st.OutboundHint != "tunnel" || st.LastError != nil {
-		t.Fatalf("remote transport depended on exited helper: %+v", st)
-	}
-}
-
-func TestLocalFallbackReportsLimitedCoverage(t *testing.T) {
-	eng := newTestEngine(t).WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
-		return tunnel.NewFakeSession(tunnel.Info{Mode: "local", ProviderID: tunnel.ProviderDesync, Up: true, Healthy: true, LastProbe: tunnel.FailOK}), nil
-	})
-	st, rpcErr := eng.Start("auto")
-	if rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
-	if st.State != engine.StateDegraded || st.Summary != "Sınırlı koruma" || st.OutboundHint != "desync" {
-		t.Fatalf("local fallback claimed complete coverage: %+v", st)
-	}
-	requireNetworkTargets(t, st, "desync", "direct")
-	health, ok := st.Network.(*engine.NetworkHealth)
-	if !ok || health.Mode != "local" || health.Coverage != "tls_http_only" {
-		t.Fatalf("coverage: %+v", st.Network)
-	}
-}
-
-func TestUnavailableNetworkCleansUpStartupResources(t *testing.T) {
+func TestDNSFailureStopsProtectionAndCleansUp(t *testing.T) {
 	capSession := capture.NewFakeSession(capture.Info{})
-	dnsSession := offdns.NewFakeSession(offdns.Info{ListenAddr: "127.0.0.1:53"})
-	helper := desync.NewFakeSession(desync.Info{})
 	eng := newTestEngine(t).
 		WithCaptureStart(func(capture.Config) (capture.Session, error) { return capSession, nil }).
-		WithDNSStart(func(offdns.Config) (offdns.Session, error) { return dnsSession, nil }).
-		WithDesyncStart(func(desync.Config) (desync.Session, error) { return helper, nil }).
-		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { return nil, errors.New("gateway unavailable") })
+		WithDNSStart(func(offdns.Config) (offdns.Session, error) { return nil, errors.New("port 53 busy") })
 	st, rpcErr := eng.Start("auto")
-	if rpcErr == nil || rpcErr.Code != ipc.CodeTunFailed || st.Protection || st.State != engine.StateStopped {
-		t.Fatalf("failed gateway: status=%+v error=%v", st, rpcErr)
+	if rpcErr == nil || st.Protection || st.State != engine.StateStopped || !capSession.Closed() {
+		t.Fatalf("DNS failure: status=%+v error=%v", st, rpcErr)
 	}
-	if !capSession.Closed() || dnsSession.Info().StubUp || !helper.Closed() {
-		t.Fatal("failed startup left capture, DNS, or helper alive")
+	if !strings.Contains(*st.LastError, "port 53 busy") {
+		t.Fatalf("error lost: %v", *st.LastError)
 	}
-}
-
-func TestRunningProcessWithoutVerifiedNetworkCannotBecomeActive(t *testing.T) {
-	eng := newTestEngine(t).WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
-		return tunnel.NewFakeSession(tunnel.Info{Mode: "remote", ProviderID: tunnel.ProviderWARP, Up: true, Healthy: false, LastProbe: tunnel.FailTimeout}), nil
-	})
-	status, rpcErr := eng.Start("auto")
-	if rpcErr == nil || status.Protection || status.State != engine.StateStopped {
-		t.Fatalf("process liveness was mistaken for verified connectivity: status=%+v error=%v", status, rpcErr)
-	}
-}
-
-func TestLocalFallbackRequiresItsHelper(t *testing.T) {
-	eng := newTestEngine(t).
-		WithDesyncStart(func(desync.Config) (desync.Session, error) { return nil, errors.New("helper unavailable") }).
-		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) {
-			return tunnel.NewFakeSession(tunnel.Info{Mode: "local", ProviderID: tunnel.ProviderDesync, Up: true, Healthy: true}), nil
-		})
-	st, rpcErr := eng.Start("auto")
-	if rpcErr == nil || st.Protection || st.State != engine.StateStopped {
-		t.Fatalf("unusable local fallback accepted: status=%+v error=%v", st, rpcErr)
-	}
-}
-
-func TestProviderFailoverAppliesToWholeNetwork(t *testing.T) {
-	calls := 0
-	eng := newTestEngine(t).WithTunnelStart(func(cfg tunnel.Config) (tunnel.Session, error) {
-		calls++
-		if !cfg.NetworkMode || len(cfg.TunnelDomains) > 0 {
-			t.Fatal("provider failover remained destination-selective")
-		}
-		return tunnel.NewFakeSession(tunnel.Info{Mode: "remote", ProviderID: tunnel.ProviderReality, Up: true, Healthy: true, LastProbe: tunnel.FailOK, FailoverFrom: tunnel.ProviderWARP, ProvidersTried: []tunnel.ProviderID{tunnel.ProviderWARP, tunnel.ProviderReality}}), nil
-	})
-	st, rpcErr := eng.Start("auto")
-	if rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
-	if calls != 1 || st.State != engine.StateActive || st.OutboundHint != "tunnel" {
-		t.Fatalf("provider failover: %+v", st)
-	}
-	requireNetworkTargets(t, st, "tunnel", "tunnel")
 }
 
 func TestConnectionTestIsDiagnosticOnly(t *testing.T) {

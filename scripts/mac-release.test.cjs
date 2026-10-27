@@ -6,25 +6,24 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { releaseVersion, releaseNotes, manifest } = require("./mac-release.cjs");
 
-test("Mac protection acceptance distinguishes verified remote and limited local paths", () => {
+test("Mac protection acceptance requires the full TCP layer once it is forced on", () => {
   const script = fs.readFileSync(path.join(__dirname, "darwin-smoke-install.sh"), "utf8");
   const code = /assert_protection_ready\(\) \{\r?\nnode - "\$1" <<'NODE'\r?\n([\s\S]*?)\r?\nNODE/.exec(script)?.[1];
   assert.ok(code, "actual installer smoke assertion must be tested");
-  const base = { protection: true, tunnel: { up: true }, desync: { up: true }, dns: { stub_up: true }, last_error: null };
+  const base = { protection: true, tunnel: { up: true }, desync: { up: true }, dns: { stub_up: true }, last_error: null, state: "active",
+    network: { mode: "selective", coverage: "dns_web_desync", layers: { dns: "up", tcp: "up", tunnel: "off" } } };
   const check = (status) => vm.runInNewContext(code, {
     require: () => ({ readFileSync: () => JSON.stringify({ ok: true, result: { ...base, ...status } }) }),
     process: { argv: ["node", "-", "fixture.json"] }, console: { log() {} },
   });
-  const remote = { state: "active", network: { mode: "remote", healthy: true, coverage: "public_tcp_udp_dual_stack", udp_path: "tunnel" } };
-  const local = { state: "degraded", network: { mode: "local", healthy: true, coverage: "tls_http_only", udp_path: "direct", reason: "remote_transport_unavailable" } };
-  assert.doesNotThrow(() => check(remote));
-  assert.doesNotThrow(() => check(local));
-  assert.throws(() => check({ ...remote, network: { ...remote.network, healthy: false } }));
-  assert.throws(() => check({ ...local, network: { ...local.network, reason: "control_quorum_failed" } }));
-  assert.throws(() => check({ ...local, tunnel: { up: false } }));
-  assert.throws(() => check({ ...local, state: "active" }));
+  assert.doesNotThrow(() => check({}));
+  assert.doesNotThrow(() => check({ network: { ...base.network, reason: "group_unreachable" } }));
+  assert.throws(() => check({ network: { ...base.network, mode: "dns_only" } }));
+  assert.throws(() => check({ network: { ...base.network, layers: { dns: "up", tcp: "failed", tunnel: "off" } } }));
+  assert.throws(() => check({ tunnel: { up: false } }));
+  assert.throws(() => check({ desync: { up: false } }));
+  assert.throws(() => check({ state: "degraded", last_error: "dns: local resolver stopped" }));
 });
-
 test("release tags become distinct application versions", () => {
   for (const tag of ["v1.0.0-mac.9", "v1.0.0-mac.10", "v1.0.0", "v1.1.0-beta.2+build.3"]) {
     assert.equal(releaseVersion(tag), tag.slice(1));

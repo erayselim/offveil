@@ -58,6 +58,7 @@ node - "$WORK/diagnostics-response.json" <<'NODE'
 const fs = require('node:fs');
 const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const path = reply.result?.path;
+if (typeof reply.result?.report !== 'object') throw new Error('Diagnostics reply lacks the inline report');
 if (!reply.ok || typeof path !== 'string' ||
     !path.startsWith('/Library/Application Support/offveil/diagnostics/')) {
   throw new Error('Invalid diagnostics response');
@@ -96,18 +97,40 @@ node - "$1" <<'NODE'
 const fs = require('node:fs');
 const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const s = reply.result;
-const remote = s?.network?.mode === 'remote' && s.state === 'active' &&
-  s.network.coverage === 'public_tcp_udp_dual_stack' && s.network.udp_path === 'tunnel';
-const local = s?.network?.mode === 'local' && s.state === 'degraded' &&
-  s.network.coverage === 'tls_http_only' && s.network.udp_path === 'direct' &&
-  s.network.reason === 'remote_transport_unavailable' && !s.last_error;
-if (!reply.ok || !s?.protection || !(remote || local) || !s.network.healthy ||
+// The TCP layer is forced on for this part of the smoke test (see
+// force-tcp-layer below), so the gateway and helper must be up.
+if (!reply.ok || !s?.protection || s.state !== 'active' || s.last_error ||
+    s.network?.mode !== 'selective' || s.network.layers?.tcp !== 'up' ||
     !s.tunnel?.up || !s.desync?.up || !s.dns?.stub_up) {
   throw new Error(`Real protection failed: ${JSON.stringify(reply)}`);
 }
 console.log(`Real protection ready: ${s.network.mode}, ${s.network.coverage}; TUN, DNS and helper up.`);
 NODE
 }
+# On an unfiltered runner the first start must use the DNS layer only: no TUN,
+# no helper. If the runner is filtered the TCP layer is the correct answer.
+node - "$WORK/protection-start.json" <<'NODE'
+const fs = require('node:fs');
+const reply = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const s = reply.result;
+const dnsOnly = s?.network?.mode === 'dns_only' && !s.tunnel && !s.desync;
+const layered = s?.network?.mode === 'selective' && s.tunnel?.up && s.desync?.up;
+if (!reply.ok || !s?.protection || s.state !== 'active' || s.last_error || !s.dns?.stub_up || !(dnsOnly || layered)) {
+  throw new Error(`First start has an unexpected shape: ${JSON.stringify(reply)}`);
+}
+console.log(`Measured network layer: ${s.network.mode} (dpi=${s.network.dpi}).`);
+NODE
+/usr/bin/curl -4 --fail --silent --show-error --connect-timeout 6 --max-time 20 "$TEST_URL" -o /dev/null
+echo "HTTPS with the measured layer passed."
+"$INSTALLED" client -method stop -timeout 45s
+dns_snapshot > "$WORK/dns-after-first.txt"
+cmp "$WORK/dns-before.txt" "$WORK/dns-after-first.txt"
+# Exercise the TUN path even on an unfiltered runner.
+sudo /usr/bin/touch '/Library/Application Support/offveil/force-tcp-layer'
+if ! "$INSTALLED" client -method start -timeout 120s > "$WORK/protection-start.json"; then
+  sudo tail -n 100 '/Library/Application Support/offveil/logs/offveil-core.err.log' || true
+  exit 1
+fi
 assert_protection_ready "$WORK/protection-start.json"
 /sbin/route -n get 104.18.26.120 > "$WORK/protected-route.txt"
 grep -Eq 'interface: utun[0-9]+' "$WORK/protected-route.txt"

@@ -1,4 +1,5 @@
-//! Discover Mac releases (including prereleases), then use Tauri's signed updater.
+//! Pick the update channel (stable, or beta for prerelease installs), discover
+//! Mac releases on that channel, then use Tauri's signed updater.
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tauri::{Manager, Webview};
@@ -20,24 +21,45 @@ struct Asset {
     state: String,
 }
 
+/// Windows beta installs read this pointer instead of GitHub Latest. Every
+/// release, beta or stable, updates it, so beta installs also reach stable.
+const BETA_ENDPOINT: &str =
+    "https://github.com/erayselim/offveil/releases/download/updates-beta/latest-beta.json";
+
+/// A prerelease install follows the beta channel; a stable install never
+/// sees prereleases. There is no setting: installing a beta opts in.
+fn beta_channel(current: &semver::Version) -> bool {
+    !current.pre.is_empty()
+}
+
+fn mac_manifest_name(version: &semver::Version) -> &'static str {
+    if version.pre.is_empty() {
+        "latest-mac.json"
+    } else {
+        "latest-mac-beta.json"
+    }
+}
+
 // Do not use GitHub Latest: it excludes prereleases and may be Windows-only.
 fn newest_manifest(
     releases: &[Release],
     current: &semver::Version,
 ) -> Option<(semver::Version, reqwest::Url)> {
+    let beta = beta_channel(current);
     releases
         .iter()
         .filter(|r| !r.draft)
         .filter_map(|r| {
             let version =
                 semver::Version::parse(r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name)).ok()?;
-            if version <= *current {
+            if version <= *current || (!beta && !version.pre.is_empty()) {
                 return None;
             }
+            let manifest = mac_manifest_name(&version);
             let asset = r
                 .assets
                 .iter()
-                .find(|a| a.name == "latest-mac.json" && a.state == "uploaded")?;
+                .find(|a| a.name == manifest && a.state == "uploaded")?;
             let archive = r
                 .assets
                 .iter()
@@ -54,7 +76,7 @@ fn newest_manifest(
                 .path_segments_mut()
                 .ok()?
                 .pop_if_empty()
-                .extend([r.tag_name.as_str(), "latest-mac.json"]);
+                .extend([r.tag_name.as_str(), manifest]);
             if reqwest::Url::parse(&asset.browser_download_url).ok()? != expected {
                 return None;
             }
@@ -126,6 +148,9 @@ pub async fn check_app_update(webview: Webview) -> Result<Option<Metadata>, Stri
         };
         expected_version = Some(version.to_string());
         builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
+    } else if beta_channel(&webview.app_handle().package_info().version) {
+        let url = reqwest::Url::parse(BETA_ENDPOINT).map_err(|e| e.to_string())?;
+        builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
     }
     let Some(update) = builder
         .build()
@@ -160,14 +185,19 @@ mod tests {
         release_client().unwrap();
     }
     fn release(tag: &str, draft: bool, has_mac: bool) -> Release {
+        let manifest = if tag.contains('-') {
+            "latest-mac-beta.json"
+        } else {
+            "latest-mac.json"
+        };
         Release {
             tag_name: tag.into(),
             draft,
             assets: if has_mac {
                 vec![
                     Asset {
-                        name: "latest-mac.json".into(),
-                        browser_download_url: format!("{REPO_DOWNLOADS}{tag}/latest-mac.json"),
+                        name: manifest.into(),
+                        browser_download_url: format!("{REPO_DOWNLOADS}{tag}/{manifest}"),
                         state: "uploaded".into(),
                     },
                     Asset {
@@ -231,6 +261,14 @@ mod tests {
             assert!(rc > semver::Version::parse(prior).unwrap());
         }
     }
+
+    #[test]
+    fn private_beta_four_build_can_update_to_beta_five_or_final() {
+        let current = semver::Version::parse("1.0.4-beta.4.1").unwrap();
+        assert!(current > semver::Version::parse("1.0.4-beta.4").unwrap());
+        assert!(semver::Version::parse("1.0.4-beta.5").unwrap() > current);
+        assert!(semver::Version::parse("1.0.4").unwrap() > current);
+    }
     #[test]
     fn rejects_manifest_outside_this_release() {
         let mut release = release("v1.0.1", false, true);
@@ -239,22 +277,40 @@ mod tests {
     }
 
     #[test]
-    fn beta_updates_from_stable_and_then_to_final() {
-        let beta = vec![release("v1.0.4-beta.1", false, true)];
+    fn stable_never_sees_a_beta_but_a_beta_reaches_stable() {
+        let beta = vec![release("v1.1.0-beta.1", false, true)];
         let stable = semver::Version::parse("1.0.3").unwrap();
-        assert_eq!(
-            newest_manifest(&beta, &stable).unwrap().0.to_string(),
-            "1.0.4-beta.1"
-        );
+        assert!(newest_manifest(&beta, &stable).is_none());
         let releases = vec![
-            release("v1.0.4-beta.1", false, true),
-            release("v1.0.4", false, true),
+            release("v1.1.0-beta.1", false, true),
+            release("v1.1.0", false, true),
         ];
-        let current = semver::Version::parse("1.0.4-beta.1").unwrap();
+        let current = semver::Version::parse("1.1.0-beta.1").unwrap();
         assert_eq!(
             newest_manifest(&releases, &current).unwrap().0.to_string(),
-            "1.0.4"
+            "1.1.0"
         );
+        assert!(beta_channel(&current) && !beta_channel(&stable));
+    }
+
+    #[test]
+    fn prerelease_installs_follow_the_beta_channel() {
+        let releases = vec![release("v1.1.0-beta.1", false, true)];
+        let current = semver::Version::parse("1.0.4-beta.4").unwrap();
+        assert_eq!(
+            newest_manifest(&releases, &current).unwrap().0.to_string(),
+            "1.1.0-beta.1"
+        );
+    }
+
+    #[test]
+    fn a_beta_with_the_stable_manifest_name_is_ignored() {
+        let mut beta = release("v1.1.0-beta.2", false, true);
+        beta.assets[0].name = "latest-mac.json".into();
+        beta.assets[0].browser_download_url =
+            format!("{REPO_DOWNLOADS}v1.1.0-beta.2/latest-mac.json");
+        let current = semver::Version::parse("1.1.0-beta.1").unwrap();
+        assert!(newest_manifest(&[beta], &current).is_none());
     }
 
     #[test]

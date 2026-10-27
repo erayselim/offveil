@@ -66,6 +66,8 @@ type Info struct {
 	LeakGuard      bool     `json:"leak_guard"`
 	NRPT           bool     `json:"nrpt,omitempty"` // Windows NRPT or Darwin networksetup applied
 	PoisonHits     int      `json:"poison_hits"`
+	PreferredDoH   string   `json:"preferred_doh,omitempty"`
+	IPv4Only       bool     `json:"ipv4_only,omitempty"`
 	Queries        uint64   `json:"queries"`
 	PlainFallbacks uint64   `json:"plain_fallbacks"`
 	DoHMode        string   `json:"doh_mode,omitempty"` // doh | plain_skip | recovering

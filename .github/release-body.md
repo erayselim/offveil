@@ -1,19 +1,20 @@
-**Download / İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — Apple Silicon]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
+**İndir:** [Windows 64-bit]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_x64-setup.exe) · [Mac — M1 ve sonrası]({{DOWNLOAD_BASE}}/offveil_{{VERSION}}_aarch64.dmg)
 
-**BETA 4 — test release / test sürümü.**
+**Beta sürümü.** Koruma yeniden tasarlandı. Kararlı sürüm kullananlara güncelleme olarak sunulmaz; kurmak için yukarıdaki bağlantıları kullanın. Beta'yı kurduktan sonra sonraki beta'lar ve kararlı sürüm uygulama içinden gelir.
 
-- Protection now routes public TCP/UDP traffic through a verified general tunnel, with IPv4/IPv6 support and no built-in application list or process-name rules.
-- When no remote provider connects, the app shows **Limited Protection**: local IPv4 HTTP/TLS bypass remains available; other traffic stays direct.
-- A failed site no longer blocks checks for unrelated connections. Provider switching preserves the working path until a replacement is ready, with rollback on failure.
-- Support exports include general DNS/TCP/TLS/HTTP diagnostics and clearer provider/process failure facts. Old application-specific rules cannot return from cached updates.
-- Core and tunnel sidecar use the patched Go toolchain; the sidecar's locked dependencies are security updated. Its source archive and build recipe are public.
+Önceki beta, tüm trafiği tünelden geçirmeye çalışıyordu. Bu bazı hatlarda yavaşlığa, bağlantı kopmalarına ve koruma açılamamasına yol açtı. Bu sürümde yöntem tersine döndü: koruma önce ağınızı ölçüyor, sadece gerekeni açıyor.
 
-Koruma, uygulama listeleri yerine genel ağ trafiğini temel alacak şekilde yenilendi. Doğrulanmış tünel TCP/UDP bağlantılarını IPv4/IPv6 üzerinden taşır. Tünel kurulamazsa **Sınırlı Koruma** görünür; yerel IPv4 HTTP/TLS aşma devrede kalırken diğer trafik doğrudan gider. Tek bir sitenin hatası diğer bağlantıların denetimini durdurmaz; sağlayıcı geçişleri ve destek raporları iyileştirildi.
+- Engelli adresler doğrudan açılıyorsa yalnızca DNS koruması çalışır. Sanal ağ kartı ve vekil açılmaz.
+- Ağ engelliyorsa web trafiği (IPv4) yerelde aşılır. Engelsiz sitelere dokunulmaz, bu yüzden gereksiz yavaşlama olmaz.
+- İndirmeler, oyunlar, QUIC ve UDP olduğu gibi doğrudan gider. Oyun mağazaları, sistem güncellemeleri ve bankalar hiç karışılmaz.
+- Tünel yalnızca yerel aşmanın açamadığı hizmet için devreye girer. WARP için birkaç adres ve port sırayla denenir.
+- DNS, CDN'lerin size yakın sunucu vermesini sağlayan sağlayıcıyla başlar.
+- Windows'ta ağ kartının hazır olması için beklenen süre uzatıldı. Sanal ağ kartı kurulamasa bile DNS koruması açık kalır ve ekranda **Sınırlı Koruma** görünür.
+- **Bozuldu** artık yalnızca DNS durduğunda ya da kurtarma tükendiğinde görünür. İnternet yoksa **Bağlantı Yok** yazar. Yenile'ye basınca Bozuldu görünmez.
+- Mac'te destek dosyası yönetici izni olmadan da eksiksiz oluşur. Dosyaya ağın engel durumu, açık katmanlar ve kısa bir hız ölçümü eklendi.
 
-This is a broad networking change. Tunnel use may change latency; testing continues on restrictive ISPs and physical devices. / Bu geniş bir ağ mimarisi değişikliğidir. Tünel kullanımı gecikmeyi değiştirebilir; katı ISS hatlarında ve gerçek cihazlarda testler sürüyor.
+Sorun yaşarsanız lütfen **Ayarlar → Destek dosyası kaydet** ile rapor paylaşın; bu sürümün asıl amacı farklı hatlarda denenmek. Özellikle Superonline, Kablonet ve Türk Telekom geri bildirimi önemli.
 
-Existing users can use **Check for Updates / Güncellemeleri kontrol et**. Updating the Mac core may require administrator approval. Windows and Apple Silicon Macs are supported; Intel Macs are not.
+Windows'ta SmartScreen, Mac'te geliştirici doğrulama uyarısı çıkabilir. [Windows](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac kurulumu](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
 
-Windows SmartScreen and macOS developer verification may show a warning. [Windows guidance](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/antivirus.md) · [Mac installation](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/beta-mac.md)
-
-If something fails, share **Settings → Save support file / Ayarlar → Destek dosyası kaydet**. Verify downloads with `SHA256SUMS.txt`. [Architecture and validation](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-architecture.md) · [Network diagnostics](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-diagnostics.md). Source, build workflows and third-party notices are public in this repository.
+İndirmelerin doğrulama bilgileri `SHA256SUMS.txt` içinde. [Ağ mimarisi](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-architecture.md) · [Ağ tanılama](https://github.com/erayselim/offveil/blob/{{TAG}}/docs/network-diagnostics.md)

@@ -1,5 +1,7 @@
 package ipc
 
+import "encoding/json"
+
 // Request is the UI → core JSON envelope (docs/contracts.md §2.1).
 type Request struct {
 	ID     string         `json:"id"`
@@ -23,7 +25,9 @@ type RPCError struct {
 
 // Status is contracts.md §2.3.
 type Status struct {
-	State        string         `json:"state"`
+	State string `json:"state"`
+	// Transition distinguishes automatic reconnection from an explicit stop.
+	Transition   string         `json:"transition,omitempty"`
 	Protection   bool           `json:"protection"`
 	Summary      string         `json:"summary"`
 	OutboundHint string         `json:"outbound_hint,omitempty"`
@@ -90,6 +94,8 @@ type DiagnosticsBundle struct {
 	SHA256    string `json:"sha256"`
 	Version   string `json:"version"`
 	Note      string `json:"note,omitempty"`
+	// Report is the redacted diagnostics.json; collectors prefer it to Path.
+	Report json.RawMessage `json:"report,omitempty"`
 }
 
 // RepairResult is contracts.md §2.2 repair / "Revert changes".
