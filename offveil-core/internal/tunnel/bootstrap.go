@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +10,54 @@ import (
 	"syscall"
 	"time"
 )
+
+// ProbeDirectTLS measures a certificate-verified TLS handshake on the physical
+// interface, outside the gateway. It is how the engine tells "this network
+// filters this destination" apart from "our path is broken".
+func ProbeDirectTLS(ctx context.Context, egress string, resolve func(context.Context, string) (netip.Addr, error), host string) FailSignal {
+	sig := FailSignal{Target: host, ProviderID: "direct", At: time.Now().UTC()}
+	if resolve == nil {
+		sig.Class, sig.Detail = FailConfig, "resolver unavailable"
+		return sig
+	}
+	addr, err := resolve(ctx, host)
+	if err != nil {
+		sig.Class, sig.Detail = classifyDialErr(err), "resolve"
+		return sig
+	}
+	raw, err := bootstrapDialer(egress, 5*time.Second).DialContext(ctx, "tcp4", net.JoinHostPort(addr.String(), "443"))
+	if err != nil {
+		sig.Class, sig.Detail = classifyDialErr(err), "dial"
+		return sig
+	}
+	defer raw.Close()
+	if err := tlsHandshake(ctx, raw, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+		sig.Class, sig.Detail = classifyDialErr(err), "tls"
+		return sig
+	}
+	sig.Class = FailOK
+	return sig
+}
+
+func bootstrapDialer(egress string, timeout time.Duration) *net.Dialer {
+	dialer := &net.Dialer{Timeout: timeout}
+	if egress != "" {
+		dialer.Control = func(network, _ string, raw syscall.RawConn) error {
+			iface, err := net.InterfaceByName(egress)
+			if err != nil {
+				return fmt.Errorf("bootstrap interface: %w", err)
+			}
+			var bindErr error
+			if err := raw.Control(func(fd uintptr) {
+				bindErr = bindBootstrapSocket(fd, network, iface.Index)
+			}); err != nil {
+				return err
+			}
+			return bindErr
+		}
+	}
+	return dialer
+}
 
 // Provider orchestration must work even while the active remote dataplane is
 // broken. Resolve outside that dataplane and bind sockets to its physical

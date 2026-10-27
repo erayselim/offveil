@@ -43,6 +43,22 @@ type session struct {
 	controls        []ControlResult
 	controlHealthy  bool
 	exitOrigin      string
+	stderr          *proc.TailBuffer
+}
+
+// stderrClass classifies the live log tail without exporting it.
+func (s *session) stderrClass() string {
+	s.mu.Lock()
+	tail := s.stderr
+	s.mu.Unlock()
+	if tail == nil {
+		return ""
+	}
+	class, reason := proc.ClassifyStderr(tail.String())
+	if reason != "" {
+		return reason
+	}
+	return class
 }
 
 // Start brings up selective tunnel with WARP↔Reality failover.
@@ -69,6 +85,9 @@ func Start(cfg Config) (Session, error) {
 		return nil, err
 	}
 	cfg.DataDir = dataDir
+	if cfg.Selective {
+		return startSelective(cfg)
+	}
 	if cfg.NetworkMode {
 		return startNetwork(cfg)
 	}
@@ -175,7 +194,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 	}
 
 	var warp *WARPProfile
-	if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
+	if provider == ProviderWARP && cfg.WARPProfile != nil {
+		warp = cfg.WARPProfile
+	} else if provider == ProviderWARP && cfg.upstreamSOCKS == "" {
 		client := newBootstrapHTTPClient(cfg)
 		defer client.CloseIdleConnections()
 		_, warp, err = loadOrRegisterWARP(startup, cfg.DataDir, client)
@@ -248,6 +269,9 @@ func startOne(cfg Config, attempt providerAttempt) (s *session, ok bool, class F
 		// The process belongs to the protection session, not the readiness deadline.
 		cmd := exec.CommandContext(ctx, bin, "run", "-c", cfgPath)
 		stderr := &proc.TailBuffer{}
+		s.mu.Lock()
+		s.stderr = stderr
+		s.mu.Unlock()
 		cmd.Stdout = nil
 		cmd.Stderr = stderr
 		proc.PrepareCmd(cmd)
@@ -513,6 +537,14 @@ func buildParamsFrom(cfg Config, provider ProviderID, warp *WARPProfile, reality
 		DesyncSOCKSHost:   host,
 		DesyncSOCKSPort:   port,
 		DNSAddress:        cfg.DNSAddress,
+
+		Selective:          cfg.Selective,
+		Groups:             cfg.Groups,
+		GroupPaths:         cfg.GroupPaths,
+		ExcludeSuffixes:    cfg.ExcludeSuffixes,
+		QuicRejectSuffixes: cfg.QuicRejectSuffixes,
+		ClashController:    cfg.clash.address(),
+		ClashSecret:        cfg.clash.token(),
 	}
 }
 

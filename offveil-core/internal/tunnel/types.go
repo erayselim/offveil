@@ -109,7 +109,7 @@ type Config struct {
 	// TUNAddress is the TUN IPv4 prefix (default 10.87.0.1/30).
 	TUNAddress  string
 	TUNAddress6 string
-	// TUNMTU defaults to 1280.
+	// TUNMTU defaults to 9000 (4064 on Darwin); see defaultTUNMTU.
 	TUNMTU int
 	// RouteCIDRs are TUN prefixes (never 0.0.0.0/0). Empty + EnableTUN → split-default.
 	RouteCIDRs []string
@@ -124,6 +124,20 @@ type Config struct {
 	// DNSAddress is the already-running core DNS stub. Only loopback literals
 	// are accepted; empty retains standalone DoH for isolated sidecar use.
 	DNSAddress string
+
+	// Selective starts the 1.1 gateway: local desync for IPv4 web traffic,
+	// optional tunnel only for listed groups, everything else direct.
+	Selective          bool
+	Groups             []GroupRoute
+	GroupPaths         map[string]string
+	ExcludeSuffixes    []string
+	QuicRejectSuffixes []string
+	// TunnelProvider is WARP or Reality when a verified tunnel should be
+	// available to group selectors. Empty keeps the gateway local-only.
+	TunnelProvider ProviderID
+	// WARPProfile is a preflighted profile; startup never registers WARP.
+	WARPProfile *WARPProfile
+	clash       *clashControl
 }
 
 // DefaultConfig returns selective-tunnel defaults.
@@ -198,6 +212,11 @@ type Info struct {
 	TUNMTU          int               `json:"tun_mtu,omitempty"`
 	StartupAttempts int               `json:"startup_attempts,omitempty"`
 	DNSMode         string            `json:"dns_mode,omitempty"`
+	// Selective gateway facts.
+	TunnelAvailable bool              `json:"tunnel_available,omitempty"`
+	GroupPaths      map[string]string `json:"group_paths,omitempty"`
+	WARPEndpoint    string            `json:"warp_endpoint,omitempty"`
+	StderrClass     string            `json:"stderr_class,omitempty"`
 }
 
 // Session is a running selective tunnel outbound (sing-box SOCKS).

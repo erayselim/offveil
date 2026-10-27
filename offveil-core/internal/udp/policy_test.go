@@ -12,7 +12,7 @@ func TestTransportPolicy(t *testing.T) {
 		quic udp.QuicPolicy
 	}{
 		{"tunnel", udp.PathTunnel, udp.QuicPass}, {"warp", udp.PathTunnel, udp.QuicPass}, {"reality", udp.PathTunnel, udp.QuicPass},
-		{"desync", udp.PathDirect, udp.QuicDrop}, {"DESYNC", udp.PathDirect, udp.QuicDrop}, {"", udp.PathDirect, udp.QuicDrop},
+		{"desync", udp.PathDirect, udp.QuicPass}, {"DESYNC", udp.PathDirect, udp.QuicPass}, {"", udp.PathDirect, udp.QuicPass},
 		{"direct", udp.PathDirect, udp.QuicPass},
 	} {
 		got := udp.ForOutbound(tc.in)

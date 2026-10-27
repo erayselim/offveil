@@ -58,7 +58,7 @@ func (s *session) probeTLSContext(parent context.Context, host string) FailSigna
 	// ByeDPI helper rejects domain CONNECT (--no-domain), so its dataplane
 	// check must use the same resolved-IP destination as TUN traffic.
 	dialHost := host
-	if s.provider == ProviderDesync && s.cfg.Resolve != nil {
+	if (s.provider == ProviderDesync || s.cfg.Selective && !s.cfg.providerOnly) && s.cfg.Resolve != nil {
 		addr, err := s.cfg.Resolve(ctx, host)
 		if err != nil {
 			sig.Class, sig.Detail = classifyDialErr(err), "resolve: "+err.Error()
