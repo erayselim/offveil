@@ -76,6 +76,8 @@ func TestLiveBundleAndExternalPathRejected(t *testing.T) {
 	if in.Cascade.State != "active" || in.System["collection_mode"] != "live" || in.System["protection_state"] != "off" {
 		t.Fatalf("%+v", in)
 	}
+	// An older daemon returns only a path; it must stay inside Dir().
+	meta.Report = nil
 	meta.Path = filepath.Join(t.TempDir(), "unrelated.txt")
 	if err := os.WriteFile(meta.Path, []byte("private file"), 0o600); err != nil {
 		t.Fatal(err)
@@ -83,5 +85,44 @@ func TestLiveBundleAndExternalPathRejected(t *testing.T) {
 	in = Collect(context.Background(), rpc)
 	if in.System["collection_mode"] != "offline" {
 		t.Fatal("accepted path outside diagnostics directory")
+	}
+}
+
+func TestInlineReportNeedsNoAccessToDaemonDirectory(t *testing.T) {
+	t.Setenv("OFFVEIL_DIAG_DIR", t.TempDir())
+	meta, err := diag.WriteZip(diag.Input{Cascade: diag.CascadeInfo{State: "active", Protection: true, Summary: "Açık"},
+		System:   map[string]any{"protection_state": "on"},
+		Failures: []diag.Failure{{Component: "engine", Event: "layer_started"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.Report) == 0 {
+		t.Fatal("daemon reply lacks the inline report")
+	}
+	meta.Path = filepath.Join(t.TempDir(), "root-only", "missing.zip")
+	in := Collect(context.Background(), func(context.Context, string) (json.RawMessage, error) { return json.Marshal(meta) })
+	if in.System["collection_mode"] != "live" || in.System["protection_state"] != "on" || in.Cascade.Summary != "Açık" {
+		t.Fatalf("inline report ignored: %+v", in.System)
+	}
+	if len(in.Failures) != 1 || in.Failures[0].Event != "layer_started" {
+		t.Fatalf("daemon journal lost: %+v", in.Failures)
+	}
+}
+
+func TestPermissionDeniedFileIsUnknownNotMissing(t *testing.T) {
+	if os.Geteuid() == 0 || os.PathSeparator == '\\' {
+		t.Skip("needs an unprivileged POSIX user")
+	}
+	dir := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ciadpi"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(dir, 0o000)
+	defer os.Chmod(dir, 0o700)
+	if fact := fileFact(filepath.Join(dir, "ciadpi")); fact["exists"] != "unknown" {
+		t.Fatalf("fact=%+v", fact)
 	}
 }

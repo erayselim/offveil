@@ -39,6 +39,12 @@ func ProbeDirectTLS(ctx context.Context, egress string, resolve func(context.Con
 	return sig
 }
 
+// PhysicalDialer dials on the named interface, outside the gateway's routes.
+// It needs no privileges; an empty name returns a plain dialer.
+func PhysicalDialer(egress string, timeout time.Duration) *net.Dialer {
+	return bootstrapDialer(egress, timeout)
+}
+
 func bootstrapDialer(egress string, timeout time.Duration) *net.Dialer {
 	dialer := &net.Dialer{Timeout: timeout}
 	if egress != "" {

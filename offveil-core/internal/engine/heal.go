@@ -368,6 +368,15 @@ func (e *Engine) buildDiagInputLocked() diag.Input {
 	if st.Network != nil {
 		in.Sidecars["network"] = st.Network
 	}
+	if e.classification != nil {
+		in.Sidecars["classification"] = e.classification
+	}
+	if e.layer != "" {
+		in.Sidecars["layer"] = map[string]any{"mode": e.layer, "reason": e.layerReason, "retries": e.layerRetries, "adapter_wait": e.attachTook}
+	}
+	if len(e.tunnelTrials) > 0 {
+		in.Sidecars["warp_endpoints"] = e.tunnelTrials
+	}
 	if st.Expand != nil {
 		in.Sidecars["expand"] = st.Expand
 	}

@@ -82,7 +82,7 @@ func RecordFailure(failure Failure) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := ensureReadableDir(dir); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".failures-*.json")

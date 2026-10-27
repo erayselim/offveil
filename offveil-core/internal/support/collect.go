@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -41,7 +43,13 @@ func Collect(ctx context.Context, rpc RPC) diag.Input {
 			var meta diag.BundleMeta
 			if err = json.Unmarshal(raw, &meta); err == nil {
 				var live diag.Input
-				live, err = readLiveBundle(meta.Path)
+				if len(meta.Report) > 0 {
+					err = json.Unmarshal(meta.Report, &live)
+				} else {
+					// Daemons before 1.1 return only a path under a root-owned
+					// directory; this works only for privileged collectors.
+					live, err = readLiveBundle(meta.Path)
+				}
 				if err == nil {
 					in = live
 					system["collection_mode"] = "live"
@@ -50,6 +58,9 @@ func Collect(ctx context.Context, rpc RPC) diag.Input {
 					// an explicit current-state fact is authoritative.
 					if state, ok := live.System["protection_state"].(string); ok && (state == "on" || state == "off") {
 						system["protection_state"] = state
+					}
+					if len(live.System) > 0 {
+						system["daemon"] = live.System
 					}
 				}
 			}
@@ -142,6 +153,11 @@ func installationFacts() map[string]any {
 
 func fileFact(path string) map[string]any {
 	st, err := os.Stat(path)
+	if errors.Is(err, fs.ErrPermission) {
+		// A root-only directory hides the file from this collector; that
+		// says nothing about whether it is installed.
+		return map[string]any{"exists": "unknown", "error": "permission denied"}
+	}
 	if err != nil {
 		return map[string]any{"exists": false, "error": diag.Scrub(err.Error())}
 	}

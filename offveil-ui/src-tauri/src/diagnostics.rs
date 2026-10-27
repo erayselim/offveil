@@ -70,9 +70,9 @@ pub fn export(app: tauri::AppHandle) -> Result<Option<DiagnosticsBundle>, String
     if let Some(error) = LAST_ERROR.lock().ok().and_then(|last| last.clone()) {
         command.arg("--ui-error").arg(error);
     }
-    // Collection has an eight-second IPC/platform budget; network checks have
-    // one 24-second global budget. Leave time to hash payloads and write the ZIP.
-    let output = crate::command::run(&mut command, Duration::from_secs(40))?;
+    // Collection (8 s), connectivity checks (24 s) and the two-route speed
+    // sample (26 s) are each bounded by the core; the rest hashes and zips.
+    let output = crate::command::run(&mut command, Duration::from_secs(75))?;
     if !output.status.success() {
         return Err(format!(
             "Destek dosyası kaydedilemedi: {}",
