@@ -9,17 +9,59 @@ import (
 )
 
 const (
-	SchemaVersion = 2
-	MinVersion    = 7
+	SchemaVersion = 3
+	MinVersion    = 8
 )
 
-// Document describes network health controls and explicit user routing rules.
+// Canary kinds. Persistent groups are blocked on most lines and decide
+// whether the network performs SNI filtering at all; crisis groups are
+// only filtered on specific days and are watched less often.
+const (
+	CanaryPersistent = "persistent"
+	CanaryCrisis     = "crisis"
+)
+
+const (
+	maxCanaryGroups    = 32
+	maxCanaryHosts     = 16
+	maxCanarySuffixes  = 64
+	maxExclude         = 256
+	maxStrategies      = 32
+	maxStrategyArgs    = 32
+	maxStrategyArgSize = 64
+	maxPoisonIPs       = 64
+)
+
+// Document is the signed network policy: neutral controls, canary groups that
+// measure filtering, direct exceptions and ByeDPI candidates.
 type Document struct {
-	SchemaVersion int           `json:"schema_version"`
-	Version       int           `json:"version"`
-	UpdatedAt     string        `json:"updated_at"`
-	Network       NetworkPolicy `json:"network"`
-	Packages      []Package     `json:"packages,omitempty"`
+	SchemaVersion int            `json:"schema_version"`
+	Version       int            `json:"version"`
+	UpdatedAt     string         `json:"updated_at"`
+	Network       NetworkPolicy  `json:"network"`
+	Canaries      []CanaryGroup  `json:"canaries,omitempty"`
+	Exclude       []string       `json:"exclude,omitempty"`
+	Strategies    []StrategySpec `json:"strategies,omitempty"`
+	PoisonIPs     []string       `json:"poison_ips,omitempty"`
+	Packages      []Package      `json:"packages,omitempty"`
+}
+
+// CanaryGroup is a set of destinations that are filtered together. ProbeHosts
+// are measured; DomainSuffix decides which traffic follows the group's path.
+type CanaryGroup struct {
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Kind         string   `json:"kind"`
+	ProbeHosts   []string `json:"probe_hosts"`
+	DomainSuffix []string `json:"domain_suffix"`
+}
+
+// StrategySpec is a ByeDPI argument candidate. Platform is "windows",
+// "darwin" or empty for both. The engine validates flags before use.
+type StrategySpec struct {
+	ID       string   `json:"id"`
+	Platform string   `json:"platform,omitempty"`
+	Args     []string `json:"args"`
 }
 
 type NetworkPolicy struct {
@@ -120,7 +162,151 @@ func ParseDocument(raw []byte) (Document, error) {
 		}
 		doc.Network.Routes[i] = rule
 	}
+	if err := validateCanaries(&doc); err != nil {
+		return Document{}, err
+	}
+	doc.Exclude = uniqueHosts(doc.Exclude)
+	if len(doc.Exclude) > maxExclude {
+		return Document{}, fmt.Errorf("ruleset: too many exclude suffixes")
+	}
+	for _, host := range doc.Exclude {
+		if !validHostname(host) {
+			return Document{}, fmt.Errorf("ruleset: invalid exclude host %q", host)
+		}
+	}
+	if err := validateStrategies(doc.Strategies); err != nil {
+		return Document{}, err
+	}
+	if len(doc.PoisonIPs) > maxPoisonIPs {
+		return Document{}, fmt.Errorf("ruleset: too many poison fingerprints")
+	}
+	for _, raw := range doc.PoisonIPs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || !addr.Is4() {
+			return Document{}, fmt.Errorf("ruleset: invalid poison fingerprint %q", raw)
+		}
+	}
 	return doc, nil
+}
+
+func validateCanaries(doc *Document) error {
+	if len(doc.Canaries) > maxCanaryGroups {
+		return fmt.Errorf("ruleset: too many canary groups")
+	}
+	seen := map[string]bool{}
+	for i, group := range doc.Canaries {
+		if !validGroupID(group.ID) || seen[group.ID] {
+			return fmt.Errorf("ruleset: invalid or duplicate canary id %q", group.ID)
+		}
+		seen[group.ID] = true
+		if group.Kind != CanaryPersistent && group.Kind != CanaryCrisis {
+			return fmt.Errorf("ruleset: canary %q has unknown kind %q", group.ID, group.Kind)
+		}
+		group.ProbeHosts, group.DomainSuffix = uniqueHosts(group.ProbeHosts), uniqueHosts(group.DomainSuffix)
+		if len(group.ProbeHosts) == 0 || len(group.ProbeHosts) > maxCanaryHosts {
+			return fmt.Errorf("ruleset: canary %q needs one to %d probe hosts", group.ID, maxCanaryHosts)
+		}
+		if len(group.DomainSuffix) == 0 || len(group.DomainSuffix) > maxCanarySuffixes {
+			return fmt.Errorf("ruleset: canary %q needs one to %d suffixes", group.ID, maxCanarySuffixes)
+		}
+		for _, host := range append(append([]string{}, group.ProbeHosts...), group.DomainSuffix...) {
+			if !validHostname(host) {
+				return fmt.Errorf("ruleset: invalid canary host %q", host)
+			}
+		}
+		for _, host := range group.ProbeHosts {
+			if !MatchSuffix(host, group.DomainSuffix) {
+				return fmt.Errorf("ruleset: canary %q probe host %q is outside its suffixes", group.ID, host)
+			}
+		}
+		doc.Canaries[i] = group
+	}
+	return nil
+}
+
+func validateStrategies(specs []StrategySpec) error {
+	if len(specs) > maxStrategies {
+		return fmt.Errorf("ruleset: too many strategies")
+	}
+	seen := map[string]bool{}
+	for _, spec := range specs {
+		if spec.ID == "" || len(spec.ID) > 64 || seen[spec.Platform+"|"+spec.ID] {
+			return fmt.Errorf("ruleset: invalid or duplicate strategy id %q", spec.ID)
+		}
+		seen[spec.Platform+"|"+spec.ID] = true
+		switch spec.Platform {
+		case "", "windows", "darwin":
+		default:
+			return fmt.Errorf("ruleset: strategy %q has unknown platform %q", spec.ID, spec.Platform)
+		}
+		if len(spec.Args) == 0 || len(spec.Args) > maxStrategyArgs {
+			return fmt.Errorf("ruleset: strategy %q needs one to %d arguments", spec.ID, maxStrategyArgs)
+		}
+		for _, arg := range spec.Args {
+			if arg == "" || len(arg) > maxStrategyArgSize || strings.ContainsAny(arg, "\x00\r\n\\/") {
+				return fmt.Errorf("ruleset: strategy %q has an invalid argument", spec.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func validGroupID(id string) bool {
+	if id == "" || len(id) > 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// MatchSuffix reports whether host equals or is a subdomain of any suffix.
+func MatchSuffix(host string, suffixes []string) bool {
+	host = normalizeHost(host)
+	for _, suffix := range suffixes {
+		suffix = normalizeHost(suffix)
+		if suffix != "" && (host == suffix || strings.HasSuffix(host, "."+suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
+// CanariesOfKind returns groups of one kind in document order.
+func (d Document) CanariesOfKind(kind string) []CanaryGroup {
+	var out []CanaryGroup
+	for _, group := range d.Canaries {
+		if group.Kind == kind {
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+// ExcludeSuffixes merges exclude entries with explicit direct routes.
+func (d Document) ExcludeSuffixes() []string {
+	out := append([]string{}, d.Exclude...)
+	for _, rule := range d.Network.Routes {
+		if rule.Path == "direct" {
+			out = append(out, rule.Domains...)
+			out = append(out, rule.DomainSuffix...)
+		}
+	}
+	return uniqueHosts(out)
+}
+
+// StrategiesFor returns candidates for one GOOS in document order.
+func (d Document) StrategiesFor(goos string) []StrategySpec {
+	var out []StrategySpec
+	for _, spec := range d.Strategies {
+		if spec.Platform == "" || spec.Platform == goos {
+			out = append(out, spec)
+		}
+	}
+	return out
 }
 
 func ParseChannel(raw []byte) (Channel, error) {

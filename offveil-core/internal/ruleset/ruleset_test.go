@@ -26,16 +26,36 @@ func TestParseBundledNetworkPolicy(t *testing.T) {
 		t.Fatalf("unexpected policy: %+v", doc)
 	}
 	if len(doc.Packages) != 0 || len(doc.EnabledPackages()) != 0 || len(doc.TargetSeeds()) != 0 {
-		t.Fatal("default policy contains destination groups")
+		t.Fatal("default policy contains legacy packages")
 	}
-	if len(doc.Network.Routes) != 0 || len(doc.TunnelDomains()) != 0 || len(doc.DirectDomains()) != 0 || len(doc.ProtectedDomains()) != 0 {
-		t.Fatal("default policy contains routing exceptions")
-	}
-	if !reflect.DeepEqual(doc.ProbeHosts(), ruleset.DefaultControlHosts()) || len(doc.CanaryProbeHosts()) != 0 {
+	if !reflect.DeepEqual(doc.ProbeHosts(), ruleset.DefaultControlHosts()) {
 		t.Fatalf("controls: %v", doc.ProbeHosts())
 	}
-	if !reflect.DeepEqual(doc.ResolveHosts(), doc.ProbeHosts()) {
-		t.Fatalf("resolve seeds: %v", doc.ResolveHosts())
+	if len(doc.CanariesOfKind(ruleset.CanaryPersistent)) == 0 || len(doc.CanariesOfKind(ruleset.CanaryCrisis)) == 0 {
+		t.Fatalf("bundled policy needs persistent and crisis canaries: %+v", doc.Canaries)
+	}
+	for _, control := range doc.ProbeHosts() {
+		for _, group := range doc.Canaries {
+			if ruleset.MatchSuffix(control, group.DomainSuffix) {
+				t.Fatalf("control %s is inside canary %s", control, group.ID)
+			}
+		}
+		if ruleset.MatchSuffix(control, doc.ExcludeSuffixes()) {
+			t.Fatalf("control %s is excluded", control)
+		}
+	}
+	for _, group := range doc.Canaries {
+		if ruleset.MatchSuffix(group.ProbeHosts[0], doc.ExcludeSuffixes()) {
+			t.Fatalf("canary %s is excluded", group.ID)
+		}
+	}
+	if len(doc.StrategiesFor("windows")) == 0 {
+		t.Fatal("bundled policy has no Windows strategy candidates")
+	}
+	for _, spec := range doc.StrategiesFor("darwin") {
+		if spec.Platform == "windows" {
+			t.Fatalf("Windows strategy leaked to Darwin: %s", spec.ID)
+		}
 	}
 	hosts := doc.ProbeHosts()
 	hosts[0] = "changed.test"
@@ -48,14 +68,24 @@ func TestParseRejectsObsoleteAndInvalidNetworkPolicies(t *testing.T) {
 	for name, raw := range map[string]string{
 		"obsolete schema":          `{"version":6,"packages":[{"id":"old","default_enabled":true,"domains":["old.test"]}]}`,
 		"obsolete version":         `{"schema_version":2,"version":6,"network":{"control_hosts":["one.test","two.test"]}}`,
-		"missing controls":         `{"schema_version":2,"version":7,"packages":[]}`,
-		"restored packages":        `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"]},"packages":[{"id":"obsolete","default_enabled":true,"domains":["obsolete.test"]}]}`,
-		"duplicate controls":       `{"schema_version":2,"version":7,"network":{"control_hosts":["ONE.test","one.test"]}}`,
-		"url as control":           `{"schema_version":2,"version":7,"network":{"control_hosts":["https://one.test","two.test"]}}`,
-		"unknown route":            `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"unknown"}]}}`,
-		"unsupported tunnel route": `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"tunnel"}]}}`,
-		"unsupported desync route": `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"desync"}]}}`,
-		"empty route":              `{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test"],"routes":[{"path":"direct"}]}}`,
+		"missing controls":         `{"schema_version":3,"version":8,"packages":[]}`,
+		"restored packages":        `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"packages":[{"id":"obsolete","default_enabled":true,"domains":["obsolete.test"]}]}`,
+		"duplicate controls":       `{"schema_version":3,"version":8,"network":{"control_hosts":["ONE.test","one.test"]}}`,
+		"url as control":           `{"schema_version":3,"version":8,"network":{"control_hosts":["https://one.test","two.test"]}}`,
+		"unknown route":            `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"unknown"}]}}`,
+		"unsupported tunnel route": `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"tunnel"}]}}`,
+		"unsupported desync route": `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["user.test"],"path":"desync"}]}}`,
+		"empty route":              `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"],"routes":[{"path":"direct"}]}}`,
+		"schema2":                  `{"schema_version":2,"version":8,"network":{"control_hosts":["one.test","two.test"]}}`,
+		"canary kind":              `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"canaries":[{"id":"a","kind":"other","probe_hosts":["a.test"],"domain_suffix":["a.test"]}]}`,
+		"canary id":                `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"canaries":[{"id":"A B","kind":"persistent","probe_hosts":["a.test"],"domain_suffix":["a.test"]}]}`,
+		"canary outside suffix":    `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"canaries":[{"id":"a","kind":"persistent","probe_hosts":["b.test"],"domain_suffix":["a.test"]}]}`,
+		"canary no hosts":          `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"canaries":[{"id":"a","kind":"crisis","probe_hosts":[],"domain_suffix":["a.test"]}]}`,
+		"duplicate canary":         `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"canaries":[{"id":"a","kind":"crisis","probe_hosts":["a.test"],"domain_suffix":["a.test"]},{"id":"a","kind":"crisis","probe_hosts":["a.test"],"domain_suffix":["a.test"]}]}`,
+		"strategy path":            `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"strategies":[{"id":"s","args":["--fake-data","/etc/passwd"]}]}`,
+		"strategy platform":        `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"strategies":[{"id":"s","platform":"linux","args":["--split","1"]}]}`,
+		"poison ipv6":              `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"poison_ips":["::1"]}`,
+		"exclude url":              `{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"]},"exclude":["https://a.test"]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ruleset.ParseDocument([]byte(raw)); err == nil {
@@ -66,7 +96,7 @@ func TestParseRejectsObsoleteAndInvalidNetworkPolicies(t *testing.T) {
 }
 
 func TestExplicitRoutesAndControlsAreIndependent(t *testing.T) {
-	doc, err := ruleset.ParseDocument([]byte(`{"schema_version":2,"version":7,"network":{"control_hosts":["one.test","two.test","three.test"],"routes":[{"domains":["EXACT.user.test"],"domain_suffix":[".local.test"],"path":"direct"}]},"packages":[]}`))
+	doc, err := ruleset.ParseDocument([]byte(`{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test","three.test"],"routes":[{"domains":["EXACT.user.test"],"domain_suffix":[".local.test"],"path":"direct"}]},"packages":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +108,27 @@ func TestExplicitRoutesAndControlsAreIndependent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(doc.ProbeHosts(), []string{"one.test", "two.test", "three.test"}) {
 		t.Fatalf("routing destination became health control: %v", doc.ProbeHosts())
+	}
+}
+
+func TestCanaryGroupsAndExcludeAreNormalized(t *testing.T) {
+	doc, err := ruleset.ParseDocument([]byte(`{"schema_version":3,"version":8,"network":{"control_hosts":["one.test","two.test"],"routes":[{"domains":["direct.user.test"],"path":"direct"}]},
+		"canaries":[{"id":"chat","label":"Chat","kind":"persistent","probe_hosts":["WWW.Chat.test"],"domain_suffix":[".chat.test","cdn.test"]},{"id":"crisis","kind":"crisis","probe_hosts":["news.test"],"domain_suffix":["news.test"]}],
+		"exclude":["*.games.test","GAMES.test"],"strategies":[{"id":"w","platform":"windows","args":["--split","1"]},{"id":"any","args":["--oob","1+s"]}],"poison_ips":["203.0.113.9"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.CanariesOfKind(ruleset.CanaryPersistent); len(got) != 1 || !reflect.DeepEqual(got[0].ProbeHosts, []string{"www.chat.test"}) || !reflect.DeepEqual(got[0].DomainSuffix, []string{"chat.test", "cdn.test"}) {
+		t.Fatalf("persistent: %+v", got)
+	}
+	if !reflect.DeepEqual(doc.ExcludeSuffixes(), []string{"games.test", "direct.user.test"}) {
+		t.Fatalf("exclude: %v", doc.ExcludeSuffixes())
+	}
+	if !ruleset.MatchSuffix("a.b.games.test", doc.ExcludeSuffixes()) || ruleset.MatchSuffix("notgames.test", doc.ExcludeSuffixes()) {
+		t.Fatal("suffix boundary")
+	}
+	if len(doc.StrategiesFor("windows")) != 2 || len(doc.StrategiesFor("darwin")) != 1 {
+		t.Fatalf("platform filter: %+v", doc.Strategies)
 	}
 }
 
@@ -192,7 +243,7 @@ func TestSignedObsoletePolicyCannotReturnThroughAnySource(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if snap.Doc.SchemaVersion != 2 || snap.Doc.Version < 7 || snap.Source == "cache" || snap.Source == "remote" || len(snap.Doc.Packages) > 0 {
+				if snap.Doc.SchemaVersion != ruleset.SchemaVersion || snap.Doc.Version < ruleset.MinVersion || snap.Source == "cache" || snap.Source == "remote" || len(snap.Doc.Packages) > 0 {
 					t.Fatalf("obsolete policy restored: %+v", snap)
 				}
 			}
@@ -206,14 +257,14 @@ func TestLoadSkipRemoteAndChannelMinimum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Doc.SchemaVersion != 2 || snap.Doc.Version < 7 {
+	if snap.Doc.SchemaVersion != ruleset.SchemaVersion || snap.Doc.Version < ruleset.MinVersion {
 		t.Fatalf("unexpected policy: %+v", snap)
 	}
 	ch, err := ruleset.ParseChannel(ruleset.BundledChannel())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ch.PublicKeyHex != ruleset.DefaultPublicKeyHex || ch.MinRulesetVersion < 7 {
+	if ch.PublicKeyHex != ruleset.DefaultPublicKeyHex || ch.MinRulesetVersion < ruleset.MinVersion {
 		t.Fatalf("invalid channel: %+v", ch)
 	}
 	if _, err := ruleset.ParsePublicKeyHex(ch.PublicKeyHex); err != nil {
