@@ -29,7 +29,7 @@ jobs:
         working-directory: offveil-core/tools/singbox
         env:
           CGO_ENABLED: "0"
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags with_gvisor,with_quic,with_wireguard,with_utls github.com/sagernet/sing-box/cmd/sing-box
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api github.com/sagernet/sing-box/cmd/sing-box
 
   cargo-audit:
     runs-on: windows-latest
