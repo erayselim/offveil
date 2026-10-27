@@ -19,17 +19,20 @@ Copy-Item third_party\byedpi\ciadpi.exe .\ciadpi.exe
 
 Default strategy (`byedpi:windows-safe`) is the official
 `dist/windows/byedpi.bat` plus `--auto=ssl_err` fake fallback. See
-`internal/desync/strategies.go`.
+`internal/desync/strategies.go`. Core runs every strategy behind an empty first
+group (`--auto torst,ssl_err`, `internal/desync/chain.go`): an unfiltered
+connection is relayed as is, and the strategy applies only after a reset,
+timeout or missing ServerHello.
 
-If the selected strategy and tunnel providers both fail, a background `Scan`
-tries `ScanCandidates()` (split / disorder / fake / ttl / tlsrec) with a
-32-second network-work budget, two isolated helpers and six seconds per trial.
-A candidate must pass at least two independent connectivity controls,
-then pass again through the real helper and the sing-box SOCKS dataplane.
-These controls establish path health, not access to every blocked destination.
-Only that verified winner is stored under the network identity
+When a canary group stays closed, a background `Scan` tries the built-in
+candidates plus signed ruleset candidates (split / disorder / fake with TTL
+3–8 / OOB / tlsrec) with a 32-second budget, two isolated helpers and six
+seconds per trial. A candidate must open that group's canary and keep two of
+three neutral controls working, then pass again through the real helper and
+the gateway. Only that verified winner is stored under the network identity
 in `%ProgramData%\offveil\desync\desync-strategies.json`
-(`OFFVEIL_DESYNC_CACHE` override).
+(`OFFVEIL_DESYNC_CACHE` override). Ruleset candidates are limited to an
+allowlist of ByeDPI flags.
 
 Trials preserve the physical egress bind, use separate loopback ports, and
 are cancelled on stop. Failed real-port verification restores the previous

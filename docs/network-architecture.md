@@ -1,136 +1,89 @@
-# General network architecture
+# Network architecture
 
-Version 1.0.4-beta.4 routes public network traffic by transport capability.
-It contains no built-in application list, process-name matching, guessed CDN
-siblings or application-specific startup checks. Published beta.3 installers
-predate this change.
-
-## Routing and ownership
+1.1.0 protects in layers and adds a layer only when the network needs it.
+Nothing is sent through a remote tunnel by default.
 
 ```mermaid
-flowchart LR
-    A[Applications: IPv4 / IPv6] --> B[One shared TUN gateway]
-    B --> C[Local and explicit DIRECT exceptions]
-    B --> D[Verified remote SOCKS transport]
-    D --> E[WARP WireGuard]
-    D --> F[Configured Reality relay]
-    B --> G[Limited local fallback]
-    G --> H[HTTP / TLS TCP: local desynchronization]
-    G --> I[Opaque TCP / UDP: direct]
+flowchart TD
+    On[Switch on] --> DNS["DNS layer: all lookups to the local DoH stub"]
+    DNS --> Measure{"Canaries open directly?"}
+    Measure -->|Yes| DnsOnly["DNS only: no TUN, no proxy"]
+    Measure -->|No| TCP["TCP layer: IPv4 web traffic through local desync"]
+    TCP --> Groups{"Each canary group opens?"}
+    Groups -->|Yes| Protected[Protected]
+    Groups -->|No| Scan["Strategy scan aimed at that group"]
+    Scan -->|Found| Protected
+    Scan -->|None| Tunnel["That group only moves to the tunnel"]
+    Tunnel -->|Works| Protected
+    Tunnel -->|Fails| Limited[Limited]
 ```
 
-The core owns DNS, the physical egress snapshot, the optional local helper and
-the network session. A network session owns one gateway/TUN process and at most
-one remote provider process. Provider candidates use a separate loopback SOCKS
-listener with TUN disabled. Provider rejection cannot leave behind a new adapter.
-Remote-to-remote failover keeps the gateway. A local-to-remote promotion verifies
-the remote candidate before replacing the gateway; failed preflight leaves the
-working local path alone. A failed gateway promotion restores the local gateway.
+## Layers
 
-Remote mode forwards public TCP and UDP over the verified provider. It does not
-require DNS, TLS SNI, an executable name or a known application port. This covers
-legacy opaque protocols, literal-IP destinations and QUIC as well as HTTPS.
-Private/local destinations, bootstrap reachability and explicit user DIRECT
-exceptions remain direct. IPv4 and IPv6 split-default routes and owned-subnet
-loop guards are generated together. Physical egress binding prevents the relay
-from re-entering its own capture path.
+**DNS.** Every lookup goes to the local stub. Upstreams are Google first
+(EDNS Client Subnet keeps CDN answers near the user's ISP), then Quad9 and
+Cloudflare, raced after 150 ms. Known censorship answers are dropped.
 
-If no remote provider passes, local mode attempts HTTP/TLS desynchronization
-and uses protocol-based QUIC rejection to encourage TCP fallback. Other TCP/UDP
-traffic remains direct. This is reported as limited protection, not as an
-encrypted full network tunnel. Local desynchronization cannot replace a relay
-for an IP block or an arbitrary legacy protocol. No architecture can provide an
-unreachable relay: a reachable configured provider is required for that coverage.
+**Measurement.** Core opens a certificate-verified TLS connection to each canary
+group's first host and to neutral controls, on the physical interface. A reset,
+drop, certificate error or a handshake over three seconds marks filtering.
+Controls failing too means no internet, not filtering.
 
-The source-bound local helper currently supports IPv4. Local IPv6 traffic remains
-direct instead of entering an incompatible address family. Diagnostics report
-`bypass_families` separately from capture configuration. Remote mode covers both
-families. This follows the helper's [socket-family contract](https://github.com/hufrea/byedpi/blob/v0.17.3/proxy.c).
+**TCP layer.** Only when filtering is measured. One sing-box process owns the
+TUN, which captures public IPv4 only. IPv4 TCP 80/443 goes to ByeDPI. Its first
+group leaves the connection alone; ByeDPI applies the strategy only after a
+reset, timeout or missing ServerHello and remembers that destination. Unfiltered
+sites therefore pay no split/disorder cost. UDP and QUIC stay direct: Turkish
+filtering inspects TCP SNI/Host, not QUIC. Exclusions (game stores, OS updates,
+banks, government sites) always go direct. While this layer is up, the DNS stub
+answers AAAA with NODATA so protected traffic stays on IPv4.
 
-## Independent health boundaries
+**Tunnel.** Only for a canary group that local desync cannot open. The tunnel
+lives in the same gateway behind per-group selectors; switching a group does not
+rebuild the adapter. WARP registers over the physical interface; endpoints on
+`162.159.192.0/24` and `162.159.193.0/24` are tried across UDP 2408, 500, 1701
+and 4500, and the first that passes the control quorum is remembered for that
+network. A configured Reality server is used when WARP is not reachable.
 
-- **Process health:** DNS listener, gateway and provider processes are alive.
-  The local helper is required for local mode and optional in remote mode.
-- **Transport health:** certificate-verified TLS checks to three independently
-  configured neutral control hosts; at least two must pass. Remote controls
-  run through both the provider listener and the gateway. Provider-only control
-  routing cannot inherit user DIRECT exceptions or bootstrap bypass rules.
-- **Endpoint diagnostics:** an explicitly requested site's DNS/TCP/TLS/HTTP
-  result. It is evidence about that endpoint, and never changes the selected
-  network route or the global health decision.
-- **Coverage:** remote public TCP/UDP with dual-stack capture, or limited local
-  HTTP/TLS bypass. A successful TLS handshake never upgrades local UDP coverage.
+## Canary groups
 
-Two failed control rounds are needed before degrading an accepted remote path.
-A single failed site or control host does not suppress checks for other hosts.
-Background work runs outside the lifecycle lock, belongs to one cancellable
-session and discards results after Stop or session replacement. Provider retries
-are bounded and separated by a cooldown. DNS observations only count bounded
-demand; raw browsing hostnames are not exported and never cause speculative
-probes or guessed routes.
+Groups come from the signed ruleset (`ruleset/active.json`, schema 3).
+`persistent` groups are filtered on most lines and decide whether the TCP layer
+is needed. `crisis` groups are filtered on specific days and are checked every
+fifth round. The ruleset can be updated without an app release, including new
+ByeDPI candidates; their flags are checked against an allowlist.
 
-Local strategy discovery uses the same independent-control quorum. Trials keep
-the accepted helper alive. A winner is verified on the real helper and gateway
-before adoption; failed verification restores the accepted helper. The strategy
-cache is scoped to network identity and transport profile using a new namespace;
-old application/ASN-only evidence cannot pin a global strategy.
+## Health and states
 
-## Configuration migration
+The gateway probes each due group every 30 s. Two failed rounds start a scan
+that must open the group's canary without breaking the controls. The winner is
+verified on the real helper and gateway before it is kept, and cached for the
+network's ASN and physical fingerprint. If no strategy works, the group moves to
+the tunnel; if the tunnel fails too, the group is unreachable and retried every
+ten minutes.
 
-The source and embedded rulesets use schema 2 and ruleset version 7. The default
-contains only network control hosts. Optional DIRECT exceptions distinguish exact
-domains from suffixes. Unsupported route paths and nonempty legacy packages are
-rejected instead of being accepted as ineffective metadata. Old cached, adjacent
-or signed remote application rules cannot reactivate application-specific logic.
-Remote/cache updates still require Ed25519 verification. Release CI produces a
-fresh signature for the new source ruleset; the obsolete v6 signature is removed.
+| State | When |
+| --- | --- |
+| Açık / Protected | All layers up, persistent groups open |
+| Sınırlı / Limited | TCP layer could not start (DNS stays on), or a persistent group opens on no path |
+| Bağlantı yok / No connection | Controls fail on the physical interface |
+| Yeniden bağlanıyor / Reconnecting | A component restarts or a heal is running |
+| Bozuldu / Broken | DNS stub stopped, or recovery gave up |
 
-IPC retains its envelopes and adds `status.network`. `targets` reports generic
-TCP/UDP capability rather than application cards. Current clients distinguish
-limited fallback from a failed required component. Detailed support exports use
-`system.network_connectivity`; see [network diagnostics](network-diagnostics.md).
+## Startup and recovery
 
-## Validation and physical acceptance
+Before the gateway starts, core removes a stale `offveil` adapter, then waits up
+to 20 s for the new one while watching the gateway process. If the TCP layer
+fails, protection stays on with DNS only and retries the layer three times,
+two minutes apart. A network change on the same interface restarts only the
+helper with the new source address and re-measures; a different interface
+rebuilds the stack.
 
-Unit/regression coverage must include:
+## Validation
 
-- one unavailable control versus loss of quorum;
-- endpoint diagnostic failure without a routing or policy change;
-- optional helper failure while remote TCP/UDP remains healthy;
-- required gateway failure taking precedence over optional helper failure;
-- provider trial and failed upgrade without TUN churn;
-- exact versus suffix DIRECT exceptions and exception-free transport controls;
-- rollback after candidate or real-port verification failure;
-- Stop/replacement during probes, discovery and provider refresh;
-- replacement DNS cleanup and failed-start diagnostics after a prior session;
-- IPv4/IPv6 routes, exclusions, native opaque TCP/UDP and DNS forwarding.
-
-Native fixtures launch SOCKS-only configurations. TUN-bearing configurations are
-validated with `sing-box check`; fixtures must not create adapters or modify host
-DNS/routes. Cross-compilation verifies build compatibility, not routed traffic.
-
-Before stable release, test a disposable Windows/macOS device on the affected ISP and a
-hotspot: opaque TCP on non-web ports, public-IP UDP, TLS/HTTP, QUIC, IPv4/IPv6,
-provider outage/recovery, sleep/wake and Stop/repair. Confirm actual TUN traffic,
-cleanup and effective interface MTU. A SOCKS fixture alone does not establish
-that the affected customer's routed application session works.
-
-Implementation follows the pinned [sing-box TUN contract](https://github.com/SagerNet/sing-box/blob/v1.13.14/docs/configuration/inbound/tun.md)
-and [route actions](https://github.com/SagerNet/sing-box/blob/v1.13.14/docs/configuration/route/rule_action.md).
-Provider bootstrap and data-plane reachability are separate boundaries, as in
-[Cloudflare's firewall requirements](https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/warp/deployment/firewall/).
-
-## Local verification — 21 October 2026
-
-- Full core suite with the pinned native sing-box fixtures and `go vet ./...`: passed.
-- Race checks for engine, desync, tunnel, DNS, support, process, capture, IPC and service: passed.
-- Native opaque TCP over IPv4/IPv6 loopback peers, opaque UDP, DNS forwarding and four configuration variants: passed.
-- Packet-level mixed/gVisor UDP reassembly at 64–4096 bytes in normal/reversed fragment order: passed.
-- Windows amd64 and macOS arm64 core builds: passed; macOS result is compilation only.
-- UI production build, 22 Node tests, 32 Rust tests and changed Rust formatting: passed.
-- React Doctor changed-source scan: no issues reported (85/100).
-
-The packet test module now includes the required Windows capture dependency
-checksums. These results do not replace actual OS/TUN and affected-ISP acceptance.
-The general remote path also changes latency and bandwidth according to the
-chosen provider; no affected-line performance benchmark has been performed.
+Unit tests cover the generated gateway (no full-tunnel route, exclusion order,
+selector defaults, IPv4-only capture), the pass-through chain, ruleset limits,
+classification, group escalation, fallback and the update channels. Native
+tests run `sing-box check` on every configuration and switch selectors on a live
+gateway without TUN. TUN traffic, MTU and cleanup need a physical device on the
+affected ISP; see the beta checklist in [releases](releases.md).

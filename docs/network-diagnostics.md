@@ -40,8 +40,19 @@ The whole network check has a 24-second budget and at most six concurrent
 checks. Each endpoint family has eight seconds, each address attempt four
 seconds. Cancellation closes active connections. Response headers are bounded
 to 32 KiB and the body sample to 1 KiB; a server ignoring `Range` cannot make the
-collector drain an entire download. The UI command timeout is 40 seconds to
-allow collection and ZIP creation as well.
+collector drain an entire download.
+
+`-check-network` also adds `system.throughput`: one 4 MB download from
+`speed.cloudflare.com` over the current route, and one bound to the physical
+interface (outside the TUN) when the daemon reports it. Only byte count,
+duration, Mbps and an error class are saved. A large gap between the two rows
+points at the protection path; similar rows point at the line itself. Each
+sample has 12 seconds. The UI command timeout is 75 seconds to cover
+collection, checks, the speed sample and ZIP creation.
+
+On macOS the daemon returns its redacted report inside the IPC reply, so an
+unprivileged export is complete. Files the collector cannot read because of
+permissions are reported as `exists: "unknown"`, not missing.
 
 ## Interpreting results
 

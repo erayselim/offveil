@@ -1,11 +1,11 @@
 <img src="https://cdn.gtaup.com/_-GYV5he.svg" alt="offveil" width="360" />
 
 <b>Windows and macOS client for open network access.</b><br>
-One switch. Local DoH, verified network tunnels, and a limited local DPI fallback.
+One switch. Local DoH always; local DPI bypass when your network filters; a tunnel only for what still fails.
 
-Protection uses application-independent TCP/UDP routing. See
-[the network architecture](docs/network-architecture.md) for coverage, provider
-requirements and validation.
+Downloads, games and QUIC stay on your normal connection. See
+[the network architecture](docs/network-architecture.md) for the layers and how
+they are measured.
 
 <a href="https://github.com/erayselim/offveil/releases"><img src="https://img.shields.io/github/v/release/erayselim/offveil?include_prereleases&style=flat-square&color=2CC295" alt="Release" /></a>
 <a href="LICENSE"><img src="https://img.shields.io/github/license/erayselim/offveil?style=flat-square&color=2CC295" alt="License" /></a>

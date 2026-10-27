@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4-beta.4",
+  "version": "1.1.0-beta.1",
   "notes": {
-    "tr": "BETA 4 — test sürümü\n\nKoruma, uygulama listelerine bağlı olmadan genel ağ trafiğini yönetecek şekilde yenilendi. Doğrulanmış tünel, TCP ve UDP bağlantılarını IPv4/IPv6 üzerinden taşır.\n\nTünel kurulamazsa yerel IPv4 HTTP/TLS aşma devrede kalır ve ekranda Sınırlı Koruma görünür. Bu durumda diğer trafik doğrudan gider.\n\nTek bir siteye erişilememesi artık diğer bağlantıların kontrollerini durdurmaz. Sağlayıcı geçişi ve otomatik kurtarma iyileştirildi.\n\nDestek dosyaları genel DNS, TCP, TLS ve HTTP kontrollerini içerir. Tünel kullanımı gecikmeyi değiştirebilir. Farklı ISS ve cihazlarda testler sürüyor; sorun yaşarsanız Ayarlar → Destek dosyası kaydet üzerinden rapor paylaşabilirsiniz.",
-    "en": "BETA 4 — test release\n\nProtection now manages the network instead of application lists. A verified tunnel carries public TCP and UDP connections over IPv4/IPv6.\n\nIf no remote provider connects, local IPv4 HTTP/TLS bypass remains available and the app shows Limited Protection. Other traffic stays direct in this mode.\n\nOne unreachable site no longer stops checks for other connections. Provider switching and automatic recovery have been improved.\n\nSupport exports include general DNS, TCP, TLS and HTTP checks. Tunnel use may change latency. Testing continues across ISPs and devices; share a report from Settings → Save support file if something goes wrong."
+    "tr": "BETA — Koruma önce ağı ölçer; engel varsa web trafiği yerelde aşılır, tünel yalnızca açılmayan hizmete gider. İndirmeler, oyunlar ve QUIC doğrudan kalır.",
+    "en": "BETA — Protection measures the network first; filtered web traffic is bypassed locally and only services that still fail use a tunnel. Downloads, games and QUIC stay direct."
   }
 }
