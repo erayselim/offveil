@@ -84,3 +84,5 @@ DNS or contact an external relay.
 Release acceptance still needs physical Windows/macOS devices on the affected
 networks: real TUN traffic, downloads with protection on and off, sleep/wake,
 network changes, Stop and repair.
+
+A file named `force-tcp-layer` in the machine data root (`%ProgramData%\offveil` or `/Library/Application Support/offveil`) starts the TCP layer even when the network measures as unfiltered. It only adds protection and exists so CI can exercise the TUN path on runners without DPI. A network measured as offline is not overridden.

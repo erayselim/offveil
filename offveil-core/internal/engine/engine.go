@@ -151,6 +151,7 @@ type Engine struct {
 	tunnelTrials   []tunnel.EndpointTrial
 	attachTook     string
 
+	forceLayer    func() bool
 	classify      ClassifyFunc
 	prepareTunnel TunnelPrepareFunc
 	takeSnapshot  func() (*capture.Snapshot, error)
@@ -181,6 +182,12 @@ func (e *Engine) WithSnapshot(fn func() (*capture.Snapshot, error)) *Engine {
 	return e
 }
 
+// WithForcedLayer overrides the force-tcp-layer flag lookup (unit tests).
+func (e *Engine) WithForcedLayer(fn func() bool) *Engine {
+	e.forceLayer = fn
+	return e
+}
+
 // WithAdapterCleanup overrides stale adapter removal; nil disables it (unit tests).
 func (e *Engine) WithAdapterCleanup(fn func() error) *Engine {
 	e.closeOrphan = fn
@@ -198,6 +205,7 @@ func New(reg *cleanup.Registry) *Engine {
 		startDesync:  desync.Start,
 		startTunnel:  tunnel.Start,
 		classify:     classifyNetwork,
+		forceLayer:   forcedTCPLayer,
 		closeOrphan:  capture.CloseOrphanAdapter,
 		takeSnapshot: capture.TakeSnapshot,
 		targets:      networkTargets("none", false),

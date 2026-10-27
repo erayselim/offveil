@@ -3,9 +3,12 @@ package engine
 import (
 	"context"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/erayselim/offveil/offveil-core/internal/appdir"
 	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/tunnel"
 )
@@ -23,6 +26,17 @@ const (
 const slowHandshake = 3 * time.Second
 
 const classifyBudget = 7 * time.Second
+
+// forceLayerFlag is a diagnostics switch: when a file with this name exists in
+// the machine data root, the TCP layer starts even on a network that measures
+// as unfiltered. CI uses it to exercise the TUN path on runners without DPI.
+// It only ever adds protection, so a spoofed flag cannot weaken anything.
+const forceLayerFlag = "force-tcp-layer"
+
+func forcedTCPLayer() bool {
+	_, err := os.Stat(filepath.Join(appdir.Root(), forceLayerFlag))
+	return err == nil
+}
 
 // HostCheck is one measured destination. Only ruleset hosts appear here.
 type HostCheck struct {

@@ -66,7 +66,7 @@ func newTestEngine(t *testing.T) *engine.Engine {
 		WithTunnelPrepare(func(context.Context, tunnel.Config, string) (tunnel.ProviderID, *tunnel.WARPProfile, []tunnel.EndpointTrial, error) {
 			return "", nil, nil, errors.New("no tunnel in unit tests")
 		}).
-		WithAdapterCleanup(nil).WithSnapshot(nil).
+		WithAdapterCleanup(nil).WithSnapshot(nil).WithForcedLayer(func() bool { return false }).
 		WithProbe(fakeDiagnosticProbe).WithNetInfo(fakeNet)
 	t.Cleanup(func() { _, _ = eng.Stop() })
 	return eng
@@ -236,6 +236,21 @@ func TestNoFilteringKeepsDNSLayerOnly(t *testing.T) {
 		t.Fatalf("layers: %+v", network)
 	}
 	requireNetworkTargets(t, st, "direct", "direct")
+}
+
+func TestForceFlagStartsTCPLayerOnAnUnfilteredNetwork(t *testing.T) {
+	gateways := 0
+	eng := newTestEngine(t).WithClassifier(classifier(engine.DPINone)).WithForcedLayer(func() bool { return true }).
+		WithTunnelStart(func(tunnel.Config) (tunnel.Session, error) { gateways++; return gatewaySession(), nil })
+	st, rpcErr := eng.Start("auto")
+	if rpcErr != nil || gateways != 1 || networkOf(t, st).Mode != "selective" {
+		t.Fatalf("forced layer: gateways=%d status=%+v err=%v", gateways, st, rpcErr)
+	}
+	// A measured offline network must not be overridden.
+	off := newTestEngine(t).WithClassifier(classifier(engine.DPIOffline)).WithForcedLayer(func() bool { return true })
+	if st, _ := off.Start("auto"); networkOf(t, st).Reason != engine.ReasonOffline {
+		t.Fatalf("offline overridden: %+v", st)
+	}
 }
 
 func TestGatewayFailureKeepsDNSProtection(t *testing.T) {

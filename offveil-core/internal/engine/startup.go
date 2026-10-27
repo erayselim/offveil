@@ -229,6 +229,9 @@ func (e *Engine) classifyNowLocked() {
 }
 
 func (e *Engine) applyClassificationLocked(result Classification) {
+	if result.DPI == DPINone && e.forceLayer() {
+		result.DPI = DPIPresent
+	}
 	previous := ""
 	if e.classification != nil {
 		previous = e.classification.DPI
