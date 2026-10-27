@@ -31,6 +31,12 @@ type ScanFunc func(ctx context.Context, cfg ScanConfig) ScanResult
 // ScanConfig controls a limited auto-strategy pass.
 type ScanConfig struct {
 	Host string
+	// Required are filtered destinations (canaries) that must all open. A
+	// neutral control passing alone cannot prove that a strategy bypasses DPI.
+	Required []string
+	// PassThroughFirst runs each candidate the way it is deployed: an
+	// untouched first group, then the candidate on reset/timeout.
+	PassThroughFirst bool
 	// VerifyHosts are explicit targets or independent connectivity controls.
 	VerifyHosts []string
 	// VerifyQuorum is the required number of successes; zero requires all hosts.
@@ -82,7 +88,7 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 	started := time.Now()
 	out := ScanResult{}
 
-	if cfg.Host == "" {
+	if cfg.Host == "" && len(cfg.Required) == 0 {
 		if len(cfg.VerifyHosts) == 0 {
 			return ScanResult{Reason: "missing_targets"}
 		}
@@ -108,8 +114,11 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 
 	sctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	hosts := []string{cfg.Host}
-	seen := map[string]bool{cfg.Host: true}
+	var hosts []string
+	seen := map[string]bool{}
+	if cfg.Host != "" {
+		hosts, seen[cfg.Host] = []string{cfg.Host}, true
+	}
 	for _, host := range cfg.VerifyHosts {
 		if host != "" && !seen[host] {
 			hosts = append(hosts, host)
@@ -119,6 +128,14 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 	if cfg.VerifyQuorum < 0 || cfg.VerifyQuorum > len(hosts) {
 		return ScanResult{Reason: "invalid_quorum"}
 	}
+	var required []string
+	for _, host := range cfg.Required {
+		if host != "" && !seen[host] {
+			required = append(required, host)
+			seen[host] = true
+		}
+	}
+	cfg.Required = required
 
 	type candidate struct {
 		index    int
@@ -130,9 +147,12 @@ func Scan(ctx context.Context, cfg ScanConfig) ScanResult {
 			continue
 		}
 		if cfg.SkipIDs != nil {
-			if _, skip := cfg.SkipIDs[strat.ID]; skip {
+			if _, skip := cfg.SkipIDs[BaseID(strat.ID)]; skip {
 				continue
 			}
+		}
+		if cfg.PassThroughFirst {
+			strat = PassThroughFirst(strat)
 		}
 		candidates = append(candidates, candidate{len(candidates), strat})
 	}
@@ -244,11 +264,12 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 	}
 	// A slow target cannot spend the other targets' verification budget.
 	// At most four probes run per helper, each using the same trial deadline.
-	checks := make([]FailSignal, len(hosts))
+	all := append(append([]string(nil), cfg.Required...), hosts...)
+	checks := make([]FailSignal, len(all))
 	var probes sync.WaitGroup
-	var timelySuccess atomic.Int32
+	var timelySuccess, requiredSuccess atomic.Int32
 	slots := make(chan struct{}, 4)
-	for i, host := range hosts {
+	for i, host := range all {
 		probes.Go(func() {
 			select {
 			case slots <- struct{}{}:
@@ -259,7 +280,11 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 			}
 			checks[i] = sess.ProbeTLS(host)
 			if checks[i].Class == FailOK && trialCtx.Err() == nil {
-				timelySuccess.Add(1)
+				if i < len(cfg.Required) {
+					requiredSuccess.Add(1)
+				} else {
+					timelySuccess.Add(1)
+				}
 			}
 		})
 	}
@@ -267,8 +292,8 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 	class := FailOK
 	detail := ""
 	passed := 0
-	for _, sig := range checks {
-		if sig.Class == FailOK {
+	for i, sig := range checks {
+		if sig.Class == FailOK && i >= len(cfg.Required) {
 			passed++
 		}
 		if sig.Class != FailOK && class == FailOK {
@@ -279,7 +304,8 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 	if quorum <= 0 {
 		quorum = len(hosts)
 	}
-	if passed >= quorum {
+	requiredOK := int(requiredSuccess.Load()) == len(cfg.Required)
+	if passed >= quorum && requiredOK {
 		class, detail = FailOK, ""
 	}
 	// A cancelled/expired trial cannot win even if an injected probe
@@ -287,9 +313,12 @@ func scanTrial(ctx context.Context, cfg ScanConfig, strat Strategy, port int, ho
 	if trialCtx.Err() != nil {
 		class = FailTimeout
 	}
-	quorumPassed := cfg.VerifyQuorum > 0 && int(timelySuccess.Load()) >= cfg.VerifyQuorum && ctx.Err() == nil
+	quorumPassed := cfg.VerifyQuorum > 0 && int(timelySuccess.Load()) >= cfg.VerifyQuorum && requiredOK && ctx.Err() == nil
 	if quorumPassed {
 		class, detail = FailOK, ""
+	}
+	if !requiredOK && class == FailOK {
+		class = FailTimeout
 	}
 	took := time.Since(t0).Round(time.Millisecond).String()
 	tried := Tried{

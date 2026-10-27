@@ -20,6 +20,7 @@ import (
 	"github.com/erayselim/offveil/offveil-core/internal/desync"
 	"github.com/erayselim/offveil/offveil-core/internal/ipc"
 	"github.com/erayselim/offveil/offveil-core/internal/repair"
+	"github.com/erayselim/offveil/offveil-core/internal/ruleset"
 	"github.com/erayselim/offveil/offveil-core/internal/sidecar"
 	"github.com/erayselim/offveil/offveil-core/internal/support"
 	"github.com/erayselim/offveil/offveil-core/internal/version"
@@ -117,7 +118,12 @@ func main() {
 	case "check-payload":
 		binary, err := sidecar.Locate(sidecar.ByeDPI)
 		if err == nil {
-			err = desync.ValidateNativeArguments(context.Background(), binary)
+			extra, specErrs := desync.CandidatesFrom(ruleset.MustLoadEmbedded().Doc.Strategies)
+			if len(specErrs) > 0 {
+				err = specErrs[0]
+			} else {
+				err = desync.ValidateNativeArguments(context.Background(), binary, extra...)
+			}
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "payload: %v\n", err)
